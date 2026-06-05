@@ -443,6 +443,19 @@ not modify `transit_routes`, does not add database migrations, does not add
 listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop `gost` 8443, and does not let `socat` take over 8443.
 
+## Stage 3.3.9 Cutover readiness check scope
+
+Stage 3.3.9 documents the readiness checklist and current blockers for any
+future formal cutover. It reviews Docker/runtime acceptance, client candidate
+link validation, fallback availability, rollback planning, and the unresolved
+decision about whether to modify `node.share_link` or let `socat` take over
+8443.
+
+Stage 3.3.9 is not a formal cutover. It does not modify `node.share_link`, does
+not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop `gost` 8443, and does not let `socat` take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -471,6 +484,7 @@ does not stop `gost` 8443, and does not let `socat` take over 8443.
 | Stage 3.3.6 Cutover B UI | Frontend runtime acceptance passed; Docker compose acceptance blocked by local Buildx permission limit |
 | Stage 3.3.7 Cutover decision review | Decision review documented, no formal cutover |
 | Stage 3.3.8 Client candidate link acceptance | Acceptance flow documented, no formal cutover |
+| Stage 3.3.9 Cutover readiness check | Readiness blockers documented, no formal cutover |
 
 ## Environment
 
