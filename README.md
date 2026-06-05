@@ -420,6 +420,18 @@ not modify `transit_routes`, does not add database migrations, does not add
 listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 and does not stop or replace `gost` 8443.
 
+## Stage 3.3.7 Cutover decision review scope
+
+Stage 3.3.7 is a cutover decision review. It compares keeping the current
+Plan B state, adding a possible Plan B+ acceptance/approval record, and a
+higher-risk Plan C formal cutover.
+
+Stage 3.3.7 does not perform a formal cutover. It does not modify
+`node.share_link`, does not modify `transit_routes`, does not add database
+migrations, does not add listening ports, does not trigger Worker/RQ tasks, does
+not connect to servers, does not stop `gost` 8443, and does not let `socat`
+take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -446,6 +458,7 @@ and does not stop or replace `gost` 8443.
 | Cutover Plan A | Accepted: frontend derived socat test link passed |
 | Stage 3.3.5 Cutover B review | Design review documented, no formal cutover |
 | Stage 3.3.6 Cutover B UI | Frontend runtime acceptance passed; Docker compose acceptance blocked by local Buildx permission limit |
+| Stage 3.3.7 Cutover decision review | Decision review documented, no formal cutover |
 
 ## Environment
 
