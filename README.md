@@ -467,6 +467,18 @@ does not modify `transit_routes`, does not add database migrations, does not add
 listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop `gost` 8443, and does not let `socat` take over 8443.
 
+## Stage 3.3.11 Formal cutover runbook scope
+
+Stage 3.3.11 documents the formal cutover runbook for future execution. It
+compares continuing Plan B, a possible B+ readiness-recording path, and a future
+Plan C formal switch. It records preconditions, 8443 safety reminders, execution
+drafts, rollback guidance, acceptance checks, blockers, and next-stage options.
+
+Stage 3.3.11 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop `gost` 8443, and does not let `socat` take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -497,6 +509,7 @@ does not stop `gost` 8443, and does not let `socat` take over 8443.
 | Stage 3.3.8 Client candidate link acceptance | Acceptance flow documented, no formal cutover |
 | Stage 3.3.9 Cutover readiness check | Readiness blockers documented, no formal cutover |
 | Stage 3.3.10 Client test result record | Client result template documented, no formal cutover |
+| Stage 3.3.11 Formal cutover runbook | Runbook documented, no formal cutover |
 
 ## Environment
 
