@@ -432,6 +432,17 @@ migrations, does not add listening ports, does not trigger Worker/RQ tasks, does
 not connect to servers, does not stop `gost` 8443, and does not let `socat`
 take over 8443.
 
+## Stage 3.3.8 Client candidate link acceptance scope
+
+Stage 3.3.8 documents the client-side acceptance flow for the `socat` 18443
+candidate formal link. The operator may copy the candidate link from the
+frontend and manually import it into a client as a separate test node.
+
+Stage 3.3.8 is not a formal cutover. It does not modify `node.share_link`, does
+not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop `gost` 8443, and does not let `socat` take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -459,6 +470,7 @@ take over 8443.
 | Stage 3.3.5 Cutover B review | Design review documented, no formal cutover |
 | Stage 3.3.6 Cutover B UI | Frontend runtime acceptance passed; Docker compose acceptance blocked by local Buildx permission limit |
 | Stage 3.3.7 Cutover decision review | Decision review documented, no formal cutover |
+| Stage 3.3.8 Client candidate link acceptance | Acceptance flow documented, no formal cutover |
 
 ## Environment
 
