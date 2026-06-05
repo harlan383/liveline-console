@@ -1,0 +1,74 @@
+# environment
+.env
+.env.*
+!.env.example
+
+# secrets / ssh keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+.ssh/
+ssh_config
+known_hosts
+private_key
+private_key.*
+server_password*
+credentials*
+secrets*
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+backend/.venv/
+
+# node / frontend
+node_modules/
+.next/
+dist/
+build/
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/build/
+
+# logs
+*.log
+logs/
+backend/logs/
+worker.log
+
+# database / runtime data
+*.sqlite
+*.sqlite3
+*.db
+data/
+storage/
+uploads/
+
+# docker / local
+.docker/
+docker-data/
+
+# mac
+.DS_Store
+
+# editor
+.vscode/
+.idea/
+
+# local AI tool metadata
+.workbuddy/
+git-meta/

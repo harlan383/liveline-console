@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-livelines}
+      POSTGRES_USER: ${POSTGRES_USER:-livelines}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-replace-with-local-postgres-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://livelines:replace-with-local-postgres-password@postgres:5432/livelines}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      INIT_TOKEN: ${INIT_TOKEN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-86400}
+      TEMP_CREDENTIAL_TTL_SECONDS: ${TEMP_CREDENTIAL_TTL_SECONDS:-1800}
+      SSH_CONNECT_TIMEOUT_SECONDS: ${SSH_CONNECT_TIMEOUT_SECONDS:-15}
+      SSH_COMMAND_TIMEOUT_SECONDS: ${SSH_COMMAND_TIMEOUT_SECONDS:-10}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.worker.main"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://livelines:replace-with-local-postgres-password@postgres:5432/livelines}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      INIT_TOKEN: ${INIT_TOKEN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-86400}
+      TEMP_CREDENTIAL_TTL_SECONDS: ${TEMP_CREDENTIAL_TTL_SECONDS:-1800}
+      SSH_CONNECT_TIMEOUT_SECONDS: ${SSH_CONNECT_TIMEOUT_SECONDS:-15}
+      SSH_COMMAND_TIMEOUT_SECONDS: ${SSH_COMMAND_TIMEOUT_SECONDS:-10}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
