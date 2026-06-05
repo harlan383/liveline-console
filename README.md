@@ -445,7 +445,7 @@ and does not stop or replace `gost` 8443.
 | Stage 3.3.4-e | Accepted: socat 18443 client connectivity passed |
 | Cutover Plan A | Accepted: frontend derived socat test link passed |
 | Stage 3.3.5 Cutover B review | Design review documented, no formal cutover |
-| Stage 3.3.6 Cutover B UI | Development complete, pending frontend acceptance |
+| Stage 3.3.6 Cutover B UI | Frontend runtime acceptance passed; Docker compose acceptance blocked by local Buildx permission limit |
 
 ## Environment
 
