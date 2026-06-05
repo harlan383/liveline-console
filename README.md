@@ -395,6 +395,19 @@ does not connect to servers, and keeps the two active routes:
 `hk-gost-test-8443 / gost / 8443 / active` and
 `hk-socat-test-18443 / socat / 18443 / active`.
 
+## Stage 3.3.5 Cutover B review scope
+
+Stage 3.3.5 is a design review for Cutover Plan B. The proposed Plan B keeps
+`gost` 8443 unchanged as a fallback route and keeps `socat` 18443 as the
+already validated candidate route. It only designs how the frontend may present
+and copy a `socat` 18443 candidate formal link derived from the current active
+Reality node.
+
+Stage 3.3.5 does not modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not connect to servers, and does
+not perform a formal cutover.
+
 ## Stage Status
 
 | Stage | Status |
@@ -419,6 +432,7 @@ does not connect to servers, and keeps the two active routes:
 | Stage 3.3.4-d | Accepted: socat 18443 controlled restart passed |
 | Stage 3.3.4-e | Accepted: socat 18443 client connectivity passed |
 | Cutover Plan A | Accepted: frontend derived socat test link passed |
+| Stage 3.3.5 Cutover B review | Design review documented, no formal cutover |
 
 ## Environment
 
