@@ -77,7 +77,7 @@ export function TransitRoutesPanel() {
   const [message, setMessage] = useState("Stage 3.3.3 只创建一条 gost TCP 转发规则。");
   const [copied, setCopied] = useState(false);
   const [copiedRouteId, setCopiedRouteId] = useState<string | null>(null);
-  const [copiedSocatTestRouteId, setCopiedSocatTestRouteId] = useState<string | null>(null);
+  const [copiedSocatCandidateRouteId, setCopiedSocatCandidateRouteId] = useState<string | null>(null);
   const [copiedDiagnosticsRouteId, setCopiedDiagnosticsRouteId] = useState<string | null>(null);
   const [diagnosticPrivateKeyText, setDiagnosticPrivateKeyText] = useState("");
   const [diagnosticPassphrase, setDiagnosticPassphrase] = useState("");
@@ -407,20 +407,20 @@ export function TransitRoutesPanel() {
     setCopiedRouteId(route.id);
   }
 
-  async function copySocatTestLink(route: TransitRouteData) {
-    const derivedLink = derivedSocatTestLinkForRoute(route);
+  async function copySocatCandidateLink(route: TransitRouteData) {
+    const derivedLink = derivedSocatCandidateLinkForRoute(route);
     if (!derivedLink) {
-      setDiagnosticMessage("当前页面缺少 node.share_link，暂不能生成派生链接。");
+      setDiagnosticMessage("当前页面缺少 node.share_link，暂不能生成候选正式链接。");
       return;
     }
     const confirmed = window.confirm(
-      "这是测试链路，尚未正式 cutover。复制后仅用于测试客户端导入，不会修改正式节点链接。",
+      "这是 socat 18443 候选正式链接，但尚未正式 cutover。复制后请手动在客户端测试；本操作不会修改 node.share_link，也不会停用 gost 8443。",
     );
     if (!confirmed) {
       return;
     }
     await navigator.clipboard.writeText(derivedLink);
-    setCopiedSocatTestRouteId(route.id);
+    setCopiedSocatCandidateRouteId(route.id);
   }
 
   async function copyDiagnostics(route: TransitRouteData) {
@@ -489,10 +489,10 @@ export function TransitRoutesPanel() {
 
   function routeBadge(route: TransitRouteData) {
     if (route.forwarding_method === "socat" && route.listen_port === 18443) {
-      return "测试可用链路 / 待正式 cutover";
+      return "候选正式链路 / 尚未 cutover";
     }
     if (route.forwarding_method === "gost" && route.listen_port === 8443) {
-      return "回退链路 / 保留";
+      return "当前正式/回退链路 / 保留";
     }
     return "只读线路";
   }
@@ -505,7 +505,7 @@ export function TransitRoutesPanel() {
     return nodes.find((node) => node.id === route.node_id && node.status === "active") ?? null;
   }
 
-  function derivedSocatTestLinkForRoute(route: TransitRouteData) {
+  function derivedSocatCandidateLinkForRoute(route: TransitRouteData) {
     if (!isSocatTestRoute(route)) {
       return null;
     }
@@ -560,8 +560,10 @@ export function TransitRoutesPanel() {
       </div>
 
       <div className="warning-box">
-        <strong>⚠️ Cutover 状态：socat 18443 已通过客户端连通性测试，但尚未正式 cutover。</strong>
-        <span>gost 8443 保留作为回退链路。当前不会修改正式节点链接。</span>
+        <strong>⚠️ Cutover 状态：当前尚未正式 cutover。</strong>
+        <span>gost 8443 仍保留为当前正式/回退链路。</span>
+        <span>socat 18443 已通过测试，本阶段只展示并复制候选正式链接。</span>
+        <span>本页面不会修改 node.share_link，不会停用 gost，也不会把 socat 接管 8443。</span>
       </div>
 
       {forwardingMethod === "socat" ? (
@@ -691,7 +693,10 @@ export function TransitRoutesPanel() {
           <div className="status-row">
             <div>
               <h3>中转线路管理</h3>
-              <p className="message">只读查看现有 gost / socat 转发线路；本区域不停止、不删除、不重启线路。</p>
+              <p className="message">
+                只读查看现有 gost / socat 转发线路；本区域不停止、不删除、不替换线路。socat 18443
+                候选链接需要复制后手动在客户端测试。
+              </p>
             </div>
           </div>
           <div className="diagnostic-credentials">
@@ -732,7 +737,7 @@ export function TransitRoutesPanel() {
             const serviceStatus = routeDiagnosticActive ? diagnosticCheckFor("service_status") : null;
             const targetConnectivity = routeDiagnosticActive ? diagnosticCheckFor("target_connectivity") : null;
             const processCheck = routeDiagnosticActive ? diagnosticCheckFor("process_check") : null;
-            const derivedSocatTestLink = derivedSocatTestLinkForRoute(route);
+            const derivedSocatCandidateLink = derivedSocatCandidateLinkForRoute(route);
             return (
             <div className="route-card" key={route.id}>
               <div className="status-row">
@@ -784,25 +789,32 @@ export function TransitRoutesPanel() {
               </div>
               {isSocatTestRoute(route) ? (
                 <div className="diagnostic-box">
-                  <h5>socat 测试链接</h5>
+                  <h5>socat 18443 候选正式链接</h5>
                   <p className="message">
-                    此链接由当前直连 Reality 节点派生，仅将 server 改为 {displayValue(transitHostForRoute(route))}，
-                    port 改为 {route.listen_port}。不会写入数据库，也不会替换正式节点链接。
+                    此链接由当前 active Reality 节点的 share_link 派生，仅将 server 改为{" "}
+                    {displayValue(transitHostForRoute(route))}，port 改为 {route.listen_port}。
+                    UUID、flow、Reality、SNI、publicKey、shortId、fingerprint、spiderX 等参数保持不变。
+                    本阶段不会写入数据库，不会替换 node.share_link。
                   </p>
-                  {derivedSocatTestLink ? (
+                  <div className="warning-box">
+                    <span>尚未正式 cutover：复制后请手动在客户端测试。</span>
+                    <span>gost 8443 仍保留为回退链路，不会被停用或替换。</span>
+                    <span>如果候选链接不可用，请继续使用原直连链接或 gost 8443 回退链路。</span>
+                  </div>
+                  {derivedSocatCandidateLink ? (
                     <div className="route-copy-row">
-                      <span className="route-share-link">{maskLink(derivedSocatTestLink)}</span>
+                      <span className="route-share-link">{maskLink(derivedSocatCandidateLink)}</span>
                       <button
                         className="secondary compact"
                         type="button"
-                        onClick={() => void copySocatTestLink(route)}
+                        onClick={() => void copySocatCandidateLink(route)}
                       >
-                        {copiedSocatTestRouteId === route.id ? "已复制" : "复制 socat 中转测试链接"}
+                        {copiedSocatCandidateRouteId === route.id ? "已复制" : "复制 socat 18443 候选正式链接"}
                       </button>
                     </div>
                   ) : (
                     <div className="warning-box">
-                      <span>当前页面缺少 node.share_link，暂不能生成派生链接。</span>
+                      <span>当前页面缺少 node.share_link，暂不能生成候选正式链接。</span>
                     </div>
                   )}
                 </div>

@@ -408,6 +408,18 @@ Stage 3.3.5 does not modify `node.share_link`, does not modify
 ports, does not trigger Worker/RQ tasks, does not connect to servers, and does
 not perform a formal cutover.
 
+## Stage 3.3.6 Cutover B UI scope
+
+Stage 3.3.6 implements only the Cutover Plan B frontend display enhancement.
+It shows `socat` 18443 as a candidate formal link and keeps `gost` 8443 visible
+as the current formal / fallback route. The candidate link is derived in the
+browser from the current active Reality node by changing only server and port.
+
+Stage 3.3.6 is not a formal cutover. It does not modify `node.share_link`, does
+not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+and does not stop or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -433,6 +445,7 @@ not perform a formal cutover.
 | Stage 3.3.4-e | Accepted: socat 18443 client connectivity passed |
 | Cutover Plan A | Accepted: frontend derived socat test link passed |
 | Stage 3.3.5 Cutover B review | Design review documented, no formal cutover |
+| Stage 3.3.6 Cutover B UI | Development complete, pending frontend acceptance |
 
 ## Environment
 
