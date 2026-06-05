@@ -456,6 +456,17 @@ not modify `transit_routes`, does not add database migrations, does not add
 listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop `gost` 8443, and does not let `socat` take over 8443.
 
+## Stage 3.3.10 Client test result record scope
+
+Stage 3.3.10 records real client test results for the `socat` 18443 candidate
+formal link. The candidate link should be imported manually as a separate test
+node and must not overwrite the current formal node.
+
+Stage 3.3.10 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop `gost` 8443, and does not let `socat` take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -485,6 +496,7 @@ does not stop `gost` 8443, and does not let `socat` take over 8443.
 | Stage 3.3.7 Cutover decision review | Decision review documented, no formal cutover |
 | Stage 3.3.8 Client candidate link acceptance | Acceptance flow documented, no formal cutover |
 | Stage 3.3.9 Cutover readiness check | Readiness blockers documented, no formal cutover |
+| Stage 3.3.10 Client test result record | Client result template documented, no formal cutover |
 
 ## Environment
 
