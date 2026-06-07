@@ -798,6 +798,20 @@ replace `gost` 8443, did not add listening ports, did not add database
 migrations, did not modify firewall rules, and did not execute systemd start /
 stop / restart / disable / enable.
 
+## Stage 3.3.32 C post-cutover observation scope
+
+Stage 3.3.32 records post-cutover observation for the C-minimal cutover. The
+current formal route is `socat` 18443 through `node.share_link`, and `gost`
+8443 remains retained as the fallback route. This stage provides the observation
+checklist, abnormal-condition criteria, rollback triggers, and observation
+result fields.
+
+Stage 3.3.32 is not a new cutover. It does not modify `node.share_link`, does
+not add listening ports, does not add database migrations, does not modify
+firewall rules, does not execute systemd start / stop / restart / disable /
+enable, does not stop, downgrade, or replace `gost` 8443, does not let `socat`
+take over 8443, and does not trigger rollback.
+
 ## Stage Status
 
 | Stage | Status |
@@ -849,6 +863,7 @@ stop / restart / disable / enable.
 | Stage 3.3.29 C final Go decision | C-minimal Go recorded for next execution stage; no cutover executed |
 | Stage 3.3.30 C formal cutover execution runbook final | Final execution runbook documented; no cutover executed |
 | Stage 3.3.31 C formal cutover execution | Cutover already in effect (`node.share_link` = socat 18443); gost 8443 retained as fallback |
+| Stage 3.3.32 C post-cutover observation | Observation template documented; no new cutover executed |
 
 ## Environment
 
