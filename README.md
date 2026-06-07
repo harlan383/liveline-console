@@ -601,6 +601,21 @@ listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
 over 8443.
 
+## Stage 3.3.21 C read-only preflight command list scope
+
+Stage 3.3.21 documents a future read-only preflight command list derived from
+the Stage 3.3.20 command authorization matrix. It separates local repository
+checks from future remote read-only preflight categories for service listening,
+process, systemd, firewall, connectivity, route state, log viewing, 8443,
+`socat` 18443, `gost` 8443, `node.share_link`, and backend task status checks.
+
+Stage 3.3.21 is not a formal cutover and does not authorize remote read-only
+commands. It does not modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not connect to servers, does not
+stop, downgrade, or replace `gost` 8443, and does not let `socat` take over
+8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -641,6 +656,7 @@ over 8443.
 | Stage 3.3.18 C execution runbook review checklist | Runbook review checklist documented, still No-Go |
 | Stage 3.3.19 C execution runbook gap fix plan | Gap fix plan documented, still No-Go |
 | Stage 3.3.20 C command authorization matrix | Command authorization matrix documented, still No-Go |
+| Stage 3.3.21 C read-only preflight command list | Read-only preflight command list documented, still No-Go |
 
 ## Environment
 
