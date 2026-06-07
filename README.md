@@ -725,6 +725,26 @@ the manual cloud-side confirmation. The overall C-plan readiness remains
 Blocked until formal cutover, `node.share_link` modification, `socat` 8443
 takeover, and `gost` 8443 changes receive separate approval.
 
+## Stage 3.3.28 C final readiness reconciliation scope
+
+Stage 3.3.28 reconciles the final C-plan readiness state after B+ client
+acceptance, server-side read-only preflight, and cloud security group / cloud
+firewall manual confirmation. The technical preflight side is basically Ready:
+client scenarios are recorded as usable, `gost` 8443 and `socat` 18443 remain
+listening, related systemd services are active, server-side firewall checks did
+not find a local blocker, cloud security group TCP 8443 / 18443 is allowed, and
+the standalone cloud firewall item is Not applicable.
+
+Stage 3.3.28 is not a formal cutover. It does not execute SSH or remote
+commands, does not read or modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not modify firewall rules, does
+not execute systemd start / stop / restart / disable / enable, does not stop,
+downgrade, or replace `gost` 8443, and does not let `socat` take over 8443.
+The production cutover authorization side remains Blocked until formal cutover,
+`node.share_link` modification, `socat` 8443 takeover, `gost` 8443 changes, and
+final Go / No-Go are explicitly approved.
+
 ## Stage Status
 
 | Stage | Status |
@@ -772,6 +792,7 @@ takeover, and `gost` 8443 changes receive separate approval.
 | Stage 3.3.25 C read-only preflight execution | Server-side preflight Ready; overall C-plan readiness Blocked |
 | Stage 3.3.26 C manual read-only preflight evidence record | Manual server-side evidence recorded Ready; overall C-plan readiness Blocked |
 | Stage 3.3.27 C cloud security firewall manual confirmation | Cloud security group / firewall confirmation completed; overall C-plan readiness still Blocked |
+| Stage 3.3.28 C final readiness reconciliation | Technical preflight basically Ready; production cutover authorization still Blocked |
 
 ## Environment
 
