@@ -685,6 +685,25 @@ not modify firewall rules, does not execute systemd start / stop / restart /
 disable / enable, does not stop, downgrade, or replace `gost` 8443, and does not
 let `socat` take over 8443.
 
+## Stage 3.3.26 C manual read-only preflight evidence record scope
+
+Stage 3.3.26 records desensitized evidence from the user's local manual SSH
+read-only preflight. It corrects the prior Workbuddy-environment SSH-key
+limitation by documenting that an authorized local key was used outside this
+stage's Codex execution to confirm SSH read-only login, `gost` 8443
+listening/active, `socat` 18443 listening/active, expected binaries present,
+and server-side iptables policies accepting traffic.
+
+The server-side read-only preflight conclusion is Ready. The overall C-plan
+readiness remains Blocked until cloud security group / cloud firewall manual
+confirmation and future formal approvals are completed. Stage 3.3.26 is not a
+formal cutover. It does not read or modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not execute remote write
+commands, does not modify firewall rules, does not execute systemd start / stop
+/ restart / disable / enable, does not stop, downgrade, or replace `gost` 8443,
+and does not let `socat` take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -730,6 +749,7 @@ let `socat` take over 8443.
 | Stage 3.3.23 C read-only preflight execution approval | Execution approval request documented, still No-Go |
 | Stage 3.3.24 C read-only preflight execution authorization | Read-only preflight execution authorized for next stage, no cutover |
 | Stage 3.3.25 C read-only preflight execution | Server-side preflight Ready; overall C-plan readiness Blocked |
+| Stage 3.3.26 C manual read-only preflight evidence record | Manual server-side evidence recorded Ready; overall C-plan readiness Blocked |
 
 ## Environment
 
