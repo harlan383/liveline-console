@@ -633,6 +633,22 @@ ports, does not trigger Worker/RQ tasks, does not connect to servers, does not
 stop, downgrade, or replace `gost` 8443, and does not let `socat` take over
 8443.
 
+## Stage 3.3.23 C read-only preflight execution approval scope
+
+Stage 3.3.23 documents the request and approval record for a future real
+read-only preflight execution. It allows only the documentation request itself:
+SSH login, remote read-only commands, systemd status checks, port-listening
+checks, `gost` 8443 checks, `socat` 18443 checks, server firewall checks,
+`node.share_link` reads/writes, backend task reads/triggers, and formal cutover
+all remain No-Go.
+
+Stage 3.3.23 is not a formal cutover and does not authorize SSH or remote
+read-only commands. It does not modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not connect to servers, does not
+stop, downgrade, or replace `gost` 8443, and does not let `socat` take over
+8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -675,6 +691,7 @@ stop, downgrade, or replace `gost` 8443, and does not let `socat` take over
 | Stage 3.3.20 C command authorization matrix | Command authorization matrix documented, still No-Go |
 | Stage 3.3.21 C read-only preflight command list | Read-only preflight command list documented, still No-Go |
 | Stage 3.3.22 C No-Go preflight approval pack | No-Go preflight approval pack documented, still No-Go |
+| Stage 3.3.23 C read-only preflight execution approval | Execution approval request documented, still No-Go |
 
 ## Environment
 
