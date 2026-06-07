@@ -545,6 +545,19 @@ listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
 over 8443.
 
+## Stage 3.3.17 C execution runbook draft scope
+
+Stage 3.3.17 documents a draft execution-level runbook structure for a future
+C-plan cutover. It keeps the current No-Go conclusion and only describes phases,
+preconditions, port/firewall checks, placeholder-based cutover flow, validation,
+rollback, failure criteria, stop conditions, and acceptance templates.
+
+Stage 3.3.17 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
+over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -581,6 +594,7 @@ over 8443.
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
+| Stage 3.3.17 C execution runbook draft | Execution runbook draft documented, still No-Go |
 
 ## Environment
 
