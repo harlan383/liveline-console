@@ -504,6 +504,20 @@ does not modify `transit_routes`, does not add database migrations, does not add
 listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop `gost` 8443, and does not let `socat` take over 8443.
 
+## Stage 3.3.14 C cutover decision pack scope
+
+Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
+It records the manual decision that C must not be formally executed yet,
+`node.share_link` must not be modified, remote commands are not allowed,
+`socat` must not take over 8443, and `gost` 8443 must remain the current
+formal/fallback route.
+
+Stage 3.3.14 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
+over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -537,6 +551,7 @@ does not stop `gost` 8443, and does not let `socat` take over 8443.
 | Stage 3.3.11 Formal cutover runbook | Runbook documented, no formal cutover |
 | Stage 3.3.12 Formal cutover approval | Approval gate documented, no formal cutover |
 | Stage 3.3.13 B+ readiness record | Plan B+ readiness recorded, no formal cutover |
+| Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 
 ## Environment
 
