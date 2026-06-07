@@ -518,6 +518,19 @@ listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
 over 8443.
 
+## Stage 3.3.15 C final Go / No-Go approval scope
+
+Stage 3.3.15 records the final C-plan Go / No-Go approval state before any
+formal cutover. The current conclusion is No-Go because formal cutover,
+`node.share_link` modification, remote commands, `socat` takeover of 8443, and
+any stop, downgrade, or replacement of `gost` 8443 are not approved.
+
+Stage 3.3.15 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
+over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -552,6 +565,7 @@ over 8443.
 | Stage 3.3.12 Formal cutover approval | Approval gate documented, no formal cutover |
 | Stage 3.3.13 B+ readiness record | Plan B+ readiness recorded, no formal cutover |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
+| Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 
 ## Environment
 
