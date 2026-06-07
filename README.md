@@ -785,6 +785,19 @@ Stage 3.3.31 is the earliest stage that may execute the formal cutover, and it
 must follow this runbook without expanding scope to 8443 takeover, new ports,
 or `gost` 8443 changes.
 
+## Stage 3.3.31 C formal cutover execution scope
+
+Stage 3.3.31 executes the C-minimal formal cutover. `node.share_link` was found
+already pointing to the `socat` 18443 candidate link before this stage executed.
+The old link was safely backed up to `.workbuddy/cutover_backup.json` (excluded
+from Git). No database write was needed. `gost` 8443 remains the formal/fallback
+route. `socat` 18443 is the confirmed formal route.
+
+Stage 3.3.31 did not let `socat` take over 8443, did not stop, downgrade, or
+replace `gost` 8443, did not add listening ports, did not add database
+migrations, did not modify firewall rules, and did not execute systemd start /
+stop / restart / disable / enable.
+
 ## Stage Status
 
 | Stage | Status |
@@ -835,6 +848,7 @@ or `gost` 8443 changes.
 | Stage 3.3.28 C final readiness reconciliation | Technical preflight basically Ready; production cutover authorization still Blocked |
 | Stage 3.3.29 C final Go decision | C-minimal Go recorded for next execution stage; no cutover executed |
 | Stage 3.3.30 C formal cutover execution runbook final | Final execution runbook documented; no cutover executed |
+| Stage 3.3.31 C formal cutover execution | Cutover already in effect (`node.share_link` = socat 18443); gost 8443 retained as fallback |
 
 ## Environment
 
