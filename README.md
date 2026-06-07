@@ -812,6 +812,20 @@ firewall rules, does not execute systemd start / stop / restart / disable /
 enable, does not stop, downgrade, or replace `gost` 8443, does not let `socat`
 take over 8443, and does not trigger rollback.
 
+## Stage 3.3.33 C post-cutover observation result scope
+
+Stage 3.3.33 records the actual post-cutover observation result. Shadowrocket,
+v2rayN, soft-router usage, normal web access, and target platform access are
+recorded as normal. Live impact observation reports no obvious impact. The
+post-cutover observation conclusion is Healthy and rollback is not required.
+
+Stage 3.3.33 is not a new cutover. It does not modify `node.share_link`, does
+not add listening ports, does not add database migrations, does not modify
+firewall rules, does not execute systemd start / stop / restart / disable /
+enable, does not stop, downgrade, or replace `gost` 8443, does not let `socat`
+take over 8443, and does not trigger rollback. `socat` 18443 remains the formal
+route and `gost` 8443 remains retained as the fallback route.
+
 ## Stage Status
 
 | Stage | Status |
@@ -864,6 +878,7 @@ take over 8443, and does not trigger rollback.
 | Stage 3.3.30 C formal cutover execution runbook final | Final execution runbook documented; no cutover executed |
 | Stage 3.3.31 C formal cutover execution | Cutover already in effect (`node.share_link` = socat 18443); gost 8443 retained as fallback |
 | Stage 3.3.32 C post-cutover observation | Observation template documented; no new cutover executed |
+| Stage 3.3.33 C post-cutover observation result | Observation Healthy; socat 18443 formal route retained; gost 8443 fallback retained |
 
 ## Environment
 
