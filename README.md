@@ -586,6 +586,21 @@ listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
 over 8443.
 
+## Stage 3.3.20 C command authorization matrix scope
+
+Stage 3.3.20 documents the command authorization matrix for a future C-plan
+cutover. It classifies local read-only commands, remote read-only commands,
+remote execution commands, database commands, backend task commands, and
+explicitly prohibited commands. It also records approval fields, output
+redaction rules, and the principle that commands not listed in a future
+whitelist remain forbidden.
+
+Stage 3.3.20 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
+over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -625,6 +640,7 @@ over 8443.
 | Stage 3.3.17 C execution runbook draft | Execution runbook draft documented, still No-Go |
 | Stage 3.3.18 C execution runbook review checklist | Runbook review checklist documented, still No-Go |
 | Stage 3.3.19 C execution runbook gap fix plan | Gap fix plan documented, still No-Go |
+| Stage 3.3.20 C command authorization matrix | Command authorization matrix documented, still No-Go |
 
 ## Environment
 
