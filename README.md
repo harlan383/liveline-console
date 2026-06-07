@@ -479,6 +479,18 @@ does not modify `transit_routes`, does not add database migrations, does not add
 listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop `gost` 8443, and does not let `socat` take over 8443.
 
+## Stage 3.3.12 Formal cutover approval scope
+
+Stage 3.3.12 documents the formal cutover approval gate. It records the final
+Plan B / B+ / C selection approval, execution permission confirmation,
+`node.share_link` modification approval, remote-command approval, execution
+window, rollback confirmation, Go / No-Go checklist, and current blockers.
+
+Stage 3.3.12 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop `gost` 8443, and does not let `socat` take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -510,6 +522,7 @@ does not stop `gost` 8443, and does not let `socat` take over 8443.
 | Stage 3.3.9 Cutover readiness check | Readiness blockers documented, no formal cutover |
 | Stage 3.3.10 Client test result record | Client result template documented, no formal cutover |
 | Stage 3.3.11 Formal cutover runbook | Runbook documented, no formal cutover |
+| Stage 3.3.12 Formal cutover approval | Approval gate documented, no formal cutover |
 
 ## Environment
 
