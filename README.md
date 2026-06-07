@@ -491,6 +491,19 @@ does not modify `transit_routes`, does not add database migrations, does not add
 listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop `gost` 8443, and does not let `socat` take over 8443.
 
+## Stage 3.3.13 B+ readiness record scope
+
+Stage 3.3.13 records the approved Plan B+ readiness state. It documents the
+manual decision that formal cutover is not allowed, `node.share_link` must not
+be modified, remote commands are not allowed, `socat` must not take over 8443,
+and `gost` 8443 must remain the formal/fallback route. It also records the
+2026-06-07 client validation across Shadowrocket, v2rayN, and router scenarios.
+
+Stage 3.3.13 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop `gost` 8443, and does not let `socat` take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -523,6 +536,7 @@ does not stop `gost` 8443, and does not let `socat` take over 8443.
 | Stage 3.3.10 Client test result record | Client result template documented, no formal cutover |
 | Stage 3.3.11 Formal cutover runbook | Runbook documented, no formal cutover |
 | Stage 3.3.12 Formal cutover approval | Approval gate documented, no formal cutover |
+| Stage 3.3.13 B+ readiness record | Plan B+ readiness recorded, no formal cutover |
 
 ## Environment
 
