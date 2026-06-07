@@ -667,6 +667,24 @@ ports, does not trigger Worker/RQ tasks, does not connect to servers in this
 stage, does not stop, downgrade, or replace `gost` 8443, and does not let
 `socat` take over 8443.
 
+## Stage 3.3.25 C read-only preflight execution scope
+
+Stage 3.3.25 executes the authorized real read-only preflight. SSH is allowed
+only for whitelisted read-only checks. The preflight confirms the transit host
+is reachable, `gost` 8443 and `socat` 18443 are listening, both related systemd
+services are active, server-side firewall state is read only, and transit to the
+landing target on port 443 is reachable. The recorded server-side result is
+Ready, while the overall C-plan readiness remains Blocked until cloud security
+group / cloud firewall manual confirmation and future formal approvals are
+completed.
+
+Stage 3.3.25 is not a formal cutover. It does not read or modify
+`node.share_link`, does not modify `transit_routes`, does not add database
+migrations, does not add listening ports, does not trigger Worker/RQ tasks, does
+not modify firewall rules, does not execute systemd start / stop / restart /
+disable / enable, does not stop, downgrade, or replace `gost` 8443, and does not
+let `socat` take over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -711,6 +729,7 @@ stage, does not stop, downgrade, or replace `gost` 8443, and does not let
 | Stage 3.3.22 C No-Go preflight approval pack | No-Go preflight approval pack documented, still No-Go |
 | Stage 3.3.23 C read-only preflight execution approval | Execution approval request documented, still No-Go |
 | Stage 3.3.24 C read-only preflight execution authorization | Read-only preflight execution authorized for next stage, no cutover |
+| Stage 3.3.25 C read-only preflight execution | Server-side preflight Ready; overall C-plan readiness Blocked |
 
 ## Environment
 
