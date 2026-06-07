@@ -745,6 +745,26 @@ The production cutover authorization side remains Blocked until formal cutover,
 `node.share_link` modification, `socat` 8443 takeover, `gost` 8443 changes, and
 final Go / No-Go are explicitly approved.
 
+## Stage 3.3.29 C final Go decision scope
+
+Stage 3.3.29 records the final C-plan Go decision. The decision is `Go` only
+for entering a later formal cutover execution stage under the `C-minimal Go`
+scope. It allows a future execution stage to modify `node.share_link` only after
+the old value is safely backed up, the new value is confirmed without writing
+the full link into documents or logs, client acceptance is performed, and the
+old value can be restored immediately on failure.
+
+Stage 3.3.29 is not a formal cutover execution. It does not execute SSH or
+remote commands, does not read or modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not modify firewall rules, does
+not execute systemd start / stop / restart / disable / enable, does not stop,
+downgrade, or replace `gost` 8443, and does not let `socat` take over 8443.
+The approved C-minimal boundary keeps `gost` 8443 as the formal / fallback
+route, keeps `socat` on 18443 as the accepted candidate route, forbids 8443
+takeover, forbids new listening ports, and requires a Stage 3.3.30 final
+execution runbook before any real production change.
+
 ## Stage Status
 
 | Stage | Status |
@@ -793,6 +813,7 @@ final Go / No-Go are explicitly approved.
 | Stage 3.3.26 C manual read-only preflight evidence record | Manual server-side evidence recorded Ready; overall C-plan readiness Blocked |
 | Stage 3.3.27 C cloud security firewall manual confirmation | Cloud security group / firewall confirmation completed; overall C-plan readiness still Blocked |
 | Stage 3.3.28 C final readiness reconciliation | Technical preflight basically Ready; production cutover authorization still Blocked |
+| Stage 3.3.29 C final Go decision | C-minimal Go recorded for next execution stage; no cutover executed |
 
 ## Environment
 
