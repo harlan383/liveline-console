@@ -572,6 +572,20 @@ listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
 over 8443.
 
+## Stage 3.3.19 C execution runbook gap fix plan scope
+
+Stage 3.3.19 documents the gap fix plan for the Stage 3.3.18 C-plan execution
+runbook review checklist. It turns the remaining gaps into a non-executing plan
+covering command whitelist authorization, formal execution window, responsible
+roles, `node.share_link` backup confirmation, 8443 security group / firewall
+checks, formal Go approval, and execution runbook final approval.
+
+Stage 3.3.19 is not a formal cutover. It does not modify `node.share_link`,
+does not modify `transit_routes`, does not add database migrations, does not add
+listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
+does not stop, downgrade, or replace `gost` 8443, and does not let `socat` take
+over 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -610,6 +624,7 @@ over 8443.
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
 | Stage 3.3.17 C execution runbook draft | Execution runbook draft documented, still No-Go |
 | Stage 3.3.18 C execution runbook review checklist | Runbook review checklist documented, still No-Go |
+| Stage 3.3.19 C execution runbook gap fix plan | Gap fix plan documented, still No-Go |
 
 ## Environment
 
