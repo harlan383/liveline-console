@@ -616,6 +616,23 @@ ports, does not trigger Worker/RQ tasks, does not connect to servers, does not
 stop, downgrade, or replace `gost` 8443, and does not let `socat` take over
 8443.
 
+## Stage 3.3.22 C No-Go preflight approval pack scope
+
+Stage 3.3.22 consolidates the remaining “approval-only, no execution” C-plan
+preflight items into one No-Go approval pack. It records the current No-Go
+status for remote read-only commands, SSH login, systemd operations, firewall
+checks, port checks, 8443 checks, `socat` 18443 checks, `gost` 8443 checks,
+`node.share_link` read/write, backend task status reads, backend task triggers,
+formal cutover, `socat` 8443 takeover, and any `gost` 8443 downgrade or
+replacement.
+
+Stage 3.3.22 is not a formal cutover and does not authorize remote read-only
+commands. It does not SSH, does not modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not connect to servers, does not
+stop, downgrade, or replace `gost` 8443, and does not let `socat` take over
+8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -657,6 +674,7 @@ stop, downgrade, or replace `gost` 8443, and does not let `socat` take over
 | Stage 3.3.19 C execution runbook gap fix plan | Gap fix plan documented, still No-Go |
 | Stage 3.3.20 C command authorization matrix | Command authorization matrix documented, still No-Go |
 | Stage 3.3.21 C read-only preflight command list | Read-only preflight command list documented, still No-Go |
+| Stage 3.3.22 C No-Go preflight approval pack | No-Go preflight approval pack documented, still No-Go |
 
 ## Environment
 
