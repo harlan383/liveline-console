@@ -704,6 +704,23 @@ commands, does not modify firewall rules, does not execute systemd start / stop
 / restart / disable / enable, does not stop, downgrade, or replace `gost` 8443,
 and does not let `socat` take over 8443.
 
+## Stage 3.3.27 C cloud security firewall manual confirmation scope
+
+Stage 3.3.27 records the manual confirmation checklist for cloud security
+groups, cloud firewall rules, and server-side firewall status before any future
+C-plan formal cutover. It carries forward the Stage 3.3.26 server-side Ready
+summary while keeping cloud security group / cloud firewall confirmation as
+Pending until a human records the cloud-console result.
+
+Stage 3.3.27 is not a formal cutover. It does not execute SSH or remote
+commands, does not read or modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not modify firewall rules, does
+not execute systemd start / stop / restart / disable / enable, does not stop,
+downgrade, or replace `gost` 8443, and does not let `socat` take over 8443.
+The overall C-plan readiness remains Blocked until cloud-side confirmation and
+future formal approvals are completed.
+
 ## Stage Status
 
 | Stage | Status |
@@ -750,6 +767,7 @@ and does not let `socat` take over 8443.
 | Stage 3.3.24 C read-only preflight execution authorization | Read-only preflight execution authorized for next stage, no cutover |
 | Stage 3.3.25 C read-only preflight execution | Server-side preflight Ready; overall C-plan readiness Blocked |
 | Stage 3.3.26 C manual read-only preflight evidence record | Manual server-side evidence recorded Ready; overall C-plan readiness Blocked |
+| Stage 3.3.27 C cloud security firewall manual confirmation | Cloud confirmation checklist documented; overall C-plan readiness Blocked |
 
 ## Environment
 
