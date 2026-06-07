@@ -765,6 +765,26 @@ route, keeps `socat` on 18443 as the accepted candidate route, forbids 8443
 takeover, forbids new listening ports, and requires a Stage 3.3.30 final
 execution runbook before any real production change.
 
+## Stage 3.3.30 C formal cutover execution runbook final scope
+
+Stage 3.3.30 creates the final C-minimal formal cutover execution runbook. The
+runbook defines a future execution flow for switching the formal
+`node.share_link` to the already accepted `socat` 18443 candidate link, while
+keeping `gost` 8443 as the formal / fallback route. It requires backing up the
+old `node.share_link`, confirming the new candidate link without writing the
+full link into documents or logs, completing client acceptance, and restoring
+the old value immediately if validation fails.
+
+Stage 3.3.30 is not a formal cutover execution. It does not execute SSH or
+remote commands, does not read or modify `node.share_link`, does not modify
+`transit_routes`, does not add database migrations, does not add listening
+ports, does not trigger Worker/RQ tasks, does not modify firewall rules, does
+not execute systemd start / stop / restart / disable / enable, does not stop,
+downgrade, or replace `gost` 8443, and does not let `socat` take over 8443.
+Stage 3.3.31 is the earliest stage that may execute the formal cutover, and it
+must follow this runbook without expanding scope to 8443 takeover, new ports,
+or `gost` 8443 changes.
+
 ## Stage Status
 
 | Stage | Status |
@@ -814,6 +834,7 @@ execution runbook before any real production change.
 | Stage 3.3.27 C cloud security firewall manual confirmation | Cloud security group / firewall confirmation completed; overall C-plan readiness still Blocked |
 | Stage 3.3.28 C final readiness reconciliation | Technical preflight basically Ready; production cutover authorization still Blocked |
 | Stage 3.3.29 C final Go decision | C-minimal Go recorded for next execution stage; no cutover executed |
+| Stage 3.3.30 C formal cutover execution runbook final | Final execution runbook documented; no cutover executed |
 
 ## Environment
 
