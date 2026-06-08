@@ -893,6 +893,24 @@ does not perform cutover, does not let `socat` take over 8443, and does not
 stop, downgrade, or replace `gost` 8443. The formal link remains `socat` 18443
 and the fallback link remains `gost` 8443.
 
+## Stage 3.4.3 Auth protected API sweep scope
+
+Stage 3.4.3 reviews backend API route authentication after the login gate. The
+sweep confirms that data APIs for VPS records, nodes, tasks, transit resources,
+and transit routes use the existing admin session dependency and return `401`
+when accessed without login. Public runtime interfaces remain limited to health
+and auth endpoints, with `POST /api/admin/init` kept as the one-time
+init-token-protected bootstrap exception.
+
+Stage 3.4.3 is an Auth security review stage. No backend route code change was
+required because the reviewed data APIs were already protected. This stage does
+not add database migrations, does not read or modify `node.share_link`, does
+not add listening ports, does not execute SSH or remote commands, does not
+trigger Worker/RQ tasks, does not modify firewall rules, does not perform
+cutover, does not let `socat` take over 8443, and does not stop, downgrade, or
+replace `gost` 8443. The formal link remains `socat` 18443 and the fallback
+link remains `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -950,6 +968,7 @@ and the fallback link remains `gost` 8443.
 | Stage 3.3.35 C maintenance observation plan | Maintenance observation plan documented; gost 8443 fallback retained |
 | Stage 3.4.1 Auth login gate | Development complete |
 | Stage 3.4.2 Auth login local acceptance record | Local browser acceptance passed |
+| Stage 3.4.3 Auth protected API sweep | Protected API sweep passed |
 
 ## Environment
 
