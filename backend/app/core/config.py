@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     encryption_key: str = Field(default="", alias="ENCRYPTION_KEY")
     session_secret: str = Field(default="", alias="SESSION_SECRET")
     init_token: str = Field(default="", alias="INIT_TOKEN")
+    admin_username: str = Field(default="", alias="ADMIN_USERNAME")
+    admin_password_hash: str = Field(default="", alias="ADMIN_PASSWORD_HASH")
     cookie_secure: bool = Field(default=False, alias="COOKIE_SECURE")
     cookie_samesite: str = Field(default="lax", alias="COOKIE_SAMESITE")
     session_ttl_seconds: int = Field(default=86400, alias="SESSION_TTL_SECONDS")

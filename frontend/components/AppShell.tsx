@@ -2,15 +2,14 @@
 
 import { useEffect, useState } from "react";
 
-import { InitAdminPanel } from "@/components/InitAdminPanel";
-import { LoginPanel } from "@/components/LoginPanel";
+import { LoginScreen } from "@/components/LoginScreen";
 import { NodesPanel } from "@/components/NodesPanel";
 import { ReadVpsPanel } from "@/components/ReadVpsPanel";
 import { SystemStatus } from "@/components/SystemStatus";
 import { TransitResourcesPanel } from "@/components/TransitResourcesPanel";
 import { TransitRoutesPanel } from "@/components/TransitRoutesPanel";
 import { TransitTopologyPreviewPanel } from "@/components/TransitTopologyPreviewPanel";
-import { apiFetch, type CsrfResult } from "@/lib/api";
+import { AUTH_EXPIRED_EVENT, apiFetch, type AuthUser, type CsrfResult } from "@/lib/api";
 
 const RECREATE_VPS_STORAGE_KEY = "livelines.recreateVpsId";
 
@@ -57,8 +56,9 @@ const panels: Array<{
 export function AppShell() {
   const [recreateVpsId, setRecreateVpsId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<PanelId>("servers");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentAdmin, setCurrentAdmin] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
   const activePanelMeta = panels.find((panel) => panel.id === activePanel) ?? panels[1];
 
   useEffect(() => {
@@ -67,12 +67,28 @@ export function AppShell() {
 
   useEffect(() => {
     async function checkAuth() {
-      const result = await apiFetch<CsrfResult>("/api/auth/csrf");
-      setIsAuthenticated(result.success);
+      const result = await apiFetch<AuthUser>("/api/auth/me");
+      if (result.success) {
+        setCurrentAdmin(result.data);
+        setAuthMessage("");
+      } else {
+        setCurrentAdmin(null);
+        setAuthMessage("");
+      }
       setAuthChecked(true);
     }
 
     void checkAuth();
+  }, []);
+
+  useEffect(() => {
+    function handleAuthExpired() {
+      setCurrentAdmin(null);
+      setAuthMessage("登录状态已过期，请重新登录。");
+    }
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   }, []);
 
   function handleVpsReadyForRecreate(vpsId: string) {
@@ -85,11 +101,44 @@ export function AppShell() {
     window.localStorage.removeItem(RECREATE_VPS_STORAGE_KEY);
   }
 
+  async function handleLogout() {
+    const csrfResult = await apiFetch<CsrfResult>("/api/auth/csrf");
+    if (csrfResult.success) {
+      await apiFetch("/api/auth/logout", {
+        method: "POST",
+        headers: {
+          "X-CSRF-Token": csrfResult.data.csrf_token,
+        },
+      });
+    }
+
+    setCurrentAdmin(null);
+    setAuthMessage("已退出登录。");
+  }
+
+  if (!authChecked) {
+    return (
+      <main className="login-page">
+        <section className="login-card" aria-label="登录状态检查">
+          <div className="login-brand">
+            <span className="login-kicker">LiveLine Console</span>
+            <h1>正在检查登录状态</h1>
+            <p>请稍候。</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (!currentAdmin) {
+    return <LoginScreen initialMessage={authMessage} onLogin={setCurrentAdmin} />;
+  }
+
   return (
     <main className="page">
       <aside className="sidebar">
         <div className="brand">LiveLine Console</div>
-        <div className="stage">Stage 3.3.3 单条 gost 转发</div>
+        <div className="stage">Stage 3.4.1 登录门禁</div>
         <nav className="nav">
           {panels.map((panel) => (
             <button
@@ -111,19 +160,17 @@ export function AppShell() {
             <h1>{activePanelMeta.title}</h1>
             <p>{activePanelMeta.description}</p>
           </div>
+          <div className="topbar-actions">
+            <span className="admin-badge">已登录：{currentAdmin.username}</span>
+            <button className="ghost-button" type="button" onClick={handleLogout}>
+              退出登录
+            </button>
+          </div>
         </header>
 
         <div className="grid">
           <SystemStatus />
-          <InitAdminPanel />
-          <LoginPanel onAuthChange={setIsAuthenticated} />
-          {activePanel !== "system" && authChecked && !isAuthenticated ? (
-            <section className="panel wide">
-              <h2>需要登录</h2>
-              <div className="empty">请先登录管理员账号，再进入该管理区域。</div>
-            </section>
-          ) : null}
-          {activePanel === "servers" && isAuthenticated ? (
+          {activePanel === "servers" ? (
             <>
               <ReadVpsPanel recreateVpsId={recreateVpsId} onRecreateVpsConsumed={clearRecreateVps} />
               <NodesPanel onVpsReadyForRecreate={handleVpsReadyForRecreate} />
@@ -133,9 +180,9 @@ export function AppShell() {
               </section>
             </>
           ) : null}
-          {activePanel === "transitResources" && isAuthenticated ? <TransitResourcesPanel /> : null}
-          {activePanel === "topology" && isAuthenticated ? <TransitTopologyPreviewPanel /> : null}
-          {activePanel === "transitRoutes" && isAuthenticated ? <TransitRoutesPanel /> : null}
+          {activePanel === "transitResources" ? <TransitResourcesPanel /> : null}
+          {activePanel === "topology" ? <TransitTopologyPreviewPanel /> : null}
+          {activePanel === "transitRoutes" ? <TransitRoutesPanel /> : null}
           {activePanel === "system" ? (
             <section className="panel wide">
               <h2>操作区</h2>

@@ -63,6 +63,15 @@ button.danger:hover {
   background: #912018;
 }
 
+button.ghost-button {
+  background: #e2e8f0;
+  color: var(--text);
+}
+
+button.ghost-button:hover {
+  background: #cbd5e1;
+}
+
 input,
 textarea,
 select {
@@ -75,6 +84,73 @@ select {
 textarea {
   min-height: 140px;
   resize: vertical;
+}
+
+.login-page {
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(15, 118, 110, 0.12), rgba(17, 24, 39, 0.08)),
+    var(--bg);
+  display: grid;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+  display: grid;
+  gap: 22px;
+  justify-self: center;
+  padding: 28px;
+  width: min(100%, 440px);
+}
+
+.login-brand {
+  display: grid;
+  gap: 6px;
+}
+
+.login-kicker {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.login-brand h1 {
+  font-size: 28px;
+  margin: 0;
+}
+
+.login-brand p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-form label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.auth-error {
+  background: #fff1f0;
+  border: 1px solid #f4b4ae;
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
 }
 
 .page {
@@ -147,6 +223,24 @@ textarea {
 .topbar p {
   color: var(--muted);
   margin: 0;
+}
+
+.topbar-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.admin-badge {
+  background: #ecfdf3;
+  border: 1px solid #abefc6;
+  border-radius: 999px;
+  color: var(--ok);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 7px 10px;
 }
 
 .grid {

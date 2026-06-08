@@ -857,6 +857,26 @@ enable, does not stop, downgrade, or replace `gost` 8443, and does not let
 port changes, firewall changes, or further `node.share_link` changes require
 separate approval.
 
+## Stage 3.4.1 Auth login gate scope
+
+Stage 3.4.1 adds a system login gate. Unauthenticated visitors see only the
+LiveLine Console login screen. After successful admin login, the existing
+system shell and management panels are rendered. The frontend checks
+`GET /api/auth/me` on startup, uses `POST /api/auth/login` for login, and uses
+`POST /api/auth/logout` for logout with the existing HttpOnly cookie session and
+CSRF flow.
+
+Stage 3.4.1 reuses the existing admin password hash verification and protected
+API dependencies. It supports the existing admin-table password hash and an
+optional `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH` configured hash for the
+matching active admin user. It does not add database migrations, does not write
+real passwords to code or docs, and does not store passwords in the frontend.
+This stage is an Auth/UI stage only: it does not read or modify
+`node.share_link`, does not add listening ports, does not execute SSH or remote
+commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
+does not perform a new cutover, does not let `socat` take over 8443, and does
+not stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -912,6 +932,7 @@ separate approval.
 | Stage 3.3.33 C post-cutover observation result | Observation Healthy; socat 18443 formal route retained; gost 8443 fallback retained |
 | Stage 3.3.34 C stability archive | C-minimal cutover stable archive documented; maintenance observation recommended |
 | Stage 3.3.35 C maintenance observation plan | Maintenance observation plan documented; gost 8443 fallback retained |
+| Stage 3.4.1 Auth login gate | Development complete, pending local auth acceptance |
 
 ## Environment
 
@@ -929,6 +950,8 @@ At minimum, keep these variables configured:
 - `ENCRYPTION_KEY`
 - `SESSION_SECRET`
 - `INIT_TOKEN`
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD_HASH`
 - `COOKIE_SECURE`
 - `COOKIE_SAMESITE`
 - `APP_ENV`
@@ -999,6 +1022,12 @@ curl -i -c /tmp/livelines-cookies.txt \
   -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"change-this-strong-password"}'
+```
+
+Check current admin session:
+
+```bash
+curl -b /tmp/livelines-cookies.txt http://localhost:8000/api/auth/me
 ```
 
 Fetch CSRF token:
