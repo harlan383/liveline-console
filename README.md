@@ -877,6 +877,22 @@ commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
 does not perform a new cutover, does not let `socat` take over 8443, and does
 not stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.4.2 Auth login local acceptance record scope
+
+Stage 3.4.2 records the local browser acceptance result for Stage 3.4.1. The
+operator confirmed that `http://localhost:3000` shows only the login page before
+login, wrong credentials show a failure message, correct credentials enter the
+system panel, refresh keeps the session, logout returns to the login page, and
+the system panel is hidden after logout.
+
+Stage 3.4.2 is an acceptance-record stage only. It does not modify
+authentication logic, does not add database migrations, does not read or modify
+`node.share_link`, does not add listening ports, does not execute SSH or remote
+commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
+does not perform cutover, does not let `socat` take over 8443, and does not
+stop, downgrade, or replace `gost` 8443. The formal link remains `socat` 18443
+and the fallback link remains `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -932,7 +948,8 @@ not stop, downgrade, or replace `gost` 8443.
 | Stage 3.3.33 C post-cutover observation result | Observation Healthy; socat 18443 formal route retained; gost 8443 fallback retained |
 | Stage 3.3.34 C stability archive | C-minimal cutover stable archive documented; maintenance observation recommended |
 | Stage 3.3.35 C maintenance observation plan | Maintenance observation plan documented; gost 8443 fallback retained |
-| Stage 3.4.1 Auth login gate | Development complete, pending local auth acceptance |
+| Stage 3.4.1 Auth login gate | Development complete |
+| Stage 3.4.2 Auth login local acceptance record | Local browser acceptance passed |
 
 ## Environment
 
