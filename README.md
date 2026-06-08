@@ -841,6 +841,22 @@ enable, does not stop, downgrade, or replace `gost` 8443, does not let `socat`
 take over 8443, and does not trigger rollback. Future cleanup of `gost` 8443 or
 any further `node.share_link` change requires a separate approval stage.
 
+## Stage 3.3.35 C maintenance observation plan scope
+
+Stage 3.3.35 records the maintenance observation plan after the C-minimal
+cutover reached stable archive state. The current formal route remains `socat`
+18443, the fallback route remains `gost` 8443, `node.share_link` points to
+`socat` 18443, rollback is not required, and `gost` 8443 should remain retained
+for a short-term maintenance observation period.
+
+Stage 3.3.35 is not a new cutover. It does not modify `node.share_link`, does
+not add listening ports, does not add database migrations, does not modify
+firewall rules, does not execute systemd start / stop / restart / disable /
+enable, does not stop, downgrade, or replace `gost` 8443, and does not let
+`socat` take over 8443. Future cleanup of `gost` 8443, `socat` 8443 takeover,
+port changes, firewall changes, or further `node.share_link` changes require
+separate approval.
+
 ## Stage Status
 
 | Stage | Status |
@@ -895,6 +911,7 @@ any further `node.share_link` change requires a separate approval stage.
 | Stage 3.3.32 C post-cutover observation | Observation template documented; no new cutover executed |
 | Stage 3.3.33 C post-cutover observation result | Observation Healthy; socat 18443 formal route retained; gost 8443 fallback retained |
 | Stage 3.3.34 C stability archive | C-minimal cutover stable archive documented; maintenance observation recommended |
+| Stage 3.3.35 C maintenance observation plan | Maintenance observation plan documented; gost 8443 fallback retained |
 
 ## Environment
 
