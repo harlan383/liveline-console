@@ -207,8 +207,25 @@ export type CsrfResult = {
   csrf_token: string;
 };
 
+export type AuthUser = {
+  admin_id: string;
+  username: string;
+};
+
+export const AUTH_EXPIRED_EVENT = "livelines:auth-expired";
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+function notifyAuthExpired(path: string, status: number) {
+  if (
+    typeof window !== "undefined" &&
+    status === 401 &&
+    !path.startsWith("/api/auth/")
+  ) {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+  }
+}
 
 export async function apiFetch<T>(
   path: string,
@@ -223,6 +240,7 @@ export async function apiFetch<T>(
     },
   });
 
+  notifyAuthExpired(path, response.status);
   return response.json() as Promise<ApiResponse<T>>;
 }
 
@@ -241,5 +259,6 @@ export async function apiFormFetch<T>(
     },
   });
 
+  notifyAuthExpired(path, response.status);
   return response.json() as Promise<ApiResponse<T>>;
 }
