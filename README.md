@@ -1079,6 +1079,30 @@ cutover, does not let `socat` take over 8443, and does not stop, downgrade, or
 replace `gost` 8443. The current formal link remains `socat` 18443 and the
 fallback link remains `gost` 8443.
 
+## Stage 3.5.2 Local backup and restore plan scope
+
+Stage 3.5.2 documents the local single-user database backup and restore plan.
+The plan identifies PostgreSQL as the core backup target, records that Docker
+Compose local data volumes should be reviewed in a future implementation
+stage, and clarifies that README/docs are managed by Git rather than by the
+database backup process.
+
+The plan defines a future local backup directory shape under
+`backups/local-db/YYYYMMDD-HHMMSS/`, backup timing before upgrades,
+migrations, route changes, formal switching, and large deletion operations,
+restore safety checks, health checks after restore, and backup artifact safety
+rules. Real backup files must not be committed to Git, sent to chat tools, or
+uploaded to public storage.
+
+Stage 3.5.2 is planning-only. It does not write backup scripts, does not
+generate real backup files, does not modify authentication logic, does not add
+database migrations, does not read or modify `node.share_link`, does not add
+listening ports, does not execute SSH or remote commands, does not trigger
+Worker/RQ tasks, does not modify firewall rules, does not perform cutover,
+does not let `socat` take over 8443, and does not stop, downgrade, or replace
+`gost` 8443. The current formal link remains `socat` 18443 and the fallback
+link remains `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1145,6 +1169,7 @@ fallback link remains `gost` 8443.
 | Stage 3.4.9 Auth production environment guardrails acceptance record | Guardrails acceptance recorded |
 | Stage 3.4.10 Auth security stability archive | Auth security baseline archived |
 | Stage 3.5.1 Local console operations readiness | Local console daily operations documented |
+| Stage 3.5.2 Local backup and restore plan | Local backup and restore plan documented |
 
 ## Environment
 
