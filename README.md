@@ -1149,6 +1149,27 @@ or remote commands, does not trigger Worker/RQ tasks, does not modify firewall
 rules, does not perform cutover, does not let `socat` take over 8443, and does
 not stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.5.5 Route safety guardrails UI scope
+
+Stage 3.5.5 adds route safety guardrails to the local UI so the operator can
+see the current production route state before working in the console. The UI
+now states that the formal link is `socat` 18443, the fallback link is `gost`
+8443, and `node.share_link` already points to `socat` 18443.
+
+The guardrails appear in the logged-in shell and in the transit resource,
+topology preview, and single-route areas. They remind the operator not to
+modify `node.share_link`, not to close `gost` 8443, not to let `socat` take
+over 8443, and not to delete or overwrite `socat` 18443. They also remind that
+future listening-port additions or changes require checking the cloud security
+group, cloud firewall, and server firewall for the corresponding TCP port.
+
+Stage 3.5.5 changes frontend display text and styling only. It does not modify
+backend business logic or authentication logic, does not add database
+migrations, does not read or modify `node.share_link`, does not add listening
+ports, does not execute SSH or remote commands, does not trigger Worker/RQ
+tasks, does not modify firewall rules, does not perform cutover, does not let
+`socat` take over 8443, and does not stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1218,6 +1239,7 @@ not stop, downgrade, or replace `gost` 8443.
 | Stage 3.5.2 Local backup and restore plan | Local backup and restore plan documented |
 | Stage 3.5.3 Local backup and restore implementation | Local backup and restore scripts documented / implemented |
 | Stage 3.5.4 Topology preview usability polish | Topology preview clarified as preview-only |
+| Stage 3.5.5 Route safety guardrails UI | Route safety guardrails added to local UI |
 
 ## Environment
 
