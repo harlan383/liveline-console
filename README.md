@@ -1034,6 +1034,28 @@ commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
 does not perform cutover, does not let `socat` take over 8443, and does not
 stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.4.10 Auth security stability archive scope
+
+Stage 3.4.10 archives the stable baseline for the Stage 3.4 Auth security
+module. The archive covers the completed login gate, browser login acceptance,
+protected API sweep, Auth/session hardening plan, login failure rate limiting,
+rate-limit browser acceptance, production environment readiness check,
+production guardrails, and production guardrails acceptance record.
+
+The archived baseline confirms that local development remains usable,
+`/api/health` stays public, important APIs return `401` when unauthenticated,
+login failures return `401` before the threshold and `429` at the threshold,
+and production guardrails reject weak or incomplete Auth configuration. The
+real password is entered only in the browser during manual acceptance and is
+not written to terminal commands, docs, logs, or Git.
+
+Stage 3.4.10 is documentation-only. It does not modify authentication logic,
+does not add database migrations, does not read or modify `node.share_link`,
+does not add listening ports, does not execute SSH or remote commands, does
+not trigger Worker/RQ tasks, does not modify firewall rules, does not perform
+cutover, does not let `socat` take over 8443, and does not stop, downgrade, or
+replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1098,6 +1120,7 @@ stop, downgrade, or replace `gost` 8443.
 | Stage 3.4.7 Auth production environment readiness check | Production Auth env readiness documented |
 | Stage 3.4.8 Auth production environment guardrails | Production-only Auth startup guardrails implemented |
 | Stage 3.4.9 Auth production environment guardrails acceptance record | Guardrails acceptance recorded |
+| Stage 3.4.10 Auth security stability archive | Auth security baseline archived |
 
 ## Environment
 
