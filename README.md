@@ -1103,6 +1103,31 @@ does not let `socat` take over 8443, and does not stop, downgrade, or replace
 `gost` 8443. The current formal link remains `socat` 18443 and the fallback
 link remains `gost` 8443.
 
+## Stage 3.5.3 Local backup and restore implementation scope
+
+Stage 3.5.3 implements local helper scripts for the single-user PostgreSQL
+backup and restore workflow. The scripts use the existing Docker Compose
+`postgres` service, read PostgreSQL database/user values from the container
+environment, and do not print database passwords or application secrets.
+
+Added scripts:
+
+- `scripts/local-db-backup.sh` creates a local custom-format PostgreSQL backup
+  under `backups/local-db/YYYYMMDD-HHMMSS/`.
+- `scripts/local-db-restore.sh` restores an explicit `.dump`, `.backup`, or
+  `.sql` file only after an interactive confirmation.
+- `scripts/local-health-check.sh` prints `docker compose ps` and checks
+  `/api/health`.
+
+Stage 3.5.3 also updates `.gitignore` so local backup artifacts are not
+committed. It does not modify business logic or authentication logic, does not
+add database migrations, does not read or modify `node.share_link`, does not
+add listening ports, does not execute SSH or remote commands, does not trigger
+Worker/RQ tasks, does not modify firewall rules, does not perform cutover,
+does not let `socat` take over 8443, and does not stop, downgrade, or replace
+`gost` 8443. The current formal link remains `socat` 18443 and the fallback
+link remains `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1170,6 +1195,7 @@ link remains `gost` 8443.
 | Stage 3.4.10 Auth security stability archive | Auth security baseline archived |
 | Stage 3.5.1 Local console operations readiness | Local console daily operations documented |
 | Stage 3.5.2 Local backup and restore plan | Local backup and restore plan documented |
+| Stage 3.5.3 Local backup and restore implementation | Local backup and restore scripts documented / implemented |
 
 ## Environment
 
