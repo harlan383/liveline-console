@@ -990,6 +990,26 @@ remote commands, does not trigger Worker/RQ tasks, does not modify firewall
 rules, does not perform cutover, does not let `socat` take over 8443, and does
 not stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.4.8 Auth production environment guardrails scope
+
+Stage 3.4.8 implements production-only Auth configuration startup guardrails.
+The existing `APP_ENV` marker is reused: local development keeps
+`APP_ENV=local`, while `APP_ENV=production` enables stricter checks.
+
+In production, the backend now rejects weak or placeholder Auth configuration:
+`SESSION_SECRET` must be strong and non-placeholder, `ADMIN_PASSWORD_HASH` must
+look like the project secure hash format, `COOKIE_SECURE` must be `true`,
+`COOKIE_SAMESITE` must be an explicit allowed value, `SESSION_TTL_SECONDS` must
+be positive, and login rate-limit values must remain positive. Startup errors
+name the invalid setting but do not print real secret, hash, cookie, session,
+token, or node-link values.
+
+Stage 3.4.8 does not add database migrations, does not read or modify
+`node.share_link`, does not add listening ports, does not execute SSH or remote
+commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
+does not perform cutover, does not let `socat` take over 8443, and does not
+stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1052,6 +1072,7 @@ not stop, downgrade, or replace `gost` 8443.
 | Stage 3.4.5 Auth login rate limit hardening | Redis-backed login failure rate limiting implemented |
 | Stage 3.4.6 Auth login rate limit browser acceptance record | Browser acceptance passed |
 | Stage 3.4.7 Auth production environment readiness check | Production Auth env readiness documented |
+| Stage 3.4.8 Auth production environment guardrails | Production-only Auth startup guardrails implemented |
 
 ## Environment
 
