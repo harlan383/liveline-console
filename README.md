@@ -911,6 +911,25 @@ cutover, does not let `socat` take over 8443, and does not stop, downgrade, or
 replace `gost` 8443. The formal link remains `socat` 18443 and the fallback
 link remains `gost` 8443.
 
+## Stage 3.4.4 Auth session hardening plan scope
+
+Stage 3.4.4 reviews the current auth/session mechanism and records a future
+hardening plan. The review covers `POST /api/auth/login`,
+`POST /api/auth/logout`, `GET /api/auth/me`, HttpOnly session cookies,
+`SESSION_SECRET`, `SESSION_TTL_SECONDS`, `COOKIE_SECURE`, `COOKIE_SAMESITE`,
+`ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, protected API `401` handling, and
+logout cookie clearing.
+
+Stage 3.4.4 is a planning and security-review stage only. It does not implement
+login rate limiting, does not force cookie config changes, does not add
+database migrations, does not modify authentication code, does not read or
+modify `node.share_link`, does not add listening ports, does not execute SSH or
+remote commands, does not trigger Worker/RQ tasks, does not modify firewall
+rules, does not perform cutover, does not let `socat` take over 8443, and does
+not stop, downgrade, or replace `gost` 8443. Future login throttling, forced
+secure-cookie startup checks, session rotation, or idle timeout must be handled
+in separately approved stages.
+
 ## Stage Status
 
 | Stage | Status |
@@ -969,6 +988,7 @@ link remains `gost` 8443.
 | Stage 3.4.1 Auth login gate | Development complete |
 | Stage 3.4.2 Auth login local acceptance record | Local browser acceptance passed |
 | Stage 3.4.3 Auth protected API sweep | Protected API sweep passed |
+| Stage 3.4.4 Auth session hardening plan | Hardening plan documented; no auth logic change |
 
 ## Environment
 
