@@ -552,6 +552,51 @@ textarea {
   padding: 14px;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.topology-status-strip {
+  background: #ecfdf3;
+  border: 1px solid #abefc6;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 14px;
+  padding: 12px;
+}
+
+.topology-status-strip div {
+  background: #ffffff;
+  border: 1px solid #d1fadf;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.topology-status-strip span {
+  color: #067647;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.topology-status-strip strong {
+  overflow-wrap: anywhere;
+}
+
+.topology-status-strip p {
+  color: #067647;
+  font-size: 13px;
+  font-weight: 700;
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .topology-card,
 .topology-preview-output {
   border: 1px solid var(--line);
@@ -1079,6 +1124,7 @@ button.compact {
   .topology-preview-layout,
   .topology-preview-form,
   .topology-chain,
+  .topology-status-strip,
   .route-layout,
   .route-form,
   .route-row,
