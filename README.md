@@ -1056,6 +1056,29 @@ not trigger Worker/RQ tasks, does not modify firewall rules, does not perform
 cutover, does not let `socat` take over 8443, and does not stop, downgrade, or
 replace `gost` 8443.
 
+## Stage 3.5.1 Local console operations readiness scope
+
+Stage 3.5.1 documents the local single-user console operations workflow. The
+system is currently used only on the user's Mac at `http://localhost:3000`; it
+does not require public production deployment, a domain, HTTPS, Nginx, Caddy,
+multi-user roles, or an enterprise audit backend.
+
+The operations readiness document records daily commands for entering the
+project directory, starting, stopping, rebuilding, and restarting Docker
+Compose services, checking container status, checking `/api/health`, opening
+the local console, verifying the login page, confirming successful login,
+confirming logout, and handling common local failures. It also records that
+real passwords must be typed only in the browser login form and must not be
+written into terminal commands, docs, logs, or Git.
+
+Stage 3.5.1 is documentation-only. It does not modify authentication logic,
+does not add database migrations, does not read or modify `node.share_link`,
+does not add listening ports, does not execute SSH or remote commands, does
+not trigger Worker/RQ tasks, does not modify firewall rules, does not perform
+cutover, does not let `socat` take over 8443, and does not stop, downgrade, or
+replace `gost` 8443. The current formal link remains `socat` 18443 and the
+fallback link remains `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1121,6 +1144,7 @@ replace `gost` 8443.
 | Stage 3.4.8 Auth production environment guardrails | Production-only Auth startup guardrails implemented |
 | Stage 3.4.9 Auth production environment guardrails acceptance record | Guardrails acceptance recorded |
 | Stage 3.4.10 Auth security stability archive | Auth security baseline archived |
+| Stage 3.5.1 Local console operations readiness | Local console daily operations documented |
 
 ## Environment
 
