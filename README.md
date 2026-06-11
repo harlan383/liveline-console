@@ -967,6 +967,29 @@ ports, does not execute SSH or remote commands, does not trigger Worker/RQ
 tasks, does not modify firewall rules, does not perform cutover, does not let
 `socat` take over 8443, and does not stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.4.7 Auth production environment readiness check scope
+
+Stage 3.4.7 records the production Auth environment readiness check. It reviews
+the production requirements for `SESSION_SECRET`, `SESSION_TTL_SECONDS`,
+`COOKIE_SECURE`, `COOKIE_SAMESITE`, `ADMIN_USERNAME`,
+`ADMIN_PASSWORD_HASH`, `AUTH_LOGIN_MAX_ATTEMPTS`,
+`AUTH_LOGIN_WINDOW_SECONDS`, and `AUTH_LOGIN_LOCK_SECONDS`.
+
+The readiness check confirms that `.env.example` contains placeholders and safe
+local defaults only, while production must provide strong secrets, a production
+password hash, HTTPS with `COOKIE_SECURE=true`, a deliberate SameSite policy, a
+finite session TTL, and finite login rate-limit settings. The current config
+code requires non-empty `SESSION_SECRET`, validates `COOKIE_SAMESITE`, and
+validates login rate-limit values as positive; stricter production startup
+guards should be handled in separately approved stages.
+
+Stage 3.4.7 is a documentation and readiness-check stage only. It does not
+modify authentication logic, does not add database migrations, does not read or
+modify `node.share_link`, does not add listening ports, does not execute SSH or
+remote commands, does not trigger Worker/RQ tasks, does not modify firewall
+rules, does not perform cutover, does not let `socat` take over 8443, and does
+not stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1028,6 +1051,7 @@ tasks, does not modify firewall rules, does not perform cutover, does not let
 | Stage 3.4.4 Auth session hardening plan | Hardening plan documented; no auth logic change |
 | Stage 3.4.5 Auth login rate limit hardening | Redis-backed login failure rate limiting implemented |
 | Stage 3.4.6 Auth login rate limit browser acceptance record | Browser acceptance passed |
+| Stage 3.4.7 Auth production environment readiness check | Production Auth env readiness documented |
 
 ## Environment
 
