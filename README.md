@@ -949,6 +949,24 @@ commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
 does not perform cutover, does not let `socat` take over 8443, and does not
 stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.4.6 Auth login rate limit browser acceptance record scope
+
+Stage 3.4.6 records the local browser acceptance result for Stage 3.4.5 login
+rate-limit hardening. The browser acceptance passed: opening
+`http://localhost:3000` shows the login page, correct credentials enter the
+system panel, logout returns to the login page, wrong passwords fail before the
+threshold, repeated wrong attempts show a generic rate-limit message, the
+rate-limit message does not reveal whether the account exists, and the system
+panel is hidden after logout.
+
+Stage 3.4.6 is an acceptance-record stage only. The real password was entered
+only in the browser and was not written to documents, terminal commands, logs,
+or Git. This stage does not modify authentication logic, does not add database
+migrations, does not read or modify `node.share_link`, does not add listening
+ports, does not execute SSH or remote commands, does not trigger Worker/RQ
+tasks, does not modify firewall rules, does not perform cutover, does not let
+`socat` take over 8443, and does not stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1009,6 +1027,7 @@ stop, downgrade, or replace `gost` 8443.
 | Stage 3.4.3 Auth protected API sweep | Protected API sweep passed |
 | Stage 3.4.4 Auth session hardening plan | Hardening plan documented; no auth logic change |
 | Stage 3.4.5 Auth login rate limit hardening | Redis-backed login failure rate limiting implemented |
+| Stage 3.4.6 Auth login rate limit browser acceptance record | Browser acceptance passed |
 
 ## Environment
 
