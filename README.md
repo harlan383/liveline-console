@@ -930,6 +930,25 @@ not stop, downgrade, or replace `gost` 8443. Future login throttling, forced
 secure-cookie startup checks, session rotation, or idle timeout must be handled
 in separately approved stages.
 
+## Stage 3.4.5 Auth login rate limit hardening scope
+
+Stage 3.4.5 adds Redis-backed failed-login rate limiting to
+`POST /api/auth/login`. The limiter is scoped by client IP plus submitted
+username, stores only an HMAC-hashed identifier in Redis keys, and never stores
+passwords, password hashes, cookies, session tokens, CSRF tokens, or plaintext
+usernames in Redis keys or logs. Defaults are controlled by
+`AUTH_LOGIN_MAX_ATTEMPTS`, `AUTH_LOGIN_WINDOW_SECONDS`, and
+`AUTH_LOGIN_LOCK_SECONDS`.
+
+Stage 3.4.5 preserves the existing HttpOnly cookie session flow. Failed login
+attempts return `401` before the threshold and `429 AUTH_RATE_LIMITED` after
+the threshold. A successful login clears the matching failure counter and lock.
+This stage does not add database migrations, does not read or modify
+`node.share_link`, does not add listening ports, does not execute SSH or remote
+commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
+does not perform cutover, does not let `socat` take over 8443, and does not
+stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -989,6 +1008,7 @@ in separately approved stages.
 | Stage 3.4.2 Auth login local acceptance record | Local browser acceptance passed |
 | Stage 3.4.3 Auth protected API sweep | Protected API sweep passed |
 | Stage 3.4.4 Auth session hardening plan | Hardening plan documented; no auth logic change |
+| Stage 3.4.5 Auth login rate limit hardening | Redis-backed login failure rate limiting implemented |
 
 ## Environment
 
@@ -1008,6 +1028,9 @@ At minimum, keep these variables configured:
 - `INIT_TOKEN`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD_HASH`
+- `AUTH_LOGIN_MAX_ATTEMPTS`
+- `AUTH_LOGIN_WINDOW_SECONDS`
+- `AUTH_LOGIN_LOCK_SECONDS`
 - `COOKIE_SECURE`
 - `COOKIE_SAMESITE`
 - `APP_ENV`

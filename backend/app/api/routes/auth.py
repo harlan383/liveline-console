@@ -9,6 +9,11 @@ from app.db.session import get_db
 from app.models.admin_user import AdminUser
 from app.schemas.auth import LoginRequest
 from app.schemas.common import error_response, success_response
+from app.services.auth_rate_limit import (
+    check_login_rate_limit,
+    clear_login_failures,
+    record_login_failure,
+)
 from app.services.auth_service import (
     SESSION_COOKIE_NAME,
     create_session,
@@ -49,6 +54,10 @@ def login(
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
+    rate_limit = check_login_rate_limit(request, payload.username)
+    if rate_limit.limited:
+        return error_response(429, "AUTH_RATE_LIMITED", "登录尝试过多，请稍后再试。")
+
     admin = find_active_admin(db, payload.username)
 
     password_valid = bool(admin and verify_admin_password(admin, payload.password))
@@ -68,7 +77,12 @@ def login(
             resource_type="admin",
         )
         db.commit()
+        failure_rate_limit = record_login_failure(request, payload.username)
+        if failure_rate_limit.limited:
+            return error_response(429, "AUTH_RATE_LIMITED", "登录尝试过多，请稍后再试。")
         return error_response(401, "AUTH_FAILED", "用户名或密码错误。")
+
+    clear_login_failures(request, payload.username)
 
     session, raw_session_token = create_session(db, admin, request)
     admin.last_login_at = datetime.now(UTC)

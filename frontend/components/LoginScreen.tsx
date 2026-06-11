@@ -29,6 +29,10 @@ export function LoginScreen({ initialMessage, onLogin }: LoginScreenProps) {
       });
 
       if (!result.success) {
+        if (result.error_code === "AUTH_RATE_LIMITED") {
+          setMessage("登录尝试过多，请稍后再试。");
+          return;
+        }
         setMessage(result.message || "登录失败，请检查账号和密码。");
         return;
       }
