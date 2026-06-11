@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     cookie_secure: bool = Field(default=False, alias="COOKIE_SECURE")
     cookie_samesite: str = Field(default="lax", alias="COOKIE_SAMESITE")
     session_ttl_seconds: int = Field(default=86400, alias="SESSION_TTL_SECONDS")
+    auth_login_max_attempts: int = Field(default=5, alias="AUTH_LOGIN_MAX_ATTEMPTS")
+    auth_login_window_seconds: int = Field(default=600, alias="AUTH_LOGIN_WINDOW_SECONDS")
+    auth_login_lock_seconds: int = Field(default=900, alias="AUTH_LOGIN_LOCK_SECONDS")
     temp_credential_ttl_seconds: int = Field(
         default=1800,
         alias="TEMP_CREDENTIAL_TTL_SECONDS",
@@ -45,6 +48,18 @@ class Settings(BaseSettings):
         if normalized not in {"lax", "strict", "none"}:
             raise ValueError("COOKIE_SAMESITE must be lax, strict, or none")
         return normalized
+
+    @field_validator(
+        "auth_login_max_attempts",
+        "auth_login_window_seconds",
+        "auth_login_lock_seconds",
+    )
+    @classmethod
+    def positive_auth_limit(cls, value: int, info):
+        if value < 1:
+            env_name = info.field_name.upper()
+            raise ValueError(f"{env_name} must be greater than 0")
+        return value
 
 
 @lru_cache
