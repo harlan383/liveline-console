@@ -58,6 +58,13 @@ data/
 storage/
 uploads/
 
+# local database backups
+backups/
+backups/local-db/
+liveline-db-*.sql
+*.dump
+*.backup
+
 # docker / local
 .docker/
 docker-data/
