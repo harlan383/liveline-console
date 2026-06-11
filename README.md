@@ -1128,6 +1128,27 @@ does not let `socat` take over 8443, and does not stop, downgrade, or replace
 `gost` 8443. The current formal link remains `socat` 18443 and the fallback
 link remains `gost` 8443.
 
+## Stage 3.5.4 Topology preview usability polish scope
+
+Stage 3.5.4 improves the local topology preview page so operators can clearly
+see that topology preview is `PREVIEW ONLY` and `NOT USABLE`. The page now
+states that preview does not connect to remote hosts, does not write config,
+does not save routes, does not create real forwarding, does not generate a
+real usable transit link, and does not modify `node.share_link`.
+
+The topology display separates the chain into client, transit resource,
+landing VPS / node, and target platform segments. The planned relay listen
+port is labeled as a preview port, not an actual listening port. The page also
+shows the current link roles: formal link `socat` 18443, fallback link `gost`
+8443, and `node.share_link` already pointing to `socat` 18443.
+
+Stage 3.5.4 changes frontend display text and styling only. It does not modify
+backend business logic, does not add database migrations, does not read or
+modify `node.share_link`, does not add listening ports, does not execute SSH
+or remote commands, does not trigger Worker/RQ tasks, does not modify firewall
+rules, does not perform cutover, does not let `socat` take over 8443, and does
+not stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1196,6 +1217,7 @@ link remains `gost` 8443.
 | Stage 3.5.1 Local console operations readiness | Local console daily operations documented |
 | Stage 3.5.2 Local backup and restore plan | Local backup and restore plan documented |
 | Stage 3.5.3 Local backup and restore implementation | Local backup and restore scripts documented / implemented |
+| Stage 3.5.4 Topology preview usability polish | Topology preview clarified as preview-only |
 
 ## Environment
 
