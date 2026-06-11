@@ -1010,6 +1010,30 @@ commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
 does not perform cutover, does not let `socat` take over 8443, and does not
 stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.4.9 Auth production environment guardrails acceptance record scope
+
+Stage 3.4.9 records acceptance after Stage 3.4.8 production Auth guardrails
+were merged. Local development still starts with `docker compose up --build -d`;
+`/api/health` reports backend/database/redis/worker ok; the frontend opens at
+`http://localhost:3000`; protected APIs still return `401` when
+unauthenticated; login rate limiting still returns `429 AUTH_RATE_LIMITED` at
+the threshold.
+
+Production guardrail simulations used only fake values and placeholders.
+`APP_ENV=production` rejects weak `SESSION_SECRET`, `COOKIE_SECURE=false`,
+missing `ADMIN_PASSWORD_HASH`, invalid `COOKIE_SAMESITE`, non-positive
+`SESSION_TTL_SECONDS`, and non-positive login rate-limit settings. A
+valid-shape fake production configuration loads successfully. Error messages
+identify configuration names and requirements without printing real secret,
+hash, password, cookie, session, token, or full node-link values.
+
+Stage 3.4.9 is an acceptance-record stage only. It does not modify
+authentication logic, does not add database migrations, does not read or modify
+`node.share_link`, does not add listening ports, does not execute SSH or remote
+commands, does not trigger Worker/RQ tasks, does not modify firewall rules,
+does not perform cutover, does not let `socat` take over 8443, and does not
+stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1073,6 +1097,7 @@ stop, downgrade, or replace `gost` 8443.
 | Stage 3.4.6 Auth login rate limit browser acceptance record | Browser acceptance passed |
 | Stage 3.4.7 Auth production environment readiness check | Production Auth env readiness documented |
 | Stage 3.4.8 Auth production environment guardrails | Production-only Auth startup guardrails implemented |
+| Stage 3.4.9 Auth production environment guardrails acceptance record | Guardrails acceptance recorded |
 
 ## Environment
 
