@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { LoginScreen } from "@/components/LoginScreen";
 import { NodesPanel } from "@/components/NodesPanel";
 import { ReadVpsPanel } from "@/components/ReadVpsPanel";
+import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 import { SystemStatus } from "@/components/SystemStatus";
 import { TransitResourcesPanel } from "@/components/TransitResourcesPanel";
 import { TransitRoutesPanel } from "@/components/TransitRoutesPanel";
@@ -167,6 +168,8 @@ export function AppShell() {
             </button>
           </div>
         </header>
+
+        <RouteSafetyGuardrails />
 
         <div className="grid">
           <SystemStatus />

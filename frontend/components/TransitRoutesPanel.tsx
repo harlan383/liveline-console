@@ -18,6 +18,7 @@ import {
   type TransitRouteListResult,
   type TransitRouteRestartSocatResult,
 } from "@/lib/api";
+import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 
 const terminalStatuses = new Set(["success", "failed", "cancelled", "timeout"]);
 const SOCAT_RESOURCE_ID = "6d67c275-8ac9-4775-9519-c89b50718157";
@@ -565,6 +566,7 @@ export function TransitRoutesPanel() {
         <span>socat 18443 已通过测试，本阶段只展示并复制候选正式链接。</span>
         <span>本页面不会修改 node.share_link，不会停用 gost，也不会把 socat 接管 8443。</span>
       </div>
+      <RouteSafetyGuardrails context="routes" />
 
       {forwardingMethod === "socat" ? (
         <div className="warning-box">
@@ -728,6 +730,7 @@ export function TransitRoutesPanel() {
             <div className="warning-box">
               <span>运行只读诊断只会执行白名单诊断命令；重启按钮只对 socat 18443 测试链路开放。</span>
               <span>不提供停止、删除、创建入口，不允许操作 gost 8443 正式链路。</span>
+              <span>当前正式链路 socat 18443 不应被误删、覆盖或替换；正式链路变更必须进入单独审批阶段。</span>
             </div>
             <p className="message">{diagnosticMessage}</p>
           </div>

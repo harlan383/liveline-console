@@ -388,6 +388,75 @@ textarea {
   padding: 12px;
 }
 
+.route-safety-guardrail {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  color: #7c2d12;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+}
+
+.panel > .route-safety-guardrail {
+  margin-bottom: 14px;
+}
+
+.route-safety-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.route-safety-heading span {
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.route-safety-heading strong {
+  font-size: 15px;
+}
+
+.route-safety-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.route-safety-grid div {
+  background: #ffffff;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.route-safety-grid span {
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.route-safety-grid strong {
+  overflow-wrap: anywhere;
+}
+
+.route-safety-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.route-safety-list li {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .node-result {
   border: 1px solid #badbcc;
   border-radius: 8px;
@@ -1125,6 +1194,7 @@ button.compact {
   .topology-preview-form,
   .topology-chain,
   .topology-status-strip,
+  .route-safety-grid,
   .route-layout,
   .route-form,
   .route-row,

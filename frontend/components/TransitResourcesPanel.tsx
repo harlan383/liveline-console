@@ -15,6 +15,7 @@ import {
   type TransitServerReadResult,
   type TransitSocatInstallResult,
 } from "@/lib/api";
+import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 
 const terminalStatuses = new Set(["success", "failed", "cancelled", "timeout"]);
 
@@ -641,6 +642,7 @@ export function TransitResourcesPanel() {
         <span>Stage 3.3.1 仅对 server 资源提供只读检查；不会连接落地 VPS，不会安装工具或修改防火墙。</span>
         <span>不要在备注中填写密码、私钥、后台账号或专线密钥。</span>
       </div>
+      <RouteSafetyGuardrails context="resources" />
 
       <div className="transit-layout">
         <div>

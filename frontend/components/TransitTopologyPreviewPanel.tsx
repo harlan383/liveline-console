@@ -9,6 +9,7 @@ import {
   type TransitResourceData,
   type TransitResourceListResult,
 } from "@/lib/api";
+import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 
 const resourceTypeLabels: Record<string, string> = {
   server: "公网中转服务器",
@@ -212,6 +213,7 @@ export function TransitTopologyPreviewPanel() {
         </div>
         <p>拓扑预览不会修改以上状态，也不会读取或展示完整节点链接。</p>
       </div>
+      <RouteSafetyGuardrails context="topology" />
 
       <div className="topology-preview-layout">
         <div className="form topology-preview-form">
