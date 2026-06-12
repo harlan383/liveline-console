@@ -1321,6 +1321,31 @@ firewall rules, Worker/RQ tasks, current route state, or current transit links.
 It does not execute SSH or remote commands, perform cutover, let `socat` take
 over 8443, or stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.7.1 Single route remote execution readiness scope
+
+Stage 3.7.1 documents the readiness checklist for a future real single-route
+remote execution stage. It prepares the operator to confirm the target transit
+server, landing node, planned new listen port, local database backup, local
+health, empty task queues, port safety, cloud security group, cloud firewall,
+server firewall, and Workbuddy handoff boundaries before any remote execution
+is requested.
+
+The readiness baseline keeps `8443` reserved for the `gost` fallback route,
+keeps `18443` protected as the current formal `socat` route, blocks use of
+management or historical problem ports such as `22` and `20575`, and requires
+all new or changed TCP listening ports to be confirmed in the cloud security
+group, cloud firewall, and server firewall before entering a real creation
+stage.
+
+Stage 3.7.1 is documentation-only. It does not modify code, frontend behavior,
+backend logic, scripts, database schema, `node.share_link`, listening ports,
+firewall rules, Worker/RQ tasks, current route state, or current transit links.
+It does not execute SSH or remote commands, create real forwarding, perform
+cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
+8443. Workbuddy is not required for this readiness document, but will be
+required for later real SSH, remote creation, remote listening checks, or
+remote diagnosis stages.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1399,6 +1424,7 @@ over 8443, or stop, downgrade, or replace `gost` 8443.
 | Stage 3.6.3 Single route diagnosis polish | Single route diagnosis display polished |
 | Stage 3.6.4 Single route diagnosis browser acceptance record | Single route diagnosis browser acceptance recorded |
 | Stage 3.6.5 Single route create flow stability archive | Single route create flow baseline archived |
+| Stage 3.7.1 Single route remote execution readiness | Single route remote execution readiness documented |
 
 ## Environment
 
