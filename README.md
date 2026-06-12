@@ -1190,6 +1190,25 @@ not execute SSH or remote commands, does not trigger Worker/RQ tasks, does not
 modify firewall rules, does not perform cutover, does not let `socat` take over
 8443, and does not stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.5.7 Local upgrade and rollback SOP scope
+
+Stage 3.5.7 documents the local single-user upgrade and rollback SOP. The SOP
+defines how to prepare for local upgrades, back up the PostgreSQL database,
+record the current commit and health state, rebuild Docker services, validate
+the local console, and roll back through Git or database restore if needed.
+
+The documented flow covers `docker compose` checks, `scripts/local-db-backup.sh`,
+`scripts/local-db-restore.sh`, `scripts/local-health-check.sh`,
+`http://localhost:3000`, `/api/health`, Redis temporary credential checks,
+pending/running task checks, task history review, topology preview review, and
+route safety guardrail review.
+
+Stage 3.5.7 is documentation-only. It does not modify code, add scripts, create
+real backup files, add database migrations, read or modify `node.share_link`,
+add listening ports, execute SSH or remote commands, trigger Worker/RQ tasks,
+modify firewall rules, perform cutover, let `socat` take over 8443, or stop,
+downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1261,6 +1280,7 @@ modify firewall rules, does not perform cutover, does not let `socat` take over
 | Stage 3.5.4 Topology preview usability polish | Topology preview clarified as preview-only |
 | Stage 3.5.5 Route safety guardrails UI | Route safety guardrails added to local UI |
 | Stage 3.5.6 Local task history usability | Local task history usability improved |
+| Stage 3.5.7 Local upgrade and rollback SOP | Local upgrade and rollback SOP documented |
 
 ## Environment
 
