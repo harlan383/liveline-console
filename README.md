@@ -1267,6 +1267,23 @@ forwarding, add real listening ports, modify `node.share_link`, trigger backend
 tasks, perform cutover, let `socat` take over 8443, or stop, downgrade, or
 replace `gost` 8443.
 
+## Stage 3.6.3 Single route diagnosis polish scope
+
+Stage 3.6.3 improves the local single-route diagnosis display. The route page
+now separates task status, current step, progress, listen-port checks, forwarding
+process checks, systemd status, transit-to-landing connectivity, failure
+summaries, next-action hints, and redacted command output.
+
+The polish uses existing diagnosis task result fields such as `checks`,
+`hints`, `warnings`, `failures`, task status, and task logs. It does not add
+database fields, does not change Worker remote execution behavior, and does not
+create new diagnosis capability beyond the already authorized UI controls.
+
+Stage 3.6.3 does not execute SSH or remote commands, trigger backend tasks,
+create real forwarding, add listening ports, modify `node.share_link`, perform
+cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
+8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1342,6 +1359,7 @@ replace `gost` 8443.
 | Stage 3.5.8 Local console stability archive | Local console stability baseline archived |
 | Stage 3.6.1 Single route create flow review | Single route create flow reviewed |
 | Stage 3.6.2 Single route create safety gates | Single route create safety gates added |
+| Stage 3.6.3 Single route diagnosis polish | Single route diagnosis display polished |
 
 ## Environment
 
