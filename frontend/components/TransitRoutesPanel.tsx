@@ -29,8 +29,18 @@ const PROTECTED_LISTEN_PORT_MESSAGES: Record<string, string> = {
   "18443": "18443 当前为 socat 正式链路，不能被新转发覆盖或复用。",
   "20575": "20575 是历史问题端口，不能作为中转监听端口。",
 };
+const secretKeyPattern = /(private|private_key|passphrase|password|passwd|secret|token|cookie|session|admin_password_hash|ssh_key)/i;
+const linkPattern = /(vless|vmess|trojan|ss):\/\//i;
+const privateKeyPattern = /BEGIN (OPENSSH|RSA|EC|DSA)? ?PRIVATE KEY/i;
 
 type ForwardingMethod = "gost" | "socat";
+type DiagnosticItemSpec = {
+  key: string;
+  label: string;
+  purpose: string;
+  failureMeaning: string;
+  nextAction: string;
+};
 
 function displayValue(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "-" : String(value);
@@ -85,6 +95,114 @@ function listenPortValidationMessage(value: string) {
     return PROTECTED_LISTEN_PORT_MESSAGES[normalizedPort] ?? "该端口受保护，不能用于新转发。";
   }
   return null;
+}
+
+function redactString(value: string) {
+  if (privateKeyPattern.test(value)) {
+    return "[redacted private key]";
+  }
+  if (linkPattern.test(value)) {
+    const protocol = value.match(linkPattern)?.[1] ?? "node";
+    return `[redacted ${protocol} link]`;
+  }
+  if (secretKeyPattern.test(value)) {
+    return "[redacted sensitive text]";
+  }
+  if (value.length > 1800) {
+    return `${value.slice(0, 1400)}... [truncated]`;
+  }
+  return value;
+}
+
+function resultStrings(result: Record<string, unknown> | null, key: string) {
+  const value = result?.[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function diagnosticItemSpecs(task: TaskData | null): DiagnosticItemSpec[] {
+  if (task?.result_data?.["classification"] === "restart_socat_route") {
+    return [
+      {
+        key: "restart_result",
+        label: "重启结果",
+        purpose: "确认受控重启命令是否成功返回。",
+        failureMeaning: "重启命令失败或未返回成功状态。",
+        nextAction: "不要连续重试；先查看任务记录并确认是否需要人工介入。",
+      },
+      {
+        key: "service_status",
+        label: "systemd 状态检查",
+        purpose: "确认转发服务在 systemd 中的状态。",
+        failureMeaning: "服务可能未处于 active 状态，或服务文件/名称不符合预期。",
+        nextAction: "查看任务记录；真正远程复核需要 Workbuddy 或单独授权阶段。",
+      },
+      {
+        key: "listen_check",
+        label: "监听端口检查",
+        purpose: "确认中转机正在监听该 route 的 listen_port。",
+        failureMeaning: "ss 没有监听，转发服务可能未启动或已经退出。",
+        nextAction: "优先检查服务状态；如本地 nc timeout，同步检查云安全组、云防火墙和服务器防火墙。",
+      },
+      {
+        key: "target_connectivity",
+        label: "中转到落地连通性",
+        purpose: "确认中转机可以连到落地目标 host:port。",
+        failureMeaning: "中转服务器到落地 VPS 不通，或目标服务不可达。",
+        nextAction: "检查落地节点服务、目标端口和中转机出口连通性。",
+      },
+    ];
+  }
+
+  return [
+    {
+      key: "listen_check",
+      label: "监听端口检查",
+      purpose: "确认中转机正在监听该 route 的 listen_port。",
+      failureMeaning: "ss 没有监听，转发服务可能未启动、已退出，或端口被其它进程占用。",
+      nextAction: "查看 systemd 状态和进程检查；如外部访问 timeout，同步检查云安全组、云防火墙和服务器防火墙。",
+    },
+    {
+      key: "process_check",
+      label: "转发进程检查",
+      purpose: "确认 gost 或 socat 进程存在。",
+      failureMeaning: "转发进程不存在，服务可能未启动或已异常退出。",
+      nextAction: "查看服务状态和任务记录；真正远程复核需要 Workbuddy 或单独授权阶段。",
+    },
+    {
+      key: "target_connectivity",
+      label: "中转到落地连通性",
+      purpose: "确认中转机可以连到落地目标 host:port。",
+      failureMeaning: "中转服务器到落地 VPS 不通，或目标服务不可达。",
+      nextAction: "检查落地节点服务、目标端口和中转机出口连通性。",
+    },
+    {
+      key: "service_status",
+      label: "systemd 状态检查",
+      purpose: "确认转发服务在 systemd 中的状态。",
+      failureMeaning: "服务可能未处于 active 状态，或服务文件/名称不符合预期。",
+      nextAction: "查看任务记录；不要直接停止、重启或替换服务，除非进入授权阶段。",
+    },
+  ];
+}
+
+function checkStatus(check: Record<string, unknown> | null) {
+  if (!check) {
+    return { className: "warn", label: "未返回" };
+  }
+  return check["ok"] === true ? { className: "ok", label: "通过" } : { className: "bad", label: "失败" };
+}
+
+function diagnosticOutcome(task: TaskData) {
+  if (task.status === "failed") {
+    return task.error_message ? redactString(task.error_message) : "诊断任务失败，请查看任务记录。";
+  }
+  if (task.result_data?.["passed"] === true) {
+    return "诊断通过：监听、进程、服务状态和中转到落地连通性未发现异常。";
+  }
+  if (task.result_data?.["passed"] === false) {
+    return "诊断发现问题：请按失败项的下一步建议排查。";
+  }
+  return "诊断任务仍在进行或尚未返回完整结果。";
 }
 
 export function TransitRoutesPanel() {
@@ -513,21 +631,25 @@ export function TransitRoutesPanel() {
 
   function diagnosticCheckFor(key: string) {
     const result = diagnosticTask?.result_data;
+    const directCheck = objectValue(result?.[key]);
+    if (directCheck) {
+      return directCheck;
+    }
     const checks = objectValue(result?.["checks"]);
     return objectValue(checks?.[key]);
   }
 
   function checkOutput(check: Record<string, unknown> | null) {
     const output = check?.["raw_output"];
-    return typeof output === "string" && output ? output : "-";
+    return typeof output === "string" && output ? redactString(output) : "-";
   }
 
   function routeBadge(route: TransitRouteData) {
     if (route.forwarding_method === "socat" && route.listen_port === 18443) {
-      return "候选正式链路 / 尚未 cutover";
+      return "当前正式链路 / socat 18443";
     }
     if (route.forwarding_method === "gost" && route.listen_port === 8443) {
-      return "当前正式/回退链路 / 保留";
+      return "回退链路 / 保留";
     }
     return "只读线路";
   }
@@ -785,9 +907,12 @@ export function TransitRoutesPanel() {
               </label>
             </div>
             <div className="warning-box">
+              <span>本区域展示诊断结果，不等于正式切换，也不会修改 node.share_link。</span>
               <span>运行只读诊断只会执行白名单诊断命令；重启按钮只对 socat 18443 测试链路开放。</span>
               <span>不提供停止、删除、创建入口，不允许操作 gost 8443 正式链路。</span>
+              <span>诊断不会关闭 gost 8443，也不会让 socat 接管 8443。</span>
               <span>当前正式链路 socat 18443 不应被误删、覆盖或替换；正式链路变更必须进入单独审批阶段。</span>
+              <span>新增或变更端口后诊断失败，优先检查云安全组、云防火墙和服务器防火墙。</span>
             </div>
             <p className="message">{diagnosticMessage}</p>
           </div>
@@ -797,6 +922,10 @@ export function TransitRoutesPanel() {
             const serviceStatus = routeDiagnosticActive ? diagnosticCheckFor("service_status") : null;
             const targetConnectivity = routeDiagnosticActive ? diagnosticCheckFor("target_connectivity") : null;
             const processCheck = routeDiagnosticActive ? diagnosticCheckFor("process_check") : null;
+            const diagnosticResultRecord = routeDiagnosticActive ? objectValue(diagnosticTask?.result_data) : null;
+            const diagnosticWarnings = resultStrings(diagnosticResultRecord, "warnings");
+            const diagnosticHints = resultStrings(diagnosticResultRecord, "hints");
+            const diagnosticFailures = resultStrings(diagnosticResultRecord, "failures");
             const derivedSocatCandidateLink = derivedSocatCandidateLinkForRoute(route);
             return (
             <div className="route-card" key={route.id}>
@@ -841,7 +970,7 @@ export function TransitRoutesPanel() {
                 <span>请确认云服务器安全组/云防火墙已放行 TCP {route.listen_port}。</span>
                 <span>如果本地 nc timeout，优先检查云安全组/云防火墙和本机代理测试路径。</span>
                 {route.forwarding_method === "socat" ? (
-                  <span>socat 测试新增仍禁止使用 22 / 8443 / 20575。</span>
+                  <span>socat 新增仍禁止使用 22 / 8443 / 18443 / 20575。</span>
                 ) : null}
                 {route.forwarding_method === "gost" && route.listen_port === 8443 ? (
                   <span>此链路保留为回退链路。此前与 Xray Reality 兼容性存在问题，不建议作为当前优先测试入口。</span>
@@ -903,7 +1032,27 @@ export function TransitRoutesPanel() {
               </div>
               {routeDiagnosticActive && diagnosticTask ? (
                 <div className="diagnostic-result">
-                  <h5>只读诊断结果</h5>
+                  <div className="status-row">
+                    <div>
+                      <h5>只读诊断结果</h5>
+                      <p className="message">{diagnosticOutcome(diagnosticTask)}</p>
+                    </div>
+                    <span
+                      className={`pill ${
+                        diagnosticTask.result_data?.["passed"] === true
+                          ? "ok"
+                          : diagnosticTask.status === "failed" || diagnosticTask.result_data?.["passed"] === false
+                            ? "bad"
+                            : "warn"
+                      }`}
+                    >
+                      {diagnosticTask.result_data?.["passed"] === true
+                        ? "passed"
+                        : diagnosticTask.result_data?.["passed"] === false
+                          ? "failed"
+                          : diagnosticTask.status}
+                    </span>
+                  </div>
                   <div className="detail-grid">
                     <span>任务状态</span>
                     <strong>{diagnosticTask.status}</strong>
@@ -913,42 +1062,95 @@ export function TransitRoutesPanel() {
                     <strong>{diagnosticTask.progress}%</strong>
                     <span>错误码</span>
                     <strong>{diagnosticTask.error_code ?? "-"}</strong>
+                    <span>错误摘要</span>
+                    <strong>{diagnosticOutcome(diagnosticTask)}</strong>
+                    <span>建议下一步</span>
+                    <strong>
+                      {diagnosticFailures[0] ??
+                        diagnosticHints[0] ??
+                        "如果结果不符合预期，请查看任务记录；真正远程复核需要 Workbuddy 或单独授权阶段。"}
+                    </strong>
                   </div>
-                  {(diagnosticTask.result_data?.["classification"] === "restart_socat_route"
-                    ? [
-                        ["restart_result", diagnosticCheckFor("restart_result")],
-                        ["service_status", serviceStatus],
-                        ["listen_check", listenCheck],
-                        ["target_connectivity", targetConnectivity],
-                      ]
-                    : [
-                        ["listen_check", listenCheck],
-                        ["service_status", serviceStatus],
-                        ["target_connectivity", targetConnectivity],
-                        ["process_check", processCheck],
-                      ]
-                  ).map(([key, check]) => {
-                    const checkRecord = objectValue(check);
-                    return (
-                      <div className="diagnostic-output" key={String(key)}>
-                        <div className="status-row">
-                          <strong>{String(key)}</strong>
-                          <span className={`pill ${checkRecord?.["ok"] === true ? "ok" : "bad"}`}>
-                            {checkRecord ? String(checkRecord["ok"]) : "-"}
-                          </span>
+
+                  {diagnosticWarnings.length > 0 || diagnosticHints.length > 0 || diagnosticFailures.length > 0 ? (
+                    <div className="diagnostic-guidance">
+                      {diagnosticFailures.length > 0 ? (
+                        <div className="failure-box">
+                          <strong>失败原因摘要</strong>
+                          {diagnosticFailures.map((failure) => (
+                            <span key={failure}>{failure}</span>
+                          ))}
                         </div>
-                        <code>{typeof checkRecord?.["command"] === "string" ? checkRecord["command"] : "-"}</code>
-                        <pre>{checkOutput(checkRecord)}</pre>
-                      </div>
-                    );
-                  })}
+                      ) : null}
+                      {diagnosticHints.length > 0 ? (
+                        <div className="warning-box">
+                          <strong>建议下一步</strong>
+                          {diagnosticHints.map((hint) => (
+                            <span key={hint}>{hint}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {diagnosticWarnings.length > 0 ? (
+                        <div className="warning-box">
+                          <strong>安全边界</strong>
+                          {diagnosticWarnings.map((warning) => (
+                            <span key={warning}>{warning}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div className="diagnostic-result-grid">
+                    {diagnosticItemSpecs(diagnosticTask).map((item) => {
+                      const check =
+                        item.key === "listen_check"
+                          ? listenCheck
+                          : item.key === "service_status"
+                            ? serviceStatus
+                            : item.key === "target_connectivity"
+                              ? targetConnectivity
+                              : item.key === "process_check"
+                                ? processCheck
+                                : diagnosticCheckFor(item.key);
+                      const checkRecord = objectValue(check);
+                      const state = checkStatus(checkRecord);
+                      return (
+                        <div className="diagnostic-output" key={item.key}>
+                          <div className="status-row">
+                            <strong>{item.label}</strong>
+                            <span className={`pill ${state.className}`}>{state.label}</span>
+                          </div>
+                          <div className="diagnostic-explainer">
+                            <span>检查目的</span>
+                            <strong>{item.purpose}</strong>
+                            <span>失败含义</span>
+                            <strong>{item.failureMeaning}</strong>
+                            <span>下一步</span>
+                            <strong>
+                              {checkRecord?.["ok"] === true ? "无需处理，继续观察其它检查项。" : item.nextAction}
+                            </strong>
+                            <span>exit_code</span>
+                            <strong>{scalarValue(checkRecord, "exit_code")}</strong>
+                          </div>
+                          <code>
+                            {typeof checkRecord?.["command"] === "string" ? redactString(checkRecord["command"]) : "-"}
+                          </code>
+                          <details className="diagnostic-output-details">
+                            <summary>查看脱敏 raw_output</summary>
+                            <pre>{checkOutput(checkRecord)}</pre>
+                          </details>
+                        </div>
+                      );
+                    })}
+                  </div>
                   {diagnosticLogs.length > 0 ? (
                     <div className="log-list">
                       {diagnosticLogs.map((log) => (
                         <div className="log-row" key={log.id}>
                           <span>{log.level}</span>
                           <span>{log.step ?? "-"}</span>
-                          <span>{log.message}</span>
+                          <span>{redactString(log.message)}</span>
                         </div>
                       ))}
                     </div>

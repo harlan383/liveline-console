@@ -966,6 +966,34 @@ textarea {
   padding: 10px;
 }
 
+.diagnostic-guidance,
+.diagnostic-result-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.diagnostic-result-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.diagnostic-explainer {
+  display: grid;
+  gap: 6px 10px;
+  grid-template-columns: 92px minmax(0, 1fr);
+}
+
+.diagnostic-explainer span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.diagnostic-explainer strong {
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .diagnostic-output code,
 .diagnostic-output pre {
   background: #f8fafc;
@@ -976,6 +1004,12 @@ textarea {
   overflow-x: auto;
   padding: 8px 10px;
   white-space: pre-wrap;
+}
+
+.diagnostic-output-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .route-share-link {
@@ -1316,6 +1350,8 @@ button.compact {
   .cleanup-row,
   .tool-grid,
   .credential-grid,
+  .diagnostic-result-grid,
+  .diagnostic-explainer,
   .log-row {
     grid-template-columns: 1fr;
   }
