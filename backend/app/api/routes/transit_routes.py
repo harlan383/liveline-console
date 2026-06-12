@@ -15,7 +15,11 @@ from app.models.transit_resource import TransitResource
 from app.models.transit_route import TransitRoute
 from app.models.vps_server import VpsServer
 from app.schemas.common import error_response, success_response
-from app.schemas.transit_route import SSH_RESERVED_PORT, SOCAT_RESERVED_PORTS, TransitRouteCreateFields
+from app.schemas.transit_route import (
+    PROTECTED_CREATE_PORT_MESSAGES,
+    PROTECTED_CREATE_PORTS,
+    TransitRouteCreateFields,
+)
 from app.services.auth_service import record_audit
 from app.services.credentials import store_temp_credential
 from app.services.task_logging import add_task_log
@@ -341,13 +345,11 @@ async def create_transit_route(
     if not fields.confirm:
         return error_response(400, "CONFIRM_REQUIRED", "创建中转规则前必须确认风险提示。")
 
-    if fields.forwarding_method == "gost" and fields.listen_port == SSH_RESERVED_PORT:
-        return error_response(400, "TRANSIT_PORT_RESERVED", "20575 是 SSH 端口，不能作为中转监听端口。")
-    if fields.forwarding_method == "socat" and fields.listen_port in SOCAT_RESERVED_PORTS:
+    if fields.listen_port in PROTECTED_CREATE_PORTS:
         return error_response(
             400,
-            "SOCAT_PORT_RESERVED",
-            "socat 测试转发禁止使用 22、8443、20575 作为监听端口。",
+            "TRANSIT_PORT_PROTECTED",
+            PROTECTED_CREATE_PORT_MESSAGES[fields.listen_port],
         )
 
     resource = db.get(TransitResource, fields.transit_resource_id)

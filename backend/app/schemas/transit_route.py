@@ -3,7 +3,14 @@ from pydantic import BaseModel, Field, field_validator
 FORWARDING_METHODS = {"gost", "socat"}
 TRANSIT_ROUTE_STATUSES = {"creating", "active", "disabled", "error"}
 SSH_RESERVED_PORT = 20575
-SOCAT_RESERVED_PORTS = {22, 8443, 20575}
+PROTECTED_CREATE_PORTS = {22, 8443, 18443, 20575}
+PROTECTED_CREATE_PORT_MESSAGES = {
+    22: "22 是 SSH 端口，不能作为中转监听端口。",
+    8443: "8443 当前保留给 gost 回退链路，不能作为新转发端口。",
+    18443: "18443 当前为 socat 正式链路，不能被新转发覆盖或复用。",
+    20575: "20575 是历史问题端口，不能作为中转监听端口。",
+}
+SOCAT_RESERVED_PORTS = PROTECTED_CREATE_PORTS
 
 
 class TransitRouteCreateFields(BaseModel):

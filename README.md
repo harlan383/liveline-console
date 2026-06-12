@@ -1249,6 +1249,24 @@ add scripts, create real backup files, add database migrations, read or modify
 Worker/RQ tasks, modify firewall rules, perform cutover, let `socat` take over
 8443, or stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.6.2 Single route create safety gates scope
+
+Stage 3.6.2 adds safety gates to the local single-route create flow. The UI now
+warns that route creation is not formal cutover, does not modify
+`node.share_link`, and requires cloud security group, cloud firewall, and server
+firewall checks before any new or changed TCP listening port is used.
+
+The create form rejects invalid ports and protects `8443` and `18443`: `8443`
+remains reserved for the `gost` fallback route, while `18443` is the current
+formal `socat` route and must not be reused or overwritten by a new route.
+Backend route creation validation also rejects protected listen ports before
+temporary credentials or Worker/RQ task creation can proceed.
+
+Stage 3.6.2 does not execute SSH or remote commands, create real remote
+forwarding, add real listening ports, modify `node.share_link`, trigger backend
+tasks, perform cutover, let `socat` take over 8443, or stop, downgrade, or
+replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1323,6 +1341,7 @@ Worker/RQ tasks, modify firewall rules, perform cutover, let `socat` take over
 | Stage 3.5.7 Local upgrade and rollback SOP | Local upgrade and rollback SOP documented |
 | Stage 3.5.8 Local console stability archive | Local console stability baseline archived |
 | Stage 3.6.1 Single route create flow review | Single route create flow reviewed |
+| Stage 3.6.2 Single route create safety gates | Single route create safety gates added |
 
 ## Environment
 
