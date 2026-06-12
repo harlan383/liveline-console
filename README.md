@@ -1298,6 +1298,29 @@ remote services, firewall rules, or route state. It does not execute SSH or
 remote commands, trigger backend tasks, perform cutover, let `socat` take over
 8443, or stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.6.5 Single route create flow stability archive scope
+
+Stage 3.6.5 archives the stable baseline for the single-route create flow after
+the Stage 3.6.1 review, Stage 3.6.2 safety gates, Stage 3.6.3 diagnosis polish,
+and Stage 3.6.4 browser acceptance record. The archive records that the local
+console now has transit resource records, active node selection, topology
+preview, single-route UI/API boundaries, protected-port checks, diagnosis
+display polish, redacted task/result display, and browser acceptance coverage.
+
+The archived standard flow keeps `8443` reserved for the `gost` fallback route,
+keeps `18443` protected as the current formal `socat` route, states that route
+creation is not cutover, and requires cloud security group, cloud firewall, and
+server firewall checks before any new or changed TCP listening port is used.
+Future real SSH, remote route creation, remote diagnosis, or `node.share_link`
+cutover/rollback work must enter a separately authorized stage and involve
+Workbuddy where remote execution is required.
+
+Stage 3.6.5 is documentation-only. It does not modify code, frontend behavior,
+backend logic, scripts, database schema, `node.share_link`, listening ports,
+firewall rules, Worker/RQ tasks, current route state, or current transit links.
+It does not execute SSH or remote commands, perform cutover, let `socat` take
+over 8443, or stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1375,6 +1398,7 @@ remote commands, trigger backend tasks, perform cutover, let `socat` take over
 | Stage 3.6.2 Single route create safety gates | Single route create safety gates added |
 | Stage 3.6.3 Single route diagnosis polish | Single route diagnosis display polished |
 | Stage 3.6.4 Single route diagnosis browser acceptance record | Single route diagnosis browser acceptance recorded |
+| Stage 3.6.5 Single route create flow stability archive | Single route create flow baseline archived |
 
 ## Environment
 
