@@ -1284,6 +1284,20 @@ create real forwarding, add listening ports, modify `node.share_link`, perform
 cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
 8443.
 
+## Stage 3.6.4 Single route diagnosis browser acceptance record scope
+
+Stage 3.6.4 records the browser manual acceptance result after Stage 3.6.2
+single-route create safety gates and Stage 3.6.3 single-route diagnosis polish
+were merged. The acceptance confirms that the local login gate, single-route
+page, protected-port warnings, diagnosis result layout, safety reminders, and
+logout flow are visible and understandable in the browser.
+
+Stage 3.6.4 is documentation-only. It does not change frontend behavior,
+backend logic, database schema, scripts, `node.share_link`, listening ports,
+remote services, firewall rules, or route state. It does not execute SSH or
+remote commands, trigger backend tasks, perform cutover, let `socat` take over
+8443, or stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1360,6 +1374,7 @@ cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
 | Stage 3.6.1 Single route create flow review | Single route create flow reviewed |
 | Stage 3.6.2 Single route create safety gates | Single route create safety gates added |
 | Stage 3.6.3 Single route diagnosis polish | Single route diagnosis display polished |
+| Stage 3.6.4 Single route diagnosis browser acceptance record | Single route diagnosis browser acceptance recorded |
 
 ## Environment
 
