@@ -1170,6 +1170,26 @@ ports, does not execute SSH or remote commands, does not trigger Worker/RQ
 tasks, does not modify firewall rules, does not perform cutover, does not let
 `socat` take over 8443, and does not stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.5.6 Local task history usability scope
+
+Stage 3.5.6 improves local task history usability. The system page now includes
+a protected local task history panel that lists recent tasks, shows status,
+current step, progress, timestamps, readable failure summaries, sanitized
+`result_data`, and sanitized task logs.
+
+The backend adds only a protected read-only `GET /api/tasks` list endpoint so
+the local UI can show existing task history without knowing a task id in
+advance. The endpoint does not create, enqueue, update, delete, or retry tasks.
+The frontend redacts full node links, private key material, password /
+passphrase / token / secret-like fields, long strings, and raw output before
+display.
+
+Stage 3.5.6 does not modify route state. It does not add database migrations,
+does not read or modify `node.share_link`, does not add listening ports, does
+not execute SSH or remote commands, does not trigger Worker/RQ tasks, does not
+modify firewall rules, does not perform cutover, does not let `socat` take over
+8443, and does not stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1240,6 +1260,7 @@ tasks, does not modify firewall rules, does not perform cutover, does not let
 | Stage 3.5.3 Local backup and restore implementation | Local backup and restore scripts documented / implemented |
 | Stage 3.5.4 Topology preview usability polish | Topology preview clarified as preview-only |
 | Stage 3.5.5 Route safety guardrails UI | Route safety guardrails added to local UI |
+| Stage 3.5.6 Local task history usability | Local task history usability improved |
 
 ## Environment
 

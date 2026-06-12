@@ -1,6 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import auth_error, require_admin_session
 from app.db.session import get_db
@@ -40,6 +40,19 @@ def serialize_task_log(log: TaskLog) -> dict:
         "raw_output": log.raw_output,
         "created_at": log.created_at.isoformat() if log.created_at else None,
     }
+
+
+@router.get("")
+def list_tasks(
+    request: Request,
+    limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    if not require_admin_session(db, request):
+        return auth_error()
+
+    tasks = db.scalars(select(Task).order_by(Task.created_at.desc()).limit(limit)).all()
+    return success_response({"tasks": [serialize_task(task) for task in tasks]}, "ok")
 
 
 @router.get("/{task_id}")

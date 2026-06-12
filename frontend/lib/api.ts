@@ -49,6 +49,10 @@ export type TaskLogData = {
   created_at: string | null;
 };
 
+export type TaskListResult = {
+  tasks: TaskData[];
+};
+
 export type ReadNodeResult = {
   task_id: string;
   vps_id: string;
