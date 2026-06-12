@@ -1229,6 +1229,26 @@ listening ports, firewall rules, Worker/RQ tasks, or current transit links. It
 does not execute SSH or remote commands, perform cutover, let `socat` take over
 8443, or stop, downgrade, or replace `gost` 8443.
 
+## Stage 3.6.1 Single route create flow review scope
+
+Stage 3.6.1 reviews the current single-route create flow without executing it.
+The review covers transit resource selection, active node selection, topology
+preview, listen-port planning, route creation API/UI behavior, read-only
+diagnosis, candidate link acceptance, formal cutover approval, Workbuddy
+handoff points, and rollback boundaries.
+
+The documented standard flow requires local database backup before risky
+changes, avoids `8443` because it is retained for the `gost` fallback route,
+avoids overwriting `18443` without a separate formal-change stage, and reminds
+that new or changed listening ports require cloud security group, cloud
+firewall, and server firewall checks.
+
+Stage 3.6.1 is documentation-only. It does not create real routes, modify code,
+add scripts, create real backup files, add database migrations, read or modify
+`node.share_link`, add listening ports, execute SSH or remote commands, trigger
+Worker/RQ tasks, modify firewall rules, perform cutover, let `socat` take over
+8443, or stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1302,6 +1322,7 @@ does not execute SSH or remote commands, perform cutover, let `socat` take over
 | Stage 3.5.6 Local task history usability | Local task history usability improved |
 | Stage 3.5.7 Local upgrade and rollback SOP | Local upgrade and rollback SOP documented |
 | Stage 3.5.8 Local console stability archive | Local console stability baseline archived |
+| Stage 3.6.1 Single route create flow review | Single route create flow reviewed |
 
 ## Environment
 
