@@ -1209,6 +1209,26 @@ add listening ports, execute SSH or remote commands, trigger Worker/RQ tasks,
 modify firewall rules, perform cutover, let `socat` take over 8443, or stop,
 downgrade, or replace `gost` 8443.
 
+## Stage 3.5.8 Local console stability archive scope
+
+Stage 3.5.8 archives the Stage 3.5 local console stability baseline. The
+archive summarizes the local daily operations guide, local backup / restore
+plan, local backup / restore / health-check scripts, topology preview safety
+polish, route safety guardrails, task history usability, and local upgrade /
+rollback SOP.
+
+The archived baseline keeps the local console at `http://localhost:3000`,
+keeps `/api/health` as the core backend / database / Redis / worker health
+check, keeps `socat` 18443 as the formal link, keeps `gost` 8443 as the
+fallback link, and records that `node.share_link` already points to `socat`
+18443.
+
+Stage 3.5.8 is documentation-only. It does not modify code, authentication
+logic, frontend functionality, scripts, database schema, `node.share_link`,
+listening ports, firewall rules, Worker/RQ tasks, or current transit links. It
+does not execute SSH or remote commands, perform cutover, let `socat` take over
+8443, or stop, downgrade, or replace `gost` 8443.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1281,6 +1301,7 @@ downgrade, or replace `gost` 8443.
 | Stage 3.5.5 Route safety guardrails UI | Route safety guardrails added to local UI |
 | Stage 3.5.6 Local task history usability | Local task history usability improved |
 | Stage 3.5.7 Local upgrade and rollback SOP | Local upgrade and rollback SOP documented |
+| Stage 3.5.8 Local console stability archive | Local console stability baseline archived |
 
 ## Environment
 
