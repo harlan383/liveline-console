@@ -22,7 +22,13 @@ import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 
 const terminalStatuses = new Set(["success", "failed", "cancelled", "timeout"]);
 const SOCAT_RESOURCE_ID = "6d67c275-8ac9-4775-9519-c89b50718157";
-const SOCAT_RESERVED_PORTS = new Set(["22", "8443", "20575"]);
+const PROTECTED_LISTEN_PORTS = new Set(["22", "8443", "18443", "20575"]);
+const PROTECTED_LISTEN_PORT_MESSAGES: Record<string, string> = {
+  "22": "22 是 SSH 端口，不能作为中转监听端口。",
+  "8443": "8443 当前保留给 gost 回退链路，不能作为新转发端口。",
+  "18443": "18443 当前为 socat 正式链路，不能被新转发覆盖或复用。",
+  "20575": "20575 是历史问题端口，不能作为中转监听端口。",
+};
 
 type ForwardingMethod = "gost" | "socat";
 
@@ -59,6 +65,28 @@ function maskLink(value: string | null | undefined) {
   return `${value.slice(0, 24)}...${value.slice(-12)}`;
 }
 
+function parseListenPortInput(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535 ? parsed : null;
+}
+
+function listenPortValidationMessage(value: string) {
+  const trimmed = value.trim();
+  const parsed = parseListenPortInput(trimmed);
+  if (parsed === null) {
+    return "监听端口必须是 1-65535 之间的整数。";
+  }
+  const normalizedPort = String(parsed);
+  if (PROTECTED_LISTEN_PORTS.has(normalizedPort)) {
+    return PROTECTED_LISTEN_PORT_MESSAGES[normalizedPort] ?? "该端口受保护，不能用于新转发。";
+  }
+  return null;
+}
+
 export function TransitRoutesPanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const diagnosticFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -68,8 +96,8 @@ export function TransitRoutesPanel() {
   const [selectedResourceId, setSelectedResourceId] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [forwardingMethod, setForwardingMethod] = useState<ForwardingMethod>("gost");
-  const [routeName, setRouteName] = useState("hk-gost-route-01");
-  const [listenPort, setListenPort] = useState("8443");
+  const [routeName, setRouteName] = useState("hk-gost-new-route");
+  const [listenPort, setListenPort] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [privateKeyText, setPrivateKeyText] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -142,8 +170,8 @@ export function TransitRoutesPanel() {
     setLogs([]);
     setCopied(false);
     if (forwardingMethod === "socat") {
-      setRouteName("hk-socat-test-18443");
-      setListenPort("18443");
+      setRouteName("hk-socat-new-test");
+      setListenPort("");
       setSelectedResourceId((current) =>
         resources.some((resource) => resource.id === SOCAT_RESOURCE_ID) ? SOCAT_RESOURCE_ID : current,
       );
@@ -151,8 +179,8 @@ export function TransitRoutesPanel() {
       return;
     }
 
-    setRouteName("hk-gost-route-01");
-    setListenPort("8443");
+    setRouteName("hk-gost-new-route");
+    setListenPort("");
     setMessage("Stage 3.3.3 只创建一条 gost TCP 转发规则。");
   }, [forwardingMethod, resources]);
 
@@ -276,18 +304,24 @@ export function TransitRoutesPanel() {
     }
   }
 
+  function updateListenPort(value: string) {
+    setListenPort(value);
+    setConfirm(false);
+  }
+
   async function createTransitRoute() {
     setCopied(false);
     if (!selectedResourceId || !selectedNodeId) {
       setMessage("请选择中转资源和 active 节点。");
       return;
     }
-    if (forwardingMethod === "socat" && selectedResourceId !== SOCAT_RESOURCE_ID) {
-      setMessage("socat 首轮测试只允许选择正式香港中转服务器。");
+    const listenPortError = listenPortValidationMessage(listenPort);
+    if (listenPortError) {
+      setMessage(listenPortError);
       return;
     }
-    if (forwardingMethod === "socat" && SOCAT_RESERVED_PORTS.has(listenPort.trim())) {
-      setMessage("socat 测试转发禁止使用 22 / 8443 / 20575。");
+    if (forwardingMethod === "socat" && selectedResourceId !== SOCAT_RESOURCE_ID) {
+      setMessage("socat 首轮测试只允许选择正式香港中转服务器。");
       return;
     }
     if (!confirm) {
@@ -531,6 +565,7 @@ export function TransitRoutesPanel() {
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
   const selectableResources =
     forwardingMethod === "socat" ? resources.filter((resource) => resource.id === SOCAT_RESOURCE_ID) : resources;
+  const listenPortError = listenPortValidationMessage(listenPort);
   const result = task?.result_data ?? null;
   const resultRoute = objectValue(result?.["route"]);
   const resultGost = objectValue(result?.["gost"]);
@@ -561,10 +596,12 @@ export function TransitRoutesPanel() {
       </div>
 
       <div className="warning-box">
-        <strong>⚠️ Cutover 状态：当前尚未正式 cutover。</strong>
-        <span>gost 8443 仍保留为当前正式/回退链路。</span>
-        <span>socat 18443 已通过测试，本阶段只展示并复制候选正式链接。</span>
-        <span>本页面不会修改 node.share_link，不会停用 gost，也不会把 socat 接管 8443。</span>
+        <strong>⚠️ 单条转发安全门槛</strong>
+        <span>创建单条转发不等于正式切换，也不会修改 node.share_link。</span>
+        <span>8443 当前保留给 gost 回退链路；18443 当前为 socat 正式链路。</span>
+        <span>不要把 8443 / 18443 用作新转发端口，也不要让 socat 接管 8443。</span>
+        <span>修改 node.share_link 必须单独进入正式切换审批阶段。</span>
+        <span>真正创建远程转发或检查远程端口时，需要 Workbuddy 或单独授权阶段。</span>
       </div>
       <RouteSafetyGuardrails context="routes" />
 
@@ -573,7 +610,7 @@ export function TransitRoutesPanel() {
           <strong>Stage 3.3.3-fix-b1：只创建 socat 测试转发。</strong>
           <span>创建前请先在云服务器安全组/云防火墙放行 TCP {listenPort}。</span>
           <span>同时确认服务器防火墙允许 TCP {listenPort}。</span>
-          <span>禁止使用 22 / 8443 / 20575。</span>
+          <span>禁止使用 22 / 8443 / 18443 / 20575。</span>
           <span>不替换 gost，不修改现有节点链接。</span>
           <span>本模式不生成 share_link；真实客户端链接仍需单独验收。</span>
         </div>
@@ -583,7 +620,8 @@ export function TransitRoutesPanel() {
           <span>会在香港服务器创建 systemd 转发服务，并监听一个新端口。</span>
           <span>不会自动开放云安全组，不会修改防火墙，不会写 iptables。</span>
           <span>不会连接或修改落地 VPS，不会影响现有直连链接。</span>
-          <span>20575 是 SSH 端口，不能作为中转监听端口。删除功能不在本阶段。</span>
+          <span>8443 保留给 gost 回退链路，18443 保留给当前 socat 正式链路，不能作为新转发端口。</span>
+          <span>22 / 20575 也不能作为中转监听端口。删除功能不在本阶段。</span>
         </div>
       )}
 
@@ -632,15 +670,29 @@ export function TransitRoutesPanel() {
               max={65535}
               type="number"
               value={listenPort}
-              onChange={(event) => setListenPort(event.target.value)}
+              onChange={(event) => updateListenPort(event.target.value)}
             />
+            <span className={`field-hint ${listenPortError ? "danger-text" : ""}`}>
+              {listenPortError ??
+                "端口需为 1-65535 的整数。新增或变更端口前必须检查云安全组、云防火墙和服务器防火墙。"}
+            </span>
           </label>
+          <div className="warning-box wide-field">
+            <strong>端口保护</strong>
+            <span>8443：保留给 gost 回退链路，禁止作为新转发端口。</span>
+            <span>18443：当前 socat 正式链路，禁止覆盖或复用。</span>
+            <span>22 / 20575：SSH / 历史问题端口，禁止作为中转监听端口。</span>
+          </div>
           <label className="check-row">
-            <input checked={confirm} type="checkbox" onChange={(event) => setConfirm(event.target.checked)} />
+            <input
+              checked={confirm}
+              disabled={Boolean(listenPortError)}
+              type="checkbox"
+              onChange={(event) => setConfirm(event.target.checked)}
+            />
             <span>
-              {forwardingMethod === "socat"
-                ? `我确认已在云服务器安全组/云防火墙放行 TCP ${listenPort}，并确认服务器防火墙允许该端口。`
-                : "我确认会创建远端 systemd 转发服务，且云安全组需手动放行。"}
+              我确认：创建单条转发不会修改 node.share_link，不是正式切换；已检查云服务器安全组、云防火墙和服务器防火墙允许 TCP{" "}
+              {listenPort || "<待填写端口>"}。
             </span>
           </label>
           <label className="wide-field">
@@ -665,9 +717,14 @@ export function TransitRoutesPanel() {
             />
           </label>
           <div className="wide-field">
-            <button disabled={!confirm} type="button" onClick={() => void createTransitRoute()}>
+            <button
+              disabled={!confirm || Boolean(listenPortError)}
+              type="button"
+              onClick={() => void createTransitRoute()}
+            >
               {forwardingMethod === "socat" ? "创建单条 socat 测试转发" : "创建单条 gost 转发"}
             </button>
+            {listenPortError ? <p className="message danger-text">{listenPortError}</p> : null}
           </div>
         </div>
 

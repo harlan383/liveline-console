@@ -730,6 +730,11 @@ textarea {
   line-height: 1.4;
 }
 
+.danger-text {
+  color: var(--danger);
+  font-weight: 800;
+}
+
 .topology-status-strip {
   background: #ecfdf3;
   border: 1px solid #abefc6;
