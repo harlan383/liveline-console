@@ -7,6 +7,7 @@ import { NodesPanel } from "@/components/NodesPanel";
 import { ReadVpsPanel } from "@/components/ReadVpsPanel";
 import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 import { SystemStatus } from "@/components/SystemStatus";
+import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
 import { TransitResourcesPanel } from "@/components/TransitResourcesPanel";
 import { TransitRoutesPanel } from "@/components/TransitRoutesPanel";
 import { TransitTopologyPreviewPanel } from "@/components/TransitTopologyPreviewPanel";
@@ -186,12 +187,7 @@ export function AppShell() {
           {activePanel === "transitResources" ? <TransitResourcesPanel /> : null}
           {activePanel === "topology" ? <TransitTopologyPreviewPanel /> : null}
           {activePanel === "transitRoutes" ? <TransitRoutesPanel /> : null}
-          {activePanel === "system" ? (
-            <section className="panel wide">
-              <h2>操作区</h2>
-              <div className="empty">请选择左侧菜单进入对应管理区域。</div>
-            </section>
-          ) : null}
+          {activePanel === "system" ? <TaskHistoryPanel /> : null}
         </div>
       </section>
     </main>

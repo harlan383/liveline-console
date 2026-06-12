@@ -297,6 +297,11 @@ textarea {
   color: var(--danger);
 }
 
+.pill.warn {
+  background: #fffaeb;
+  color: #93370d;
+}
+
 .form {
   display: grid;
   gap: 10px;
@@ -351,6 +356,103 @@ textarea {
   gap: 14px;
   margin-top: 18px;
   padding-top: 16px;
+}
+
+.task-history-layout {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr);
+}
+
+.task-history-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  overflow: hidden;
+}
+
+.task-history-row {
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--text);
+  display: grid;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+  grid-template-columns: auto minmax(120px, 1fr) 90px minmax(90px, 0.8fr) 58px minmax(130px, 1fr);
+  justify-items: start;
+  padding: 11px 12px;
+  text-align: left;
+}
+
+.task-history-row:last-child {
+  border-bottom: 0;
+}
+
+.task-history-row:hover,
+.task-history-row.active {
+  background: var(--panel-soft);
+}
+
+.task-history-row span,
+.task-history-row strong {
+  overflow-wrap: anywhere;
+}
+
+.task-history-detail {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.task-history-detail h3,
+.task-history-logs h4 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.task-history-details {
+  display: grid;
+  gap: 8px;
+}
+
+.task-history-details summary,
+.task-log-output summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.task-history-details pre,
+.task-log-output pre {
+  background: #111827;
+  border-radius: 8px;
+  color: #e5edf6;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 8px 0 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.task-history-logs {
+  display: grid;
+  gap: 10px;
+}
+
+.task-log-row {
+  align-items: start;
+}
+
+.task-log-output {
+  margin-top: 8px;
 }
 
 .result-box {
@@ -1195,6 +1297,8 @@ button.compact {
   .topology-chain,
   .topology-status-strip,
   .route-safety-grid,
+  .task-history-layout,
+  .task-history-row,
   .route-layout,
   .route-form,
   .route-row,
