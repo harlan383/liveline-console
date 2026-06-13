@@ -825,6 +825,56 @@ textarea {
   margin-top: 14px;
 }
 
+.local-plan-builder {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px;
+}
+
+.local-plan-builder h3,
+.local-plan-builder h4 {
+  margin: 0;
+}
+
+.local-plan-layout {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
+}
+
+.local-plan-checks {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.local-plan-summary {
+  align-content: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.local-plan-output {
+  background: #111827;
+  border-radius: 8px;
+  color: #e5edf6;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
 .route-form,
 .route-summary {
   border: 1px solid var(--line);
@@ -834,6 +884,11 @@ textarea {
 
 .route-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.local-plan-form {
+  border: 0;
+  padding: 0;
 }
 
 .route-summary {
@@ -1338,6 +1393,7 @@ button.compact {
   .route-safety-grid,
   .task-history-layout,
   .task-history-row,
+  .local-plan-layout,
   .route-layout,
   .route-form,
   .route-row,

@@ -232,6 +232,16 @@ export function TransitRoutesPanel() {
   const [diagnosticLogs, setDiagnosticLogs] = useState<TaskLogData[]>([]);
   const [diagnosticRouteId, setDiagnosticRouteId] = useState<string | null>(null);
   const [diagnosticMessage, setDiagnosticMessage] = useState("只读诊断不会停止、删除、重启或创建线路。");
+  const [planResourceId, setPlanResourceId] = useState("");
+  const [planNodeId, setPlanNodeId] = useState("");
+  const [planListenPort, setPlanListenPort] = useState("");
+  const [planTargetPort, setPlanTargetPort] = useState("");
+  const [planPurpose, setPlanPurpose] = useState("");
+  const [planCloudSecurityGroupConfirmed, setPlanCloudSecurityGroupConfirmed] = useState(false);
+  const [planCloudFirewallConfirmed, setPlanCloudFirewallConfirmed] = useState(false);
+  const [planServerFirewallConfirmed, setPlanServerFirewallConfirmed] = useState(false);
+  const [planLocalBackupConfirmed, setPlanLocalBackupConfirmed] = useState(false);
+  const [planSummaryCopied, setPlanSummaryCopied] = useState(false);
 
   async function ensureCsrfToken() {
     const csrf = await apiFetch<CsrfResult>("/api/auth/csrf");
@@ -276,6 +286,8 @@ export function TransitRoutesPanel() {
     setRoutes(routeResult.data.routes);
     setSelectedResourceId((current) => current || activeResources[0]?.id || "");
     setSelectedNodeId((current) => current || activeNodes[0]?.id || "");
+    setPlanResourceId((current) => current || activeResources[0]?.id || "");
+    setPlanNodeId((current) => current || activeNodes[0]?.id || "");
   }
 
   useEffect(() => {
@@ -581,6 +593,11 @@ export function TransitRoutesPanel() {
     setCopiedDiagnosticsRouteId(route.id);
   }
 
+  async function copyLocalPlanSummary() {
+    await navigator.clipboard.writeText(localPlanSummaryText);
+    setPlanSummaryCopied(true);
+  }
+
   function transitHostForRoute(route: TransitRouteData) {
     const resource = resources.find((item) => item.id === route.transit_resource_id);
     return resource?.entry_host || resource?.ssh_host || null;
@@ -707,6 +724,42 @@ export function TransitRoutesPanel() {
   const warnings = Array.isArray(result?.["warnings"])
     ? result["warnings"].filter((item) => typeof item === "string")
     : [];
+  const planResource = resources.find((resource) => resource.id === planResourceId) ?? null;
+  const planNode = nodes.find((node) => node.id === planNodeId) ?? null;
+  const planListenPortError = listenPortValidationMessage(planListenPort);
+  const planTargetPortNumber = parseListenPortInput(planTargetPort);
+  const planTargetPortError = planTargetPortNumber === null ? "落地目标端口必须是 1-65535 之间的整数。" : null;
+  const localPlanIssues = [
+    !planResource ? "请选择目标中转资源。" : null,
+    !planNode ? "请选择落地 VPS / active 节点。" : null,
+    planListenPortError,
+    planTargetPortError,
+    planPurpose.trim() ? null : "请填写目标平台 / 用途。",
+    planCloudSecurityGroupConfirmed ? null : "云服务器安全组尚未确认放行计划 TCP 端口。",
+    planCloudFirewallConfirmed ? null : "云防火墙尚未确认放行计划 TCP 端口。",
+    planServerFirewallConfirmed ? null : "服务器防火墙尚未确认放行计划 TCP 端口。",
+    planLocalBackupConfirmed ? null : "本地数据库备份尚未确认完成。",
+  ].filter((item): item is string => Boolean(item));
+  const localPlanReady = localPlanIssues.length === 0;
+  const localPlanStatusLabel = localPlanReady ? "Ready for readonly preflight approval" : "No-Go";
+  const localPlanSummaryText = [
+    "LiveLine single-route local dry-run plan",
+    `Status: ${localPlanStatusLabel}`,
+    `Transit resource: ${planResource?.name ?? "Pending confirmation"}`,
+    `Landing node: ${planNode?.node_name ?? "Pending confirmation"}`,
+    `Planned listen port: ${planListenPort || "Pending confirmation"}`,
+    `Landing target port: ${planTargetPortNumber ?? "Pending confirmation"}`,
+    `Purpose: ${planPurpose.trim() || "Pending confirmation"}`,
+    `Cloud security group confirmed: ${planCloudSecurityGroupConfirmed ? "yes" : "no"}`,
+    `Cloud firewall confirmed: ${planCloudFirewallConfirmed ? "yes" : "no"}`,
+    `Server firewall confirmed: ${planServerFirewallConfirmed ? "yes" : "no"}`,
+    `Local database backup confirmed: ${planLocalBackupConfirmed ? "yes" : "no"}`,
+    "Remote execution: not authorized",
+    "Real forwarding creation: not authorized",
+    "node.share_link modification: not authorized",
+    "Cutover: not authorized",
+    "Sensitive data: complete node links, SSH keys, passwords, tokens, and SESSION_SECRET values are excluded.",
+  ].join("\n");
 
   return (
     <section className="panel wide">
@@ -726,6 +779,183 @@ export function TransitRoutesPanel() {
         <span>真正创建远程转发或检查远程端口时，需要 Workbuddy 或单独授权阶段。</span>
       </div>
       <RouteSafetyGuardrails context="routes" />
+
+      <div className="local-plan-builder">
+        <div className="status-row">
+          <div>
+            <h3>单条转发本地规划 / Dry-run only</h3>
+            <p className="message">
+              只做本地规则检查和审批摘要，不连接远端、不写入远程配置、不创建真实转发、不修改 node.share_link、不做 cutover。
+            </p>
+          </div>
+          <span className={`pill ${localPlanReady ? "ok" : "bad"}`}>{localPlanStatusLabel}</span>
+        </div>
+        <div className="warning-box">
+          <strong>Local plan only</strong>
+          <span>即使显示 Ready，也只代表可以进入 readonly preflight approval，不代表可以创建真实转发。</span>
+          <span>8443 保留给 gost 回退链路；18443 是当前 socat 正式链路；22 / 20575 不得用于业务转发。</span>
+          <span>新增或变更端口前，必须确认云服务器安全组、云防火墙和服务器防火墙均放行对应 TCP 端口。</span>
+        </div>
+        <div className="local-plan-layout">
+          <div className="form route-form local-plan-form">
+            <label>
+              中转资源
+              <select
+                value={planResourceId}
+                onChange={(event) => {
+                  setPlanResourceId(event.target.value);
+                  setPlanSummaryCopied(false);
+                }}
+              >
+                {resources.length === 0 ? <option value="">暂无可用 active server 资源</option> : null}
+                {resources.map((resource) => (
+                  <option key={resource.id} value={resource.id}>
+                    {resource.name} / {displayValue(resource.entry_host)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              落地 VPS / active 节点
+              <select
+                value={planNodeId}
+                onChange={(event) => {
+                  setPlanNodeId(event.target.value);
+                  setPlanSummaryCopied(false);
+                }}
+              >
+                {nodes.length === 0 ? <option value="">暂无 active 节点</option> : null}
+                {nodes.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {node.node_name} / {displayValue(node.vps_ip)}:{displayValue(node.port)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              计划监听端口
+              <input
+                inputMode="numeric"
+                value={planListenPort}
+                onChange={(event) => {
+                  setPlanListenPort(event.target.value);
+                  setPlanSummaryCopied(false);
+                }}
+                placeholder="例如：一个未占用的高位 TCP 端口"
+              />
+              <span className={`field-hint ${planListenPortError ? "danger-text" : ""}`}>
+                {planListenPortError ?? "端口需为 1-65535 的整数，并避开 22 / 8443 / 18443 / 20575。"}
+              </span>
+            </label>
+            <label>
+              落地目标端口
+              <input
+                inputMode="numeric"
+                value={planTargetPort}
+                onChange={(event) => {
+                  setPlanTargetPort(event.target.value);
+                  setPlanSummaryCopied(false);
+                }}
+                placeholder="例如：443"
+              />
+              <span className={`field-hint ${planTargetPortError ? "danger-text" : ""}`}>
+                {planTargetPortError ?? "只用于本地规划摘要，不会触发远程检查。"}
+              </span>
+            </label>
+            <label className="wide-field">
+              目标平台 / 用途
+              <input
+                value={planPurpose}
+                onChange={(event) => {
+                  setPlanPurpose(event.target.value);
+                  setPlanSummaryCopied(false);
+                }}
+                placeholder="例如：候选直播线路测试 / 客户端手动验收"
+              />
+            </label>
+            <div className="local-plan-checks wide-field">
+              <label className="check-row">
+                <input
+                  checked={planCloudSecurityGroupConfirmed}
+                  type="checkbox"
+                  onChange={(event) => {
+                    setPlanCloudSecurityGroupConfirmed(event.target.checked);
+                    setPlanSummaryCopied(false);
+                  }}
+                />
+                <span>已确认云服务器安全组放行计划 TCP 端口</span>
+              </label>
+              <label className="check-row">
+                <input
+                  checked={planCloudFirewallConfirmed}
+                  type="checkbox"
+                  onChange={(event) => {
+                    setPlanCloudFirewallConfirmed(event.target.checked);
+                    setPlanSummaryCopied(false);
+                  }}
+                />
+                <span>已确认云防火墙放行计划 TCP 端口</span>
+              </label>
+              <label className="check-row">
+                <input
+                  checked={planServerFirewallConfirmed}
+                  type="checkbox"
+                  onChange={(event) => {
+                    setPlanServerFirewallConfirmed(event.target.checked);
+                    setPlanSummaryCopied(false);
+                  }}
+                />
+                <span>已确认服务器防火墙放行计划 TCP 端口</span>
+              </label>
+              <label className="check-row">
+                <input
+                  checked={planLocalBackupConfirmed}
+                  type="checkbox"
+                  onChange={(event) => {
+                    setPlanLocalBackupConfirmed(event.target.checked);
+                    setPlanSummaryCopied(false);
+                  }}
+                />
+                <span>已完成本地数据库备份，且备份文件不会进入 Git</span>
+              </label>
+            </div>
+          </div>
+          <div className="local-plan-summary">
+            <div className="status-row">
+              <h4>本地审批摘要</h4>
+              <button className="secondary compact" type="button" onClick={() => void copyLocalPlanSummary()}>
+                {planSummaryCopied ? "已复制" : "复制摘要"}
+              </button>
+            </div>
+            <div className="detail-grid">
+              <span>规划结论</span>
+              <strong>{localPlanStatusLabel}</strong>
+              <span>中转资源</span>
+              <strong>{planResource?.name ?? "-"}</strong>
+              <span>落地节点</span>
+              <strong>{planNode?.node_name ?? "-"}</strong>
+              <span>计划端口</span>
+              <strong>{planListenPort || "-"}</strong>
+              <span>落地端口</span>
+              <strong>{planTargetPortNumber ?? "-"}</strong>
+            </div>
+            {localPlanIssues.length > 0 ? (
+              <div className="failure-box">
+                <strong>No-Go 原因</strong>
+                {localPlanIssues.map((issue) => (
+                  <span key={issue}>{issue}</span>
+                ))}
+              </div>
+            ) : (
+              <div className="warning-box">
+                <strong>Ready 仅限下一阶段审批</strong>
+                <span>当前只可进入 readonly preflight approval；不得创建真实转发，不得修改 node.share_link。</span>
+              </div>
+            )}
+            <pre className="local-plan-output">{localPlanSummaryText}</pre>
+          </div>
+        </div>
+      </div>
 
       {forwardingMethod === "socat" ? (
         <div className="warning-box">
