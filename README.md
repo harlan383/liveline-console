@@ -1393,6 +1393,29 @@ cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
 required for later real SSH, remote port checks, remote creation, or remote
 diagnosis stages.
 
+## Stage 3.7.4 Single route readonly preflight approval scope
+
+Stage 3.7.4 documents the approval template for a future real remote read-only
+preflight stage. The template records whether Workbuddy may be used, which
+transit server and landing node are being checked, which new listen port is
+planned, which read-only checks may be allowed, and which remote checks remain
+unauthorized until a later explicit execution stage.
+
+Current approval status remains No-Go because the target transit server,
+landing VPS / node, active node, new listen port, cloud security group, cloud
+firewall, server firewall, and Workbuddy execution authorization have not been
+supplied. Stage 3.7.4 does not approve SSH, remote read-only commands, route
+creation, new listening ports, `node.share_link` changes, or cutover.
+
+Stage 3.7.4 is documentation-only. It does not modify code, frontend behavior,
+backend logic, scripts, database schema, `node.share_link`, listening ports,
+firewall rules, Worker/RQ tasks, current route state, or current transit links.
+It does not execute SSH or remote commands, create real forwarding, perform
+cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
+8443. Workbuddy is not required for this approval template, but will be
+required for a later explicitly authorized remote read-only preflight execution
+stage.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1474,6 +1497,7 @@ diagnosis stages.
 | Stage 3.7.1 Single route remote execution readiness | Single route remote execution readiness documented |
 | Stage 3.7.2 Single route remote execution approval | Remote execution approval template documented; execution remains No-Go |
 | Stage 3.7.3 Single route target and port selection record | Target and port selection template documented; execution remains No-Go |
+| Stage 3.7.4 Single route readonly preflight approval | Readonly preflight approval template documented; execution remains No-Go |
 
 ## Environment
 
