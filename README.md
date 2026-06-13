@@ -1456,6 +1456,21 @@ current production link state remains unchanged: `socat` 18443 is the formal
 link, `gost` 8443 remains the fallback link, and `node.share_link` is not
 modified by this stage.
 
+## Stage 3.7.7 Single route local plan builder stability archive scope
+
+Stage 3.7.7 archives the Stage 3.7 stable baseline. Stage 3.7 now includes the
+remote-execution readiness checklist, remote-execution approval template,
+target / port selection template, remote read-only preflight approval template,
+local dry-run plan builder, and browser acceptance record.
+
+The archived baseline states that all remote execution remains No-Go. SSH,
+remote commands, Workbuddy execution, real forwarding creation, new listening
+ports, `node.share_link` modification, and cutover are not authorized. The
+current formal link remains `socat` 18443, the fallback link remains `gost`
+8443, and future real route creation requires a separately authorized stage
+with target route, target port, firewall confirmations, and explicit user
+approval.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1540,6 +1555,7 @@ modified by this stage.
 | Stage 3.7.4 Single route readonly preflight approval | Readonly preflight approval template documented; execution remains No-Go |
 | Stage 3.7.5 Single route local plan builder | Single route local dry-run plan builder added; remote execution remains No-Go |
 | Stage 3.7.6 Single route local plan builder browser acceptance record | Single route local plan builder browser acceptance recorded |
+| Stage 3.7.7 Single route local plan builder stability archive | Single route local planning baseline archived; remote execution remains No-Go |
 
 ## Environment
 
