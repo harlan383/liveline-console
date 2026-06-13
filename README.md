@@ -1492,6 +1492,27 @@ real forwarding, trigger backend tasks, perform cutover, let `socat` take over
 8443, or stop, downgrade, or replace `gost` 8443. Workbuddy is not required
 for this local framework.
 
+## Stage 3.8.2 Readonly preflight framework browser acceptance record scope
+
+Stage 3.8.2 records browser manual acceptance for the Stage 3.8.1 readonly
+preflight local framework. The accepted browser flow confirms that the login
+gate appears, the single-route page opens after login, the readonly preflight
+plan area is visible, incomplete or unsafe route inputs show No-Go, and all
+local confirmations produce only `Ready for readonly preflight approval`.
+
+The accepted browser flow confirms that `8443`, `18443`, `22`, and `20575`
+remain blocked or clearly marked No-Go, that Ready does not mean remote
+execution or real forwarding creation, and that the page clearly states it will
+not execute SSH, run remote commands, connect to remote servers, create real
+forwarding, add real listening ports, modify `node.share_link`, or perform
+cutover.
+
+Stage 3.8.2 is documentation-only. It does not modify code, frontend behavior,
+backend logic, scripts, database schema, `node.share_link`, listening ports,
+firewall rules, Worker/RQ tasks, current route state, or current transit links.
+The current formal link remains `socat` 18443, the fallback link remains
+`gost` 8443, and Workbuddy is not required for this browser acceptance record.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1578,6 +1599,7 @@ for this local framework.
 | Stage 3.7.6 Single route local plan builder browser acceptance record | Single route local plan builder browser acceptance recorded |
 | Stage 3.7.7 Single route local plan builder stability archive | Single route local planning baseline archived; remote execution remains No-Go |
 | Stage 3.8.1 Single route readonly preflight framework | Single route readonly preflight framework added; remote execution remains No-Go |
+| Stage 3.8.2 Readonly preflight framework browser acceptance record | Readonly preflight framework browser acceptance recorded |
 
 ## Environment
 
