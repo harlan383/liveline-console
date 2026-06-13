@@ -1513,6 +1513,21 @@ firewall rules, Worker/RQ tasks, current route state, or current transit links.
 The current formal link remains `socat` 18443, the fallback link remains
 `gost` 8443, and Workbuddy is not required for this browser acceptance record.
 
+## Stage 3.8.3 Readonly preflight framework stability archive scope
+
+Stage 3.8.3 archives the Stage 3.8 readonly preflight framework stable
+baseline. Stage 3.8 now includes the local readonly preflight framework, future
+read-only check item list, local Go / No-Go judgment, redacted approval
+summary, and browser acceptance record.
+
+The archived baseline states that all remote execution remains No-Go. SSH,
+remote commands, remote server connections, Workbuddy execution, real
+forwarding creation, new listening ports, `node.share_link` modification, and
+cutover are not authorized. The current formal link remains `socat` 18443, the
+fallback link remains `gost` 8443, and future real read-only preflight or route
+creation requires a separately authorized stage with target route, target port,
+firewall confirmations, and explicit user approval.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1600,6 +1615,7 @@ The current formal link remains `socat` 18443, the fallback link remains
 | Stage 3.7.7 Single route local plan builder stability archive | Single route local planning baseline archived; remote execution remains No-Go |
 | Stage 3.8.1 Single route readonly preflight framework | Single route readonly preflight framework added; remote execution remains No-Go |
 | Stage 3.8.2 Readonly preflight framework browser acceptance record | Readonly preflight framework browser acceptance recorded |
+| Stage 3.8.3 Readonly preflight framework stability archive | Readonly preflight framework baseline archived; remote execution remains No-Go |
 
 ## Environment
 
