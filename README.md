@@ -1416,6 +1416,29 @@ cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
 required for a later explicitly authorized remote read-only preflight execution
 stage.
 
+## Stage 3.7.5 Single route local plan builder scope
+
+Stage 3.7.5 adds a frontend-only local dry-run plan builder to the single-route
+page. The builder lets the operator select a transit resource, active landing
+node, planned listen port, landing target port, target purpose, firewall
+confirmation states, and local backup confirmation, then shows a local
+Go/No-Go result and a redacted approval summary for a later approval stage.
+
+The builder rejects invalid listen ports and protects `22`, `8443`, `18443`,
+and `20575`. A plan can only reach `Ready for readonly preflight approval` when
+the port is valid, protected ports are avoided, the purpose is present, cloud
+security group / cloud firewall / server firewall confirmations are checked,
+and local database backup is confirmed. Ready means only ready for the next
+read-only preflight approval stage; it never means remote execution or route
+creation is approved.
+
+Stage 3.7.5 does not add a backend dry-run API. It does not modify backend
+logic, database schema, Worker/RQ jobs, scripts, `node.share_link`, listening
+ports, firewall rules, current route state, or current transit links. It does
+not execute SSH or remote commands, create real forwarding, trigger backend
+tasks, perform cutover, let `socat` take over 8443, or stop, downgrade, or
+replace `gost` 8443. Workbuddy is not required for the local dry-run builder.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1498,6 +1521,7 @@ stage.
 | Stage 3.7.2 Single route remote execution approval | Remote execution approval template documented; execution remains No-Go |
 | Stage 3.7.3 Single route target and port selection record | Target and port selection template documented; execution remains No-Go |
 | Stage 3.7.4 Single route readonly preflight approval | Readonly preflight approval template documented; execution remains No-Go |
+| Stage 3.7.5 Single route local plan builder | Single route local dry-run plan builder added; remote execution remains No-Go |
 
 ## Environment
 
