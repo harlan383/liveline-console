@@ -1528,6 +1528,21 @@ fallback link remains `gost` 8443, and future real read-only preflight or route
 creation requires a separately authorized stage with target route, target port,
 firewall confirmations, and explicit user approval.
 
+## Stage 3.9.1 Readonly preflight execution contract scope
+
+Stage 3.9.1 documents the future execution contract for a single-route remote
+read-only preflight. It defines the proposed request fields, response fields,
+task result shape, check item structure, status model, safety boundaries,
+redaction rules, frontend display expectations, and Workbuddy authorization
+boundary for a later stage.
+
+Stage 3.9.1 is documentation-only. It does not add a backend endpoint, enqueue
+tasks, add schemas, modify frontend behavior, execute SSH, run remote commands,
+connect to remote servers, create real forwarding, add real listening ports,
+modify `node.share_link`, or perform cutover. The current formal link remains
+`socat` 18443, the fallback link remains `gost` 8443, and remote execution
+remains No-Go until a separately authorized stage.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1616,6 +1631,7 @@ firewall confirmations, and explicit user approval.
 | Stage 3.8.1 Single route readonly preflight framework | Single route readonly preflight framework added; remote execution remains No-Go |
 | Stage 3.8.2 Readonly preflight framework browser acceptance record | Readonly preflight framework browser acceptance recorded |
 | Stage 3.8.3 Readonly preflight framework stability archive | Readonly preflight framework baseline archived; remote execution remains No-Go |
+| Stage 3.9.1 Readonly preflight execution contract | Readonly preflight execution contract documented; remote execution remains No-Go |
 
 ## Environment
 
