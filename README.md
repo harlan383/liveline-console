@@ -1471,6 +1471,27 @@ current formal link remains `socat` 18443, the fallback link remains `gost`
 with target route, target port, firewall confirmations, and explicit user
 approval.
 
+## Stage 3.8.1 Single route readonly preflight framework scope
+
+Stage 3.8.1 adds a frontend-only local framework for a future single-route
+remote read-only preflight. The framework uses the local dry-run route plan to
+show future read-only checks, local Go / No-Go state, and a redacted preflight
+approval summary.
+
+The framework lists future checks such as transit-server connectivity, planned
+port occupancy, current `socat` 18443 ownership, current `gost` 8443 ownership,
+read-only service / process status, transit-to-landing TCP connectivity,
+server firewall status, task history / local health, and cloud / firewall
+confirmation state. These checks are not executed in Stage 3.8.1.
+
+Stage 3.8.1 does not add a backend validate endpoint. It does not modify
+backend logic, database schema, Worker/RQ jobs, scripts, `node.share_link`,
+listening ports, firewall rules, current route state, or current transit links.
+It does not execute SSH or remote commands, connect to remote servers, create
+real forwarding, trigger backend tasks, perform cutover, let `socat` take over
+8443, or stop, downgrade, or replace `gost` 8443. Workbuddy is not required
+for this local framework.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1556,6 +1577,7 @@ approval.
 | Stage 3.7.5 Single route local plan builder | Single route local dry-run plan builder added; remote execution remains No-Go |
 | Stage 3.7.6 Single route local plan builder browser acceptance record | Single route local plan builder browser acceptance recorded |
 | Stage 3.7.7 Single route local plan builder stability archive | Single route local planning baseline archived; remote execution remains No-Go |
+| Stage 3.8.1 Single route readonly preflight framework | Single route readonly preflight framework added; remote execution remains No-Go |
 
 ## Environment
 

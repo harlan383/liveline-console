@@ -41,6 +41,64 @@ type DiagnosticItemSpec = {
   failureMeaning: string;
   nextAction: string;
 };
+type ReadonlyPreflightItemSpec = {
+  label: string;
+  scope: string;
+  detail: string;
+};
+
+const readonlyPreflightItemSpecs: ReadonlyPreflightItemSpec[] = [
+  {
+    label: "中转服务器基础连通性",
+    scope: "未来远程只读",
+    detail: "确认目标中转服务器可在授权阶段进行只读登录和基础状态读取。",
+  },
+  {
+    label: "新监听端口占用检查",
+    scope: "未来远程只读",
+    detail: "确认计划监听端口未被现有进程占用；本阶段只生成计划，不执行 ss/lsof。",
+  },
+  {
+    label: "socat 18443 正式链路检查",
+    scope: "未来远程只读",
+    detail: "确认 18443 仍由当前 socat 正式链路使用，且不会被新线路覆盖。",
+  },
+  {
+    label: "gost 8443 回退链路检查",
+    scope: "未来远程只读",
+    detail: "确认 8443 仍由 gost 回退链路保留，且不会让 socat 接管 8443。",
+  },
+  {
+    label: "gost 服务 / 进程状态",
+    scope: "未来远程只读",
+    detail: "只读查看 gost 服务和进程状态；不执行 start / stop / restart。",
+  },
+  {
+    label: "socat 服务 / 进程状态",
+    scope: "未来远程只读",
+    detail: "只读查看 socat 服务和进程状态；不修改配置，不接管 8443。",
+  },
+  {
+    label: "中转到落地 TCP 连通性",
+    scope: "未来远程只读",
+    detail: "确认中转服务器到落地 VPS 目标端口可达；本阶段不执行 nc/curl。",
+  },
+  {
+    label: "服务器防火墙状态",
+    scope: "未来远程只读",
+    detail: "只读查看服务器防火墙状态；不新增、删除或修改规则。",
+  },
+  {
+    label: "任务记录和本地 health",
+    scope: "本地检查",
+    detail: "确认本地 health 正常，并确认没有 pending / running 任务。",
+  },
+  {
+    label: "云侧和服务器防火墙确认",
+    scope: "本地人工确认",
+    detail: "确认云安全组、云防火墙、服务器防火墙均放行计划 TCP 端口。",
+  },
+];
 
 function displayValue(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "-" : String(value);
@@ -242,6 +300,9 @@ export function TransitRoutesPanel() {
   const [planServerFirewallConfirmed, setPlanServerFirewallConfirmed] = useState(false);
   const [planLocalBackupConfirmed, setPlanLocalBackupConfirmed] = useState(false);
   const [planSummaryCopied, setPlanSummaryCopied] = useState(false);
+  const [preflightHealthConfirmed, setPreflightHealthConfirmed] = useState(false);
+  const [preflightBoundaryAcknowledged, setPreflightBoundaryAcknowledged] = useState(false);
+  const [preflightSummaryCopied, setPreflightSummaryCopied] = useState(false);
 
   async function ensureCsrfToken() {
     const csrf = await apiFetch<CsrfResult>("/api/auth/csrf");
@@ -598,6 +659,11 @@ export function TransitRoutesPanel() {
     setPlanSummaryCopied(true);
   }
 
+  async function copyReadonlyPreflightSummary() {
+    await navigator.clipboard.writeText(readonlyPreflightSummaryText);
+    setPreflightSummaryCopied(true);
+  }
+
   function transitHostForRoute(route: TransitRouteData) {
     const resource = resources.find((item) => item.id === route.transit_resource_id);
     return resource?.entry_host || resource?.ssh_host || null;
@@ -760,6 +826,41 @@ export function TransitRoutesPanel() {
     "Cutover: not authorized",
     "Sensitive data: complete node links, SSH keys, passwords, tokens, and SESSION_SECRET values are excluded.",
   ].join("\n");
+  const readonlyPreflightIssues = [
+    ...localPlanIssues,
+    preflightHealthConfirmed ? null : "当前系统 health 尚未确认正常，请先执行本地 health check。",
+    preflightBoundaryAcknowledged
+      ? null
+      : "请确认这只是只读预检计划，不会执行 SSH、创建真实转发或修改 node.share_link。",
+  ].filter((item): item is string => Boolean(item));
+  const readonlyPreflightReady = readonlyPreflightIssues.length === 0;
+  const readonlyPreflightStatusLabel = readonlyPreflightReady
+    ? "Ready for readonly preflight approval"
+    : "No-Go";
+  const readonlyPreflightSummaryText = [
+    "LiveLine single-route readonly preflight framework",
+    `Status: ${readonlyPreflightStatusLabel}`,
+    `Transit resource: ${planResource?.name ?? "Pending confirmation"}`,
+    `Landing node: ${planNode?.node_name ?? "Pending confirmation"}`,
+    `Planned listen port: ${planListenPort || "Pending confirmation"}`,
+    `Landing target port: ${planTargetPortNumber ?? "Pending confirmation"}`,
+    `Purpose: ${planPurpose.trim() || "Pending confirmation"}`,
+    `Cloud security group confirmed: ${planCloudSecurityGroupConfirmed ? "yes" : "no"}`,
+    `Cloud firewall confirmed: ${planCloudFirewallConfirmed ? "yes" : "no"}`,
+    `Server firewall confirmed: ${planServerFirewallConfirmed ? "yes" : "no"}`,
+    `Local database backup confirmed: ${planLocalBackupConfirmed ? "yes" : "no"}`,
+    `Local health confirmed: ${preflightHealthConfirmed ? "yes" : "no"}`,
+    `Readonly-only boundary acknowledged: ${preflightBoundaryAcknowledged ? "yes" : "no"}`,
+    "Future readonly checks:",
+    ...readonlyPreflightItemSpecs.map((item) => `- ${item.label}: ${item.scope}`),
+    "SSH: not executed in this stage",
+    "Remote commands: not executed in this stage",
+    "Real forwarding creation: not authorized",
+    "Real listening port addition: not authorized",
+    "node.share_link modification: not authorized",
+    "Cutover: not authorized",
+    "Sensitive data: complete node links, SSH keys, passwords, tokens, and SESSION_SECRET values are excluded.",
+  ].join("\n");
 
   return (
     <section className="panel wide">
@@ -805,6 +906,7 @@ export function TransitRoutesPanel() {
                 onChange={(event) => {
                   setPlanResourceId(event.target.value);
                   setPlanSummaryCopied(false);
+                  setPreflightSummaryCopied(false);
                 }}
               >
                 {resources.length === 0 ? <option value="">暂无可用 active server 资源</option> : null}
@@ -822,6 +924,7 @@ export function TransitRoutesPanel() {
                 onChange={(event) => {
                   setPlanNodeId(event.target.value);
                   setPlanSummaryCopied(false);
+                  setPreflightSummaryCopied(false);
                 }}
               >
                 {nodes.length === 0 ? <option value="">暂无 active 节点</option> : null}
@@ -840,6 +943,7 @@ export function TransitRoutesPanel() {
                 onChange={(event) => {
                   setPlanListenPort(event.target.value);
                   setPlanSummaryCopied(false);
+                  setPreflightSummaryCopied(false);
                 }}
                 placeholder="例如：一个未占用的高位 TCP 端口"
               />
@@ -855,6 +959,7 @@ export function TransitRoutesPanel() {
                 onChange={(event) => {
                   setPlanTargetPort(event.target.value);
                   setPlanSummaryCopied(false);
+                  setPreflightSummaryCopied(false);
                 }}
                 placeholder="例如：443"
               />
@@ -869,6 +974,7 @@ export function TransitRoutesPanel() {
                 onChange={(event) => {
                   setPlanPurpose(event.target.value);
                   setPlanSummaryCopied(false);
+                  setPreflightSummaryCopied(false);
                 }}
                 placeholder="例如：候选直播线路测试 / 客户端手动验收"
               />
@@ -881,6 +987,7 @@ export function TransitRoutesPanel() {
                   onChange={(event) => {
                     setPlanCloudSecurityGroupConfirmed(event.target.checked);
                     setPlanSummaryCopied(false);
+                    setPreflightSummaryCopied(false);
                   }}
                 />
                 <span>已确认云服务器安全组放行计划 TCP 端口</span>
@@ -892,6 +999,7 @@ export function TransitRoutesPanel() {
                   onChange={(event) => {
                     setPlanCloudFirewallConfirmed(event.target.checked);
                     setPlanSummaryCopied(false);
+                    setPreflightSummaryCopied(false);
                   }}
                 />
                 <span>已确认云防火墙放行计划 TCP 端口</span>
@@ -903,6 +1011,7 @@ export function TransitRoutesPanel() {
                   onChange={(event) => {
                     setPlanServerFirewallConfirmed(event.target.checked);
                     setPlanSummaryCopied(false);
+                    setPreflightSummaryCopied(false);
                   }}
                 />
                 <span>已确认服务器防火墙放行计划 TCP 端口</span>
@@ -914,6 +1023,7 @@ export function TransitRoutesPanel() {
                   onChange={(event) => {
                     setPlanLocalBackupConfirmed(event.target.checked);
                     setPlanSummaryCopied(false);
+                    setPreflightSummaryCopied(false);
                   }}
                 />
                 <span>已完成本地数据库备份，且备份文件不会进入 Git</span>
@@ -953,6 +1063,97 @@ export function TransitRoutesPanel() {
               </div>
             )}
             <pre className="local-plan-output">{localPlanSummaryText}</pre>
+          </div>
+        </div>
+      </div>
+
+      <div className="local-plan-builder readonly-preflight-plan">
+        <div className="status-row">
+          <div>
+            <h3>远程只读预检计划 / Framework only</h3>
+            <p className="message">
+              基于上方本地规划生成未来只读预检清单。本阶段只展示计划，不执行 SSH、不连接远端、不创建真实转发、不新增监听端口、不修改 node.share_link、不做 cutover。
+            </p>
+          </div>
+          <span className={`pill ${readonlyPreflightReady ? "ok" : "bad"}`}>
+            {readonlyPreflightStatusLabel}
+          </span>
+        </div>
+        <div className="warning-box">
+          <strong>只读预检计划，不是远程执行</strong>
+          <span>下面列出的远程项目全部标记为“未来执行”，本阶段不会运行任何 systemd、ss、nc、curl、iptables 或 SSH 命令。</span>
+          <span>真正远程只读预检需要后续 Workbuddy 授权阶段；真正创建远程转发和切换 node.share_link 也必须单独审批。</span>
+          <span>当前正式链路仍是 socat 18443，回退链路仍是 gost 8443，本计划不会关闭 gost，也不会让 socat 接管 8443。</span>
+        </div>
+        <div className="local-plan-layout">
+          <div className="readonly-preflight-checklist">
+            {readonlyPreflightItemSpecs.map((item) => (
+              <div className="readonly-preflight-item" key={item.label}>
+                <div className="status-row">
+                  <strong>{item.label}</strong>
+                  <span className={item.scope === "未来远程只读" ? "pill warn" : "pill ok"}>{item.scope}</span>
+                </div>
+                <span>{item.detail}</span>
+              </div>
+            ))}
+          </div>
+          <div className="local-plan-summary">
+            <div className="status-row">
+              <h4>只读预检审批摘要</h4>
+              <button className="secondary compact" type="button" onClick={() => void copyReadonlyPreflightSummary()}>
+                {preflightSummaryCopied ? "已复制" : "复制摘要"}
+              </button>
+            </div>
+            <div className="local-plan-checks">
+              <label className="check-row">
+                <input
+                  checked={preflightHealthConfirmed}
+                  type="checkbox"
+                  onChange={(event) => {
+                    setPreflightHealthConfirmed(event.target.checked);
+                    setPreflightSummaryCopied(false);
+                  }}
+                />
+                <span>已确认本地 health 正常，且 pending / running tasks 为 0</span>
+              </label>
+              <label className="check-row">
+                <input
+                  checked={preflightBoundaryAcknowledged}
+                  type="checkbox"
+                  onChange={(event) => {
+                    setPreflightBoundaryAcknowledged(event.target.checked);
+                    setPreflightSummaryCopied(false);
+                  }}
+                />
+                <span>我确认这只是只读预检计划，不会创建真实转发、不会修改 node.share_link、不会做 cutover</span>
+              </label>
+            </div>
+            <div className="detail-grid">
+              <span>预检结论</span>
+              <strong>{readonlyPreflightStatusLabel}</strong>
+              <span>中转资源</span>
+              <strong>{planResource?.name ?? "-"}</strong>
+              <span>落地节点</span>
+              <strong>{planNode?.node_name ?? "-"}</strong>
+              <span>计划端口</span>
+              <strong>{planListenPort || "-"}</strong>
+              <span>落地端口</span>
+              <strong>{planTargetPortNumber ?? "-"}</strong>
+            </div>
+            {readonlyPreflightIssues.length > 0 ? (
+              <div className="failure-box">
+                <strong>No-Go 原因</strong>
+                {readonlyPreflightIssues.map((issue) => (
+                  <span key={issue}>{issue}</span>
+                ))}
+              </div>
+            ) : (
+              <div className="warning-box">
+                <strong>Ready 只代表可进入审批</strong>
+                <span>当前仅可进入远程只读预检审批；仍不得执行 SSH、不得创建真实转发、不得新增监听端口。</span>
+              </div>
+            )}
+            <pre className="local-plan-output">{readonlyPreflightSummaryText}</pre>
           </div>
         </div>
       </div>

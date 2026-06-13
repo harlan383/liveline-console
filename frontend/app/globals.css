@@ -875,6 +875,29 @@ textarea {
   white-space: pre-wrap;
 }
 
+.readonly-preflight-plan {
+  background: #fbfdff;
+}
+
+.readonly-preflight-checklist {
+  display: grid;
+  gap: 10px;
+}
+
+.readonly-preflight-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.readonly-preflight-item span:last-child {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .route-form,
 .route-summary {
   border: 1px solid var(--line);
