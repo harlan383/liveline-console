@@ -1369,6 +1369,30 @@ cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
 required for later real SSH, remote creation, remote listening checks, or
 remote diagnosis stages.
 
+## Stage 3.7.3 Single route target and port selection record scope
+
+Stage 3.7.3 documents the target and port selection template for a future real
+single-route remote execution stage. The template records the future target
+transit server, transit IP, landing VPS / node, landing IP, landing port,
+active node, planned new listen port, target platform purpose, client usage,
+local backup status, cloud security group, cloud firewall, server firewall, and
+Workbuddy authorization fields that must be supplied before any real remote
+action can be requested.
+
+Current selection status remains No-Go because no real target transit server,
+landing VPS / node, active node, listen port, or firewall confirmation has been
+supplied. Stage 3.7.3 does not approve SSH, remote commands, route creation,
+new listening ports, `node.share_link` changes, or cutover.
+
+Stage 3.7.3 is documentation-only. It does not modify code, frontend behavior,
+backend logic, scripts, database schema, `node.share_link`, listening ports,
+firewall rules, Worker/RQ tasks, current route state, or current transit links.
+It does not execute SSH or remote commands, create real forwarding, perform
+cutover, let `socat` take over 8443, or stop, downgrade, or replace `gost`
+8443. Workbuddy is not required for this target-selection template, but will be
+required for later real SSH, remote port checks, remote creation, or remote
+diagnosis stages.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1449,6 +1473,7 @@ remote diagnosis stages.
 | Stage 3.6.5 Single route create flow stability archive | Single route create flow baseline archived |
 | Stage 3.7.1 Single route remote execution readiness | Single route remote execution readiness documented |
 | Stage 3.7.2 Single route remote execution approval | Remote execution approval template documented; execution remains No-Go |
+| Stage 3.7.3 Single route target and port selection record | Target and port selection template documented; execution remains No-Go |
 
 ## Environment
 
