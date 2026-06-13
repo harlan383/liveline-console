@@ -1439,6 +1439,23 @@ not execute SSH or remote commands, create real forwarding, trigger backend
 tasks, perform cutover, let `socat` take over 8443, or stop, downgrade, or
 replace `gost` 8443. Workbuddy is not required for the local dry-run builder.
 
+## Stage 3.7.6 Single route local plan builder browser acceptance record scope
+
+Stage 3.7.6 records browser manual acceptance for the Stage 3.7.5 local
+dry-run plan builder. The user verified locally at `http://localhost:3000` that
+the login gate works, the single-route page opens, the local plan builder is
+visible, protected ports `8443`, `18443`, `22`, and `20575` stay No-Go, missing
+firewall / backup confirmations keep the plan No-Go, and all confirmations can
+move the plan only to `Ready for readonly preflight approval`.
+
+The recorded acceptance also confirms that Ready does not authorize real
+forwarding creation, SSH, remote commands, new listening ports,
+`node.share_link` modification, or cutover. The page does not display complete
+node links, SSH keys, passwords, tokens, or `SESSION_SECRET` values. The
+current production link state remains unchanged: `socat` 18443 is the formal
+link, `gost` 8443 remains the fallback link, and `node.share_link` is not
+modified by this stage.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1522,6 +1539,7 @@ replace `gost` 8443. Workbuddy is not required for the local dry-run builder.
 | Stage 3.7.3 Single route target and port selection record | Target and port selection template documented; execution remains No-Go |
 | Stage 3.7.4 Single route readonly preflight approval | Readonly preflight approval template documented; execution remains No-Go |
 | Stage 3.7.5 Single route local plan builder | Single route local dry-run plan builder added; remote execution remains No-Go |
+| Stage 3.7.6 Single route local plan builder browser acceptance record | Single route local plan builder browser acceptance recorded |
 
 ## Environment
 
