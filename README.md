@@ -1632,6 +1632,18 @@ The current formal link remains `socat` 18443, the fallback link remains
 `gost` 8443, and remote execution remains No-Go until the user later provides a
 target route, target port, firewall confirmations, and explicit authorization.
 
+## Stage 3.10.3 Local console v1 stable release tag scope
+
+Stage 3.10.3 archives the current local console v1 stable baseline and prepares
+the future `local-console-v1-stable` Git tag plan. The recommended tag is an
+annotated tag to be created manually on `main` after this PR is merged.
+
+Stage 3.10.3 is documentation-only. It does not create a Git tag, modify code,
+frontend behavior, backend logic, scripts, database schema, `node.share_link`,
+listening ports, firewall rules, Worker/RQ tasks, current route state, or
+current transit links. The current formal link remains `socat` 18443, the
+fallback link remains `gost` 8443, and remote execution remains No-Go.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1727,6 +1739,7 @@ target route, target port, firewall confirmations, and explicit authorization.
 | Stage 3.9.5 Readonly preflight UI API browser acceptance record | Readonly preflight UI API browser acceptance recorded |
 | Stage 3.10.1 Readonly preflight local package stability and next-step plan | Readonly preflight local package archived; remote execution remains No-Go |
 | Stage 3.10.2 Local console final acceptance and long-term use guide | Local console final acceptance and long-term use guide documented; remote execution remains No-Go |
+| Stage 3.10.3 Local console v1 stable release tag | Local console v1 stable tag prepared; remote execution remains No-Go |
 
 ## Environment
 
