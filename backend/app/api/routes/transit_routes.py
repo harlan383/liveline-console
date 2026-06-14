@@ -18,6 +18,9 @@ from app.schemas.common import error_response, success_response
 from app.schemas.transit_route import (
     PROTECTED_CREATE_PORT_MESSAGES,
     PROTECTED_CREATE_PORTS,
+    ReadonlyPreflightPlanCheck,
+    ReadonlyPreflightPlanRequest,
+    ReadonlyPreflightPlanResponse,
     TransitRouteCreateFields,
 )
 from app.services.auth_service import record_audit
@@ -36,6 +39,254 @@ from app.worker.ssh_socat_route import (
 )
 
 router = APIRouter()
+
+
+READONLY_PREFLIGHT_SAFETY_BOUNDARY = [
+    "readonly preflight plan only",
+    "no SSH executed",
+    "no remote commands executed",
+    "no remote server connection",
+    "no database write",
+    "no task created",
+    "no temp credential written",
+    "no real forwarding created",
+    "no real listening port added",
+    "no node.share_link modification",
+    "no cutover",
+]
+
+
+def redact_hint(value: str | None) -> str:
+    if not value:
+        return "Pending confirmation"
+    cleaned = value.strip()
+    lowered = cleaned.lower()
+    if "://" in lowered or "begin " in lowered or "private key" in lowered:
+        return "[redacted sensitive value]"
+    if len(cleaned) > 80:
+        return f"{cleaned[:40]}...{cleaned[-12:]}"
+    return cleaned
+
+
+def parse_optional_port(value: int | str | None) -> tuple[int | None, str | None]:
+    if value is None:
+        return None, "端口尚未填写。"
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None, "端口尚未填写。"
+        if not stripped.isdigit():
+            return None, "端口必须是 1-65535 之间的整数。"
+        value = int(stripped)
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None, "端口必须是 1-65535 之间的整数。"
+    if value < 1 or value > 65535:
+        return value, "端口必须是 1-65535 之间的整数。"
+    return value, None
+
+
+def make_preflight_check(
+    *,
+    check_id: str,
+    label: str,
+    category: str,
+    passed: bool,
+    message: str,
+    next_action: str,
+    status: str | None = None,
+    evidence_summary: str | None = None,
+) -> ReadonlyPreflightPlanCheck:
+    resolved_status = status or ("passed" if passed else "blocked")
+    return ReadonlyPreflightPlanCheck(
+        id=check_id,
+        label=label,
+        category=category,
+        status=resolved_status,
+        passed=passed,
+        message=message,
+        evidence_summary=evidence_summary or message,
+        next_action=next_action,
+        sensitive_output_redacted=True,
+    )
+
+
+def future_preflight_check(check_id: str, label: str, category: str) -> ReadonlyPreflightPlanCheck:
+    return make_preflight_check(
+        check_id=check_id,
+        label=label,
+        category=category,
+        passed=False,
+        status="skipped",
+        message="future check / not executed in this stage",
+        evidence_summary="No remote evidence collected.",
+        next_action="Enter a separately authorized Workbuddy read-only preflight stage before executing this check.",
+    )
+
+
+def build_readonly_preflight_plan(payload: ReadonlyPreflightPlanRequest) -> ReadonlyPreflightPlanResponse:
+    planned_port, planned_port_error = parse_optional_port(payload.planned_listen_port)
+    landing_port, landing_port_error = parse_optional_port(payload.landing_target_port)
+    protected_port_message = PROTECTED_CREATE_PORT_MESSAGES.get(planned_port or 0)
+    planned_port_valid = planned_port is not None and planned_port_error is None
+    planned_port_not_reserved = planned_port_valid and planned_port not in PROTECTED_CREATE_PORTS
+    firewall_confirmations_present = (
+        payload.firewall_security_group_confirmed
+        and payload.cloud_firewall_confirmed
+        and payload.server_firewall_confirmed
+    )
+
+    checks = [
+        make_preflight_check(
+            check_id="transit_resource_selected",
+            label="Transit resource selected",
+            category="local_input",
+            passed=bool(payload.transit_resource_id),
+            message="Transit resource is selected." if payload.transit_resource_id else "Transit resource is missing.",
+            next_action="Select a transit resource before requesting read-only preflight.",
+        ),
+        make_preflight_check(
+            check_id="landing_node_selected",
+            label="Landing node selected",
+            category="local_input",
+            passed=bool(payload.landing_node_id),
+            message="Landing node is selected." if payload.landing_node_id else "Landing node is missing.",
+            next_action="Select an active landing node before requesting read-only preflight.",
+        ),
+        make_preflight_check(
+            check_id="planned_port_valid",
+            label="Planned listen port is valid",
+            category="port_safety",
+            passed=planned_port_valid,
+            message="Planned listen port is a valid TCP port." if planned_port_valid else (planned_port_error or "Planned listen port is invalid."),
+            next_action="Use an integer TCP port from 1 to 65535.",
+        ),
+        make_preflight_check(
+            check_id="planned_port_not_reserved",
+            label="Planned listen port is not reserved",
+            category="port_safety",
+            passed=planned_port_not_reserved,
+            message=(
+                "Planned listen port is not reserved."
+                if planned_port_not_reserved
+                else protected_port_message or "Planned listen port must avoid protected ports."
+            ),
+            next_action="Avoid 22, 8443, 18443, and 20575.",
+        ),
+        make_preflight_check(
+            check_id="landing_target_port_valid",
+            label="Landing target port is valid",
+            category="port_safety",
+            passed=landing_port is not None and landing_port_error is None,
+            message="Landing target port is valid." if landing_port is not None and landing_port_error is None else (landing_port_error or "Landing target port is invalid."),
+            next_action="Use an integer TCP port from 1 to 65535.",
+        ),
+        make_preflight_check(
+            check_id="firewall_confirmations_present",
+            label="Firewall confirmations are present",
+            category="firewall",
+            passed=firewall_confirmations_present,
+            message="Cloud security group, cloud firewall, and server firewall are confirmed." if firewall_confirmations_present else "Firewall confirmations are incomplete.",
+            next_action="Confirm cloud security group, cloud firewall, and server firewall allow the planned TCP port.",
+        ),
+        make_preflight_check(
+            check_id="local_backup_confirmed",
+            label="Local database backup confirmed",
+            category="local_safety",
+            passed=payload.local_backup_confirmed,
+            message="Local database backup is confirmed." if payload.local_backup_confirmed else "Local database backup is not confirmed.",
+            next_action="Run and verify a local database backup before requesting read-only preflight.",
+        ),
+        make_preflight_check(
+            check_id="user_approved_readonly_preflight",
+            label="User approved read-only preflight",
+            category="authorization",
+            passed=payload.user_approved_readonly_preflight,
+            message="User approval for read-only preflight is present." if payload.user_approved_readonly_preflight else "User approval for read-only preflight is missing.",
+            next_action="Confirm that the request is only for read-only preflight.",
+        ),
+        make_preflight_check(
+            check_id="no_cutover_confirmed",
+            label="No cutover confirmed",
+            category="authorization",
+            passed=payload.no_cutover_confirmed,
+            message="No-cutover boundary is confirmed." if payload.no_cutover_confirmed else "No-cutover boundary is not confirmed.",
+            next_action="Confirm that this request will not perform cutover.",
+        ),
+        make_preflight_check(
+            check_id="no_node_share_link_change_confirmed",
+            label="No node.share_link change confirmed",
+            category="authorization",
+            passed=payload.no_node_share_link_change_confirmed,
+            message="No node.share_link change boundary is confirmed." if payload.no_node_share_link_change_confirmed else "No node.share_link change boundary is not confirmed.",
+            next_action="Confirm that node.share_link will not be read or modified.",
+        ),
+        make_preflight_check(
+            check_id="workbuddy_authorization_status",
+            label="Workbuddy authorization status",
+            category="authorization",
+            passed=payload.workbuddy_authorized,
+            message="Workbuddy read-only preflight authorization is present." if payload.workbuddy_authorized else "Workbuddy read-only preflight authorization is missing.",
+            next_action="Obtain explicit Workbuddy authorization before any future remote read-only execution.",
+        ),
+        future_preflight_check("future_transit_reachable", "Transit server reachable", "future_remote"),
+        future_preflight_check("future_planned_port_available", "Planned port available", "future_remote"),
+        future_preflight_check("future_formal_socat_18443_preserved", "Formal socat 18443 preserved", "future_route_safety"),
+        future_preflight_check("future_fallback_gost_8443_preserved", "Fallback gost 8443 preserved", "future_route_safety"),
+        future_preflight_check("future_transit_to_landing_tcp_connectivity", "Transit to landing TCP connectivity", "future_remote"),
+    ]
+
+    required_checks = [check for check in checks if not check.id.startswith("future_")]
+    ready = all(check.passed for check in required_checks)
+    structural_blocked = any(
+        not check.passed
+        for check in checks
+        if check.id in {
+            "transit_resource_selected",
+            "landing_node_selected",
+            "planned_port_valid",
+            "planned_port_not_reserved",
+            "landing_target_port_valid",
+        }
+    )
+    status = "ready" if ready else ("blocked" if structural_blocked else "no_go")
+    summary = (
+        "Ready for readonly preflight approval / execution stage. This does not authorize real forwarding."
+        if ready
+        else "Readonly preflight plan is No-Go. No remote execution is authorized."
+    )
+    next_action = (
+        "Proceed only to a separately authorized read-only preflight execution stage."
+        if ready
+        else "Resolve blocked or No-Go checks before requesting read-only preflight execution approval."
+    )
+    redacted_summary = "\n".join(
+        [
+            "LiveLine readonly preflight no-op plan",
+            f"Status: {status}",
+            f"Transit resource: {redact_hint(payload.transit_resource_name)}",
+            f"Transit host hint: {redact_hint(payload.transit_host_hint)}",
+            f"Landing node: {redact_hint(payload.landing_node_name)}",
+            f"Landing host hint: {redact_hint(payload.landing_host_hint)}",
+            f"Planned listen port: {planned_port if planned_port is not None else 'Pending confirmation'}",
+            f"Landing target port: {landing_port if landing_port is not None else 'Pending confirmation'}",
+            f"Purpose: {redact_hint(payload.route_purpose)}",
+            "Remote execution: not performed by this API",
+            "Real forwarding creation: not authorized",
+            "node.share_link modification: not authorized",
+            "Cutover: not authorized",
+        ]
+    )
+
+    return ReadonlyPreflightPlanResponse(
+        ready=ready,
+        blocked=not ready,
+        status=status,
+        summary=summary,
+        next_action=next_action,
+        checks=checks,
+        safety_boundary=READONLY_PREFLIGHT_SAFETY_BOUNDARY,
+        redacted_summary=redacted_summary,
+    )
 
 
 async def read_private_key_payload(
@@ -121,6 +372,19 @@ def get_transit_route(
         return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
 
     return success_response(serialize_transit_route(route), "ok")
+
+
+@router.post("/readonly-preflight-plan")
+def readonly_preflight_plan(
+    payload: ReadonlyPreflightPlanRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    if not require_admin_session(db, request):
+        return auth_error()
+
+    plan = build_readonly_preflight_plan(payload)
+    return success_response(plan.model_dump(), "readonly preflight plan generated locally")
 
 
 @router.post("/{route_id}/diagnose")

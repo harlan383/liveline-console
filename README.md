@@ -1543,6 +1543,21 @@ modify `node.share_link`, or perform cutover. The current formal link remains
 `socat` 18443, the fallback link remains `gost` 8443, and remote execution
 remains No-Go until a separately authorized stage.
 
+## Stage 3.9.2 Readonly preflight no-op API scaffold scope
+
+Stage 3.9.2 adds `POST /api/transit-routes/readonly-preflight-plan`, a
+login-protected no-op backend API scaffold for the future single-route readonly
+preflight flow. The endpoint validates local input and returns a redacted
+readonly preflight plan with Go / No-Go state, check items, safety boundaries,
+and next-action text.
+
+The endpoint is intentionally side-effect free. It does not create database
+records, create tasks, write Redis temporary credentials, execute SSH, run
+remote commands, connect to remote servers, create real forwarding, add real
+listening ports, modify `node.share_link`, or perform cutover. The current
+formal link remains `socat` 18443, the fallback link remains `gost` 8443, and
+remote execution remains No-Go.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1632,6 +1647,7 @@ remains No-Go until a separately authorized stage.
 | Stage 3.8.2 Readonly preflight framework browser acceptance record | Readonly preflight framework browser acceptance recorded |
 | Stage 3.8.3 Readonly preflight framework stability archive | Readonly preflight framework baseline archived; remote execution remains No-Go |
 | Stage 3.9.1 Readonly preflight execution contract | Readonly preflight execution contract documented; remote execution remains No-Go |
+| Stage 3.9.2 Readonly preflight no-op API scaffold | Readonly preflight no-op API scaffold added; remote execution remains No-Go |
 
 ## Environment
 
