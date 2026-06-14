@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import QRCode from "react-qr-code";
 
 import {
   apiFetch,
   apiFormFetch,
   type CsrfResult,
+  type NodeData,
   type ReadNodeResult,
   type VpsServerData,
   type VpsServerDeleteResult,
@@ -34,6 +36,8 @@ type NodeFormState = {
   privateKeyText: string;
   passphrase: string;
 };
+
+type ServerNodeSummary = VpsServerData["nodes"][number];
 
 const emptyServerForm: ServerFormState = {
   name: "",
@@ -76,11 +80,35 @@ function statusClass(status: string) {
   return "muted";
 }
 
+function nodeStatusLabel(status: string | undefined | null) {
+  const labels: Record<string, string> = {
+    active: "已启用",
+    disabled: "已停用",
+    deleted: "已删除",
+    pending: "等待中",
+    running: "执行中",
+    success: "成功",
+    completed: "成功",
+    failed: "失败",
+    cancelled: "已取消",
+    timeout: "超时",
+    unknown: "未知",
+  };
+  return labels[status ?? ""] ?? status ?? "-";
+}
+
 function formatTime(value: string | null) {
   if (!value) {
     return "暂无";
   }
   return new Date(value).toLocaleString();
+}
+
+function maskShareLink(shareLink: string) {
+  if (shareLink.length <= 40) {
+    return `${shareLink.slice(0, 12)}...`;
+  }
+  return `${shareLink.slice(0, 24)}...${shareLink.slice(-12)}`;
 }
 
 export function ServerManagementPanel() {
@@ -92,6 +120,10 @@ export function ServerManagementPanel() {
   const [selectedServer, setSelectedServer] = useState<VpsServerData | null>(null);
   const [serverForm, setServerForm] = useState<ServerFormState>(emptyServerForm);
   const [nodeForm, setNodeForm] = useState<NodeFormState>(emptyNodeForm);
+  const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
+  const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
+  const [showFullShareLink, setShowFullShareLink] = useState(false);
+  const [showNodeQrCode, setShowNodeQrCode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function ensureCsrfToken() {
@@ -130,6 +162,12 @@ export function ServerManagementPanel() {
     setServerForm(emptyServerForm);
     setNodeForm(emptyNodeForm);
     clearFileInput();
+  }
+
+  function closeNodeDetail() {
+    setSelectedNodeDetail(null);
+    setShowFullShareLink(false);
+    setShowNodeQrCode(false);
   }
 
   function openAddServer() {
@@ -193,6 +231,46 @@ export function ServerManagementPanel() {
     }
     formData.append("ssh_key_passphrase", passphrase);
     formData.append("private_key_passphrase", passphrase);
+  }
+
+  async function fetchNodeDetail(nodeId: string) {
+    setNodeDetailLoading(true);
+    try {
+      const result = await apiFetch<NodeData>(`/api/nodes/${nodeId}`);
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return null;
+      }
+      return result.data;
+    } finally {
+      setNodeDetailLoading(false);
+    }
+  }
+
+  async function openNodeDetail(node: ServerNodeSummary, showQr = false) {
+    setMessage("正在读取节点详情。");
+    const detail = await fetchNodeDetail(node.id);
+    if (!detail) {
+      return;
+    }
+    setSelectedNodeDetail(detail);
+    setShowFullShareLink(false);
+    setShowNodeQrCode(showQr && Boolean(detail.share_link));
+    setMessage("节点详情已读取。完整分享链接默认隐藏。");
+  }
+
+  async function copyNodeShareLink(node: ServerNodeSummary) {
+    if (!node.share_link_present) {
+      setMessage("该节点还没有可复制的分享链接。");
+      return;
+    }
+    const detail = await fetchNodeDetail(node.id);
+    if (!detail?.share_link) {
+      setMessage("该节点还没有可复制的分享链接。");
+      return;
+    }
+    await navigator.clipboard.writeText(detail.share_link);
+    setMessage("完整分享链接已复制。完整链接未写入页面默认展示。");
   }
 
   async function submitAddServer(event: React.FormEvent<HTMLFormElement>) {
@@ -383,6 +461,28 @@ export function ServerManagementPanel() {
         share_link 仅显示是否存在；本页面不允许修改 `node.share_link`。删除服务器只处理系统记录，不清理远程 Xray / 节点配置。
       </div>
 
+      <details className="route-safety-guardrail collapsible-notice server-node-merge-notice" aria-label="节点合并说明">
+        <summary className="route-safety-summary">
+          <div className="route-safety-heading">
+            <span>安全提示</span>
+            <strong>查看节点合并说明</strong>
+          </div>
+          <span className="notice-toggle-text">
+            <span className="when-closed">查看说明</span>
+            <span className="when-open">收起说明</span>
+          </span>
+        </summary>
+        <div className="route-safety-body">
+          <ul className="route-safety-list">
+            <li>节点已合并到服务器管理页，节点属于某一台服务器。</li>
+            <li>左侧不再提供独立节点菜单，节点详情、复制链接和二维码从服务器下级节点行进入。</li>
+            <li>share_link 只在用户明确点击查看或复制时展示 / 复制，默认不暴露完整链接。</li>
+            <li>本阶段不修改 node.share_link、不创建真实节点、不新增监听端口、不执行正式 cutover。</li>
+            <li>后续新增或变更节点监听端口时，必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙是否放行对应 TCP 端口。</li>
+          </ul>
+        </div>
+      </details>
+
       <div className="server-table" aria-label="服务器管理表格">
         <div className="server-table-row server-table-head">
           <span>名称</span>
@@ -427,11 +527,37 @@ export function ServerManagementPanel() {
                   <div className="server-node-rows">
                     {server.nodes.map((node) => (
                       <div className="server-table-row node-child-row" key={node.id}>
-                        <span>└ {node.name}</span>
+                        <span>
+                          └ {node.name}
+                          <small className="node-meta-line">协议：{node.protocol}</small>
+                        </span>
                         <span>{node.ip || node.address || server.ip}</span>
                         <span>节点 {node.port ?? "-"}</span>
-                        <span className={`pill ${statusClass(node.status)}`}>{node.status}</span>
-                        <span className="node-share-status">share_link：{node.share_link_present ? "已生成" : "无"}</span>
+                        <span>
+                          <span className={`pill ${statusClass(node.status)}`}>{nodeStatusLabel(node.status)}</span>
+                          <small className="node-share-status">share_link：{node.share_link_present ? "已生成" : "未生成"}</small>
+                        </span>
+                        <span className="server-actions">
+                          <button className="secondary" type="button" onClick={() => void openNodeDetail(node)}>
+                            查看
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={!node.share_link_present}
+                            type="button"
+                            onClick={() => void copyNodeShareLink(node)}
+                          >
+                            复制
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={!node.share_link_present}
+                            type="button"
+                            onClick={() => void openNodeDetail(node, true)}
+                          >
+                            二维码
+                          </button>
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -451,6 +577,7 @@ export function ServerManagementPanel() {
       </div>
 
       {modalMode ? renderModal() : null}
+      {selectedNodeDetail ? renderNodeDetailModal() : null}
     </section>
   );
 
@@ -637,6 +764,103 @@ export function ServerManagementPanel() {
           </button>
         </div>
       </form>
+    );
+  }
+
+  function renderNodeDetailModal() {
+    if (!selectedNodeDetail) {
+      return null;
+    }
+    const shareLink = selectedNodeDetail.share_link ?? "";
+    return (
+      <div className="modal-backdrop" role="presentation">
+        <div className="modal-card node-detail-modal" role="dialog" aria-modal="true" aria-label="节点详情">
+          <div className="modal-header">
+            <div>
+              <h3>{selectedNodeDetail.node_name}</h3>
+              <p className="message">节点详情按需读取；完整 share_link 默认隐藏，不会修改 `node.share_link`。</p>
+            </div>
+            <button className="ghost-button" type="button" onClick={closeNodeDetail}>
+              关闭
+            </button>
+          </div>
+
+          {nodeDetailLoading ? <p className="message">正在读取节点详情。</p> : null}
+
+          <div className="detail-grid">
+            <span>节点名称</span>
+            <strong>{selectedNodeDetail.node_name}</strong>
+            <span>VPS IP / 服务器 IP</span>
+            <strong>{selectedNodeDetail.vps_ip ?? "-"}</strong>
+            <span>协议</span>
+            <strong>{selectedNodeDetail.protocol}</strong>
+            <span>端口</span>
+            <strong>{selectedNodeDetail.port ?? "-"}</strong>
+            <span>状态</span>
+            <strong>{nodeStatusLabel(selectedNodeDetail.status)}</strong>
+            <span>share_link 状态</span>
+            <strong>{shareLink ? "已生成 / 默认隐藏完整链接" : "未生成"}</strong>
+            <span>Reality serverName</span>
+            <strong>{selectedNodeDetail.reality_server_name ?? "-"}</strong>
+            <span>Reality publicKey</span>
+            <strong>{selectedNodeDetail.reality_public_key ?? "-"}</strong>
+            <span>shortId</span>
+            <strong>{selectedNodeDetail.reality_short_id ?? "-"}</strong>
+            <span>flow</span>
+            <strong>{selectedNodeDetail.flow ?? "-"}</strong>
+          </div>
+
+          <div className="share-export">
+            <label className="wide-field">
+              分享链接
+              <textarea
+                className="share-link-value"
+                readOnly
+                value={shareLink ? (showFullShareLink ? shareLink : maskShareLink(shareLink)) : ""}
+              />
+            </label>
+
+            <div className="node-actions export-actions">
+              <button
+                className="secondary"
+                disabled={!shareLink}
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(shareLink).then(() => setMessage("完整分享链接已复制。"))}
+              >
+                复制完整链接
+              </button>
+              <button
+                className="secondary"
+                disabled={!shareLink}
+                type="button"
+                onClick={() => setShowFullShareLink((current) => !current)}
+              >
+                {showFullShareLink ? "隐藏完整链接" : "显示完整链接"}
+              </button>
+              <button
+                className="secondary"
+                disabled={!shareLink}
+                type="button"
+                onClick={() => setShowNodeQrCode((current) => !current)}
+              >
+                {showNodeQrCode ? "隐藏二维码" : "显示二维码"}
+              </button>
+            </div>
+
+            {showNodeQrCode && shareLink ? (
+              <div className="qr-panel">
+                <div className="warning-box">
+                  <div>二维码等同完整节点链接。</div>
+                  <div>不要截图或发送给他人，泄露后别人可能使用该节点。</div>
+                </div>
+                <div className="qr-frame" aria-label="节点分享链接二维码">
+                  <QRCode value={shareLink} size={220} />
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
     );
   }
 }
