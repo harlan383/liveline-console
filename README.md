@@ -534,6 +534,23 @@ not add listening ports, does not trigger Worker/RQ tasks, does not execute SSH
 or remote commands, does not stop `gost` 8443, and does not let `socat` take
 over 8443.
 
+## Stage 3.3.16 Server management backend foundation scope
+
+Stage 3.3.16 adds the minimum backend foundation needed by the future server
+management table. It adds server display metadata and SSH handshake status
+fields to `vps_servers`, a focused Alembic migration, `GET /api/vps`,
+`POST /api/vps`, `POST /api/vps/{vps_id}/recheck`,
+`PATCH /api/vps/{vps_id}`, and `DELETE /api/vps/{vps_id}`. It also adds the
+`check_vps_ssh` task type for SSH handshake checks using the existing Redis
+temporary credential mechanism.
+
+Stage 3.3.16 does not implement the full server-management table UI; that is
+left for a later UI stage. It does not modify `node.share_link`, does not add
+listening ports, does not create real nodes, does not create transit routes,
+does not change existing node-creation API compatibility, does not execute
+formal cutover, and does not automatically clean remote Xray or node
+configuration when deleting a server record.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.

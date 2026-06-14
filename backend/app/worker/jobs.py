@@ -25,7 +25,7 @@ from app.worker.ssh_install import install_xray_state
 from app.worker.ssh_node_delete import delete_node_state
 from app.worker.ssh_node_manage import refresh_node_state, restart_xray_state
 from app.worker.ssh_prepare import prepare_node_state
-from app.worker.ssh_read import SSHReadError, read_vps_state
+from app.worker.ssh_read import SSHReadError, check_vps_ssh_state, read_vps_state
 from app.worker.ssh_socat_install import install_socat_state
 from app.worker.ssh_socat_restart import restart_socat_route_state
 from app.worker.ssh_socat_route import cleanup_socat_service, create_socat_route_state, route_summary
@@ -149,6 +149,117 @@ def prepare_result_allows_install(
         return False, "PREPARE_NODE_NOT_PASSED", "最近一次安装前检查未通过。"
 
     return True, "", ""
+
+
+def update_vps_ssh_check(
+    db: Session,
+    vps: VpsServer,
+    *,
+    status: str,
+    error: str | None = None,
+) -> None:
+    vps.last_ssh_status = status
+    vps.last_ssh_check_at = datetime.now(UTC)
+    vps.last_ssh_error = error
+    db.add(vps)
+
+
+def check_vps_ssh_job(task_id: str, vps_id: str, temp_credential_id: str) -> None:
+    db = SessionLocal()
+    try:
+        task = db.get(Task, task_id)
+        vps = db.get(VpsServer, vps_id)
+        if not task or not vps:
+            return
+
+        update_task(db, task, status="running", step="load_credentials", progress=10)
+        add_task_log(
+            db,
+            task.id,
+            level="info",
+            step="load_credentials",
+            message="读取临时 SSH 凭据。",
+        )
+        db.commit()
+
+        try:
+            private_key, passphrase = pop_temp_credential(temp_credential_id)
+        except TempCredentialExpired:
+            message = "临时 SSH Key 已过期，请重新提交。"
+            update_vps_ssh_check(db, vps, status="offline", error=message)
+            fail_task(
+                db,
+                task,
+                error_code="SSH_KEY_EXPIRED",
+                error_message=message,
+                result_data={"message": message, "last_ssh_status": "offline"},
+            )
+            return
+        except TempCredentialDecryptFailed:
+            message = "临时 SSH Key 解密失败。"
+            update_vps_ssh_check(db, vps, status="offline", error=message)
+            fail_task(
+                db,
+                task,
+                error_code="SSH_AUTH_FAILED",
+                error_message=message,
+                result_data={"message": message, "last_ssh_status": "offline"},
+            )
+            return
+
+        update_task(db, task, step="ssh_connect", progress=35)
+        add_task_log(db, task.id, level="info", step="ssh_connect", message="开始 SSH 握手检测。")
+        db.commit()
+
+        try:
+            result = check_vps_ssh_state(vps, private_key, passphrase)
+        except SSHReadError as exc:
+            safe_message = exc.message
+            update_vps_ssh_check(db, vps, status="offline", error=safe_message)
+            fail_task(
+                db,
+                task,
+                error_code=exc.error_code,
+                error_message=safe_message,
+                result_data={
+                    "message": safe_message,
+                    "last_ssh_status": "offline",
+                    "failures": [safe_message],
+                },
+            )
+            return
+        finally:
+            private_key = ""
+            passphrase = None
+
+        update_task(db, task, step="save_result", progress=85)
+        add_task_log(db, task.id, level="info", step="save_result", message="保存 SSH 握手结果。")
+
+        vps.ssh_key_fingerprint = result["ssh"]["ssh_key_fingerprint"]
+        if not vps.ssh_host_key_fingerprint:
+            vps.ssh_host_key_fingerprint = result["ssh"]["host_key_fingerprint"]
+        update_vps_ssh_check(db, vps, status="online", error=None)
+        result["last_ssh_status"] = "online"
+
+        add_task_log(
+            db,
+            task.id,
+            level="info",
+            step="complete",
+            message=result["message"],
+        )
+        update_task(
+            db,
+            task,
+            status="success",
+            step="complete",
+            progress=100,
+            result_data=result,
+            finish=True,
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 def read_node_job(task_id: str, vps_id: str, temp_credential_id: str) -> None:

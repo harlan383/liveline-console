@@ -250,6 +250,58 @@ export type VpsActionResult = {
   vps_id: string;
 };
 
+export type VpsServerNodeSummary = {
+  id: string;
+  name: string;
+  address: string | null;
+  ip: string | null;
+  port: number | null;
+  protocol: string;
+  status: string;
+  share_link_present: boolean;
+  created_at: string | null;
+};
+
+export type VpsServerData = {
+  id: string;
+  name: string;
+  ip: string;
+  ssh_port: number;
+  ssh_user: string;
+  ssh_username: string;
+  notes: string | null;
+  status: string;
+  last_ssh_status: string;
+  last_ssh_check_at: string | null;
+  last_ssh_error: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  nodes: VpsServerNodeSummary[];
+};
+
+export type VpsServerListResult = {
+  servers: VpsServerData[];
+};
+
+export type VpsServerTaskResult = {
+  task_id: string;
+  vps_id: string;
+  server: VpsServerData;
+};
+
+export type VpsServerUpdateResult = {
+  server: VpsServerData;
+  ssh_status_reset: boolean;
+};
+
+export type VpsServerDeleteResult = {
+  deleted_server_id: string;
+  affected_nodes: number;
+  system_record_only: boolean;
+  remote_cleanup_performed: boolean;
+  message: string;
+};
+
 export type CsrfResult = {
   csrf_token: string;
 };
