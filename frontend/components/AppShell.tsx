@@ -4,11 +4,10 @@ import { useEffect, useState } from "react";
 
 import { LoginScreen } from "@/components/LoginScreen";
 import { NodesPanel } from "@/components/NodesPanel";
-import { ReadVpsPanel } from "@/components/ReadVpsPanel";
 import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
+import { ServerManagementPanel } from "@/components/ServerManagementPanel";
 import { SystemStatus } from "@/components/SystemStatus";
 import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
-import { TransitResourcesPanel } from "@/components/TransitResourcesPanel";
 import { TransitRoutesPanel } from "@/components/TransitRoutesPanel";
 import { TransitTopologyPreviewPanel } from "@/components/TransitTopologyPreviewPanel";
 import {
@@ -234,12 +233,7 @@ export function AppShell() {
 
         <div className="grid">
           {activePanel === "dashboard" ? <DashboardPanel /> : null}
-          {activePanel === "servers" ? (
-            <>
-              <ReadVpsPanel recreateVpsId={recreateVpsId} onRecreateVpsConsumed={clearRecreateVps} />
-              <TransitResourcesPanel />
-            </>
-          ) : null}
+          {activePanel === "servers" ? <ServerManagementPanel /> : null}
           {activePanel === "nodes" ? <NodesPanel onVpsReadyForRecreate={handleVpsReadyForRecreate} /> : null}
           {activePanel === "transitRoutes" ? <TransitRoutesPanel /> : null}
           {activePanel === "tasks" ? <TaskHistoryPanel /> : null}
