@@ -115,7 +115,7 @@ export function ServerManagementPanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [servers, setServers] = useState<VpsServerData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("服务器管理只读取本地系统记录；不会在页面加载时执行 SSH。");
+  const [message, setMessage] = useState("落地服务器管理只读取本地系统记录；不会在页面加载时执行 SSH。");
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [selectedServer, setSelectedServer] = useState<VpsServerData | null>(null);
   const [serverForm, setServerForm] = useState<ServerFormState>(emptyServerForm);
@@ -449,16 +449,16 @@ export function ServerManagementPanel() {
     <section className="panel wide server-management-panel">
       <div className="server-management-header">
         <div>
-          <h2>服务器管理</h2>
-          <p className="message">管理本地系统中的服务器记录和下级节点摘要。页面加载不会执行 SSH 或远程命令。</p>
+          <h2>落地服务器</h2>
+          <p className="message">管理本地系统中的落地服务器记录和下级节点摘要。页面加载不会执行 SSH 或远程命令。</p>
         </div>
         <button type="button" onClick={openAddServer}>
-          添加服务器
+          添加落地服务器
         </button>
       </div>
 
       <div className="server-management-note">
-        share_link 仅显示是否存在；本页面不允许修改 `node.share_link`。删除服务器只处理系统记录，不清理远程 Xray / 节点配置。
+        share_link 仅显示是否存在；本页面不允许修改 `node.share_link`。删除落地服务器只处理系统记录，不清理远程 Xray / 节点配置。
       </div>
 
       <details className="route-safety-guardrail collapsible-notice server-node-merge-notice" aria-label="节点合并说明">
@@ -474,7 +474,7 @@ export function ServerManagementPanel() {
         </summary>
         <div className="route-safety-body">
           <ul className="route-safety-list">
-            <li>节点已合并到服务器管理页，节点属于某一台服务器。</li>
+            <li>节点已合并到落地服务器页，节点属于某一台服务器。</li>
             <li>左侧不再提供独立节点菜单，节点详情、复制链接和二维码从服务器下级节点行进入。</li>
             <li>share_link 只在用户明确点击查看或复制时展示 / 复制，默认不暴露完整链接。</li>
             <li>本阶段不修改 node.share_link、不创建真实节点、不新增监听端口、不执行正式 cutover。</li>
@@ -483,7 +483,7 @@ export function ServerManagementPanel() {
         </div>
       </details>
 
-      <div className="server-table" aria-label="服务器管理表格">
+      <div className="server-table" aria-label="落地服务器管理表格">
         <div className="server-table-row server-table-head">
           <span>名称</span>
           <span>IP 地址</span>
@@ -492,7 +492,7 @@ export function ServerManagementPanel() {
           <span>操作</span>
         </div>
         {loading ? <div className="server-table-empty">正在加载服务器列表。</div> : null}
-        {!loading && servers.length === 0 ? <div className="server-table-empty">暂无服务器记录。点击“添加服务器”开始。</div> : null}
+        {!loading && servers.length === 0 ? <div className="server-table-empty">暂无落地服务器记录。点击“添加落地服务器”开始。</div> : null}
         {!loading
           ? servers.map((server) => (
               <div className="server-table-group" key={server.id}>
@@ -587,10 +587,10 @@ export function ServerManagementPanel() {
       return null;
     }
     const titleMap: Record<Exclude<ModalMode, null>, string> = {
-      add: "添加服务器",
-      recheck: "重新检测服务器",
-      edit: "编辑服务器",
-      delete: "删除服务器",
+      add: "添加落地服务器",
+      recheck: "重新检测落地服务器",
+      edit: "编辑落地服务器",
+      delete: "删除落地服务器",
       node: "添加节点",
     };
     return (
@@ -621,13 +621,13 @@ export function ServerManagementPanel() {
       <form className="form server-modal-form" onSubmit={onSubmit}>
         {!recheckOnly ? (
           <label>
-            服务器名称
+            落地服务器名称
             <input value={serverForm.name} onChange={(event) => setServerForm({ ...serverForm, name: event.target.value })} />
           </label>
         ) : null}
         {!recheckOnly ? (
           <label>
-            服务器 IP
+            落地服务器 IP
             <input value={serverForm.ip} onChange={(event) => setServerForm({ ...serverForm, ip: event.target.value })} />
           </label>
         ) : null}
@@ -692,7 +692,7 @@ export function ServerManagementPanel() {
       <div className="delete-confirm">
         <div className="failure-box">
           <strong>危险操作二次确认</strong>
-          <span>将删除服务器系统记录，并将该服务器下未删除节点标记为 deleted。</span>
+          <span>将删除落地服务器系统记录，并将该服务器下未删除节点标记为 deleted。</span>
           <span>不会 SSH 登录远程服务器，不会清理远程 Xray 或节点配置。</span>
         </div>
         <div className="server-delete-target">
