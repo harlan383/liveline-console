@@ -202,6 +202,49 @@ export type TransitRouteRestartSocatResult = {
   transit_route_id: string;
 };
 
+export type ReadonlyPreflightPlanRequest = {
+  transit_resource_id: string | null;
+  transit_resource_name: string | null;
+  transit_host_hint: string | null;
+  landing_node_id: string | null;
+  landing_node_name: string | null;
+  landing_host_hint: string | null;
+  landing_target_port: string;
+  planned_listen_port: string;
+  route_purpose: string | null;
+  firewall_security_group_confirmed: boolean;
+  cloud_firewall_confirmed: boolean;
+  server_firewall_confirmed: boolean;
+  local_backup_confirmed: boolean;
+  user_approved_readonly_preflight: boolean;
+  workbuddy_authorized: boolean;
+  no_cutover_confirmed: boolean;
+  no_node_share_link_change_confirmed: boolean;
+};
+
+export type ReadonlyPreflightCheckItem = {
+  id: string;
+  label: string;
+  category: string;
+  status: string;
+  passed: boolean;
+  message: string;
+  evidence_summary: string;
+  next_action: string;
+  sensitive_output_redacted: boolean;
+};
+
+export type ReadonlyPreflightPlanResponse = {
+  ready: boolean;
+  blocked: boolean;
+  status: string;
+  summary: string;
+  next_action: string;
+  checks: ReadonlyPreflightCheckItem[];
+  safety_boundary: string[];
+  redacted_summary: string;
+};
+
 export type VpsActionResult = {
   task_id: string;
   vps_id: string;
@@ -265,4 +308,13 @@ export async function apiFormFetch<T>(
 
   notifyAuthExpired(path, response.status);
   return response.json() as Promise<ApiResponse<T>>;
+}
+
+export async function requestReadonlyPreflightPlan(
+  payload: ReadonlyPreflightPlanRequest,
+): Promise<ApiResponse<ReadonlyPreflightPlanResponse>> {
+  return apiFetch<ReadonlyPreflightPlanResponse>("/api/transit-routes/readonly-preflight-plan", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

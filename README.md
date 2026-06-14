@@ -1574,6 +1574,20 @@ firewall rules, Worker/RQ tasks, current route state, or current transit links.
 The current formal link remains `socat` 18443, the fallback link remains
 `gost` 8443, and remote execution remains No-Go.
 
+## Stage 3.9.4 Readonly preflight UI API integration scope
+
+Stage 3.9.4 connects the frontend readonly preflight planning area to the
+Stage 3.9.2 local no-op API:
+`POST /api/transit-routes/readonly-preflight-plan`. The UI can request the
+backend no-op plan and display `ready`, `blocked`, `status`, `summary`,
+`next_action`, `checks`, `safety_boundary`, and `redacted_summary`.
+
+The integration remains side-effect free. It does not execute SSH, run remote
+commands, connect to remote servers, create real forwarding, add real listening
+ports, modify `node.share_link`, trigger backend tasks, or perform cutover.
+The current formal link remains `socat` 18443, the fallback link remains
+`gost` 8443, and remote execution remains No-Go.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1665,6 +1679,7 @@ The current formal link remains `socat` 18443, the fallback link remains
 | Stage 3.9.1 Readonly preflight execution contract | Readonly preflight execution contract documented; remote execution remains No-Go |
 | Stage 3.9.2 Readonly preflight no-op API scaffold | Readonly preflight no-op API scaffold added; remote execution remains No-Go |
 | Stage 3.9.3 Readonly preflight no-op API acceptance record | Readonly preflight no-op API acceptance recorded; remote execution remains No-Go |
+| Stage 3.9.4 Readonly preflight UI API integration | Readonly preflight UI integrated with no-op API; remote execution remains No-Go |
 
 ## Environment
 

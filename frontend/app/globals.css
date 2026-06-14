@@ -898,6 +898,28 @@ textarea {
   line-height: 1.45;
 }
 
+.readonly-preflight-api-result {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.api-check-list {
+  max-height: 620px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.api-check-card {
+  background: #ffffff;
+}
+
+.compact-detail-grid {
+  font-size: 12px;
+  grid-template-columns: minmax(130px, 0.45fr) minmax(0, 1fr);
+}
+
 .route-form,
 .route-summary {
   border: 1px solid var(--line);
