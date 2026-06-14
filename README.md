@@ -1558,6 +1558,22 @@ listening ports, modify `node.share_link`, or perform cutover. The current
 formal link remains `socat` 18443, the fallback link remains `gost` 8443, and
 remote execution remains No-Go.
 
+## Stage 3.9.3 Readonly preflight no-op API acceptance record scope
+
+Stage 3.9.3 records local acceptance for the Stage 3.9.2 readonly preflight
+no-op API scaffold. The record confirms that local services start, health is
+ok, the frontend responds with HTTP 200, unauthenticated access to the no-op
+API returns `401`, protected ports return blocked / No-Go, missing local
+confirmations return No-Go, and a safe high port with all local confirmations
+returns `ready=true` only for a future readonly preflight approval / execution
+stage.
+
+Stage 3.9.3 is documentation-only. It does not modify code, frontend behavior,
+backend logic, scripts, database schema, `node.share_link`, listening ports,
+firewall rules, Worker/RQ tasks, current route state, or current transit links.
+The current formal link remains `socat` 18443, the fallback link remains
+`gost` 8443, and remote execution remains No-Go.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1648,6 +1664,7 @@ remote execution remains No-Go.
 | Stage 3.8.3 Readonly preflight framework stability archive | Readonly preflight framework baseline archived; remote execution remains No-Go |
 | Stage 3.9.1 Readonly preflight execution contract | Readonly preflight execution contract documented; remote execution remains No-Go |
 | Stage 3.9.2 Readonly preflight no-op API scaffold | Readonly preflight no-op API scaffold added; remote execution remains No-Go |
+| Stage 3.9.3 Readonly preflight no-op API acceptance record | Readonly preflight no-op API acceptance recorded; remote execution remains No-Go |
 
 ## Environment
 
