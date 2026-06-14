@@ -62,3 +62,46 @@ class TransitRouteData(BaseModel):
 
 class TransitRouteListResult(BaseModel):
     routes: list[TransitRouteData]
+
+
+class ReadonlyPreflightPlanRequest(BaseModel):
+    transit_resource_id: str | None = None
+    transit_resource_name: str | None = None
+    transit_host_hint: str | None = None
+    landing_node_id: str | None = None
+    landing_node_name: str | None = None
+    landing_host_hint: str | None = None
+    landing_target_port: int | str | None = None
+    planned_listen_port: int | str | None = None
+    route_purpose: str | None = None
+    firewall_security_group_confirmed: bool = False
+    cloud_firewall_confirmed: bool = False
+    server_firewall_confirmed: bool = False
+    local_backup_confirmed: bool = False
+    user_approved_readonly_preflight: bool = False
+    workbuddy_authorized: bool = False
+    no_cutover_confirmed: bool = False
+    no_node_share_link_change_confirmed: bool = False
+
+
+class ReadonlyPreflightPlanCheck(BaseModel):
+    id: str
+    label: str
+    category: str
+    status: str
+    passed: bool
+    message: str
+    evidence_summary: str
+    next_action: str
+    sensitive_output_redacted: bool = True
+
+
+class ReadonlyPreflightPlanResponse(BaseModel):
+    ready: bool
+    blocked: bool
+    status: str
+    summary: str
+    next_action: str
+    checks: list[ReadonlyPreflightPlanCheck]
+    safety_boundary: list[str]
+    redacted_summary: str
