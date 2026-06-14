@@ -1588,6 +1588,21 @@ ports, modify `node.share_link`, trigger backend tasks, or perform cutover.
 The current formal link remains `socat` 18443, the fallback link remains
 `gost` 8443, and remote execution remains No-Go.
 
+## Stage 3.9.5 Readonly preflight UI API browser acceptance record scope
+
+Stage 3.9.5 records browser manual acceptance for the Stage 3.9.4 readonly
+preflight UI API integration. The record confirms that the login gate works,
+the single-route page opens, the readonly preflight area calls the no-op API,
+protected ports show blocked / No-Go, missing confirmations show `no_go`, and
+all local confirmations can show `ready=True` only for a future readonly
+preflight approval stage.
+
+Stage 3.9.5 is documentation-only. It does not modify code, frontend behavior,
+backend logic, scripts, database schema, `node.share_link`, listening ports,
+firewall rules, Worker/RQ tasks, current route state, or current transit links.
+The current formal link remains `socat` 18443, the fallback link remains
+`gost` 8443, and remote execution remains No-Go.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1680,6 +1695,7 @@ The current formal link remains `socat` 18443, the fallback link remains
 | Stage 3.9.2 Readonly preflight no-op API scaffold | Readonly preflight no-op API scaffold added; remote execution remains No-Go |
 | Stage 3.9.3 Readonly preflight no-op API acceptance record | Readonly preflight no-op API acceptance recorded; remote execution remains No-Go |
 | Stage 3.9.4 Readonly preflight UI API integration | Readonly preflight UI integrated with no-op API; remote execution remains No-Go |
+| Stage 3.9.5 Readonly preflight UI API browser acceptance record | Readonly preflight UI API browser acceptance recorded |
 
 ## Environment
 
