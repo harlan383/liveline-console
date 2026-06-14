@@ -20,6 +20,13 @@ READ_ONLY_COMMANDS = {
     "xray_active": "systemctl is-active xray",
 }
 
+SSH_CHECK_COMMANDS = {
+    "os_release": "cat /etc/os-release",
+    "uname_arch": "uname -m",
+    "whoami": "whoami",
+    "systemd_available": "test -d /run/systemd/system",
+}
+
 
 class SSHReadError(Exception):
     def __init__(
@@ -251,4 +258,40 @@ def read_vps_state(vps: VpsServer, private_key: str, passphrase: str | None) -> 
             "service_active": xray_active,
         },
         "read_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def check_vps_ssh_state(vps: VpsServer, private_key: str, passphrase: str | None) -> dict[str, Any]:
+    transport, host_fingerprint, ssh_key_fingerprint = connect_transport(
+        vps,
+        private_key,
+        passphrase,
+    )
+    command_results: dict[str, CommandResult] = {}
+    try:
+        for key, command in SSH_CHECK_COMMANDS.items():
+            command_results[key] = run_read_only_command(transport, command)
+    finally:
+        transport.close()
+
+    os_release: dict[str, str] = {}
+    if command_results["os_release"].exit_code == 0:
+        os_release = parse_os_release(command_results["os_release"].stdout)
+
+    return {
+        "message": "SSH 握手成功，服务器可通讯。",
+        "ssh": {
+            "username": vps.ssh_username,
+            "host_key_fingerprint": host_fingerprint,
+            "ssh_key_fingerprint": ssh_key_fingerprint,
+        },
+        "system": {
+            "id": os_release.get("ID"),
+            "name": os_release.get("PRETTY_NAME") or os_release.get("NAME"),
+            "version_id": os_release.get("VERSION_ID"),
+            "arch": command_results["uname_arch"].stdout.strip() or None,
+            "whoami": command_results["whoami"].stdout.strip() or None,
+            "systemd_available": command_results["systemd_available"].exit_code == 0,
+        },
+        "checked_at": datetime.now(UTC).isoformat(),
     }
