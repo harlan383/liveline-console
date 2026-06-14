@@ -567,6 +567,22 @@ formal cutover, and does not run SSH or remote commands unless the operator
 explicitly submits an existing task-backed form such as add server, recheck, or
 add node.
 
+## Stage 3.3.18 Node menu consolidation scope
+
+Stage 3.3.18 removes the standalone left-nav Nodes entry and consolidates node
+viewing/export actions into the Landing Servers page. The left navigation now
+uses the order Dashboard, Transit Servers, Landing Servers, Tasks, Diagnostics,
+and Settings. Nodes remain landing-server-owned child records under the
+server-management table. The child node row now supports on-demand detail
+viewing, full-link copy, and local QR display through the existing
+`GET /api/nodes/{node_id}` API.
+
+Stage 3.3.18 keeps the underlying nodes table, node APIs, node creation flow,
+and `node.share_link` capability intact. It does not modify backend core logic,
+does not add database migrations, does not modify `node.share_link`, does not
+add listening ports, does not execute SSH or remote commands, does not create
+real nodes by page load or modal open, and does not perform formal cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1743,6 +1759,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.13 UI polish | Dark SaaS operations-console UI polished; no cutover / no `node.share_link` change |
 | Stage 3.3.14 UI zh-CN collapsible tips | Console UI localized to Chinese; large safety tips collapsed by default |
 | Stage 3.3.17 Server management UI table | Servers page changed to server-management table backed by VPS APIs |
+| Stage 3.3.18 Node menu consolidation | Nodes left-nav entry removed; nav renamed to Transit Servers / Landing Servers; node actions consolidated under landing-server child rows |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

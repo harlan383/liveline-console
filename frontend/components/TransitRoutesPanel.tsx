@@ -1038,7 +1038,10 @@ export function TransitRoutesPanel() {
   return (
     <section className="panel wide">
       <div className="status-row">
-        <h2>创建单条转发</h2>
+        <div>
+          <h2>中转服务器</h2>
+          <p className="message">管理中转服务器及其转发链路；创建、诊断和正式切换必须遵守安全边界。</p>
+        </div>
         <button className="secondary" type="button" onClick={() => void loadData()}>
           刷新数据
         </button>

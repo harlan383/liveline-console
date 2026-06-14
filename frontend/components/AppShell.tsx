@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 
 import { LoginScreen } from "@/components/LoginScreen";
-import { NodesPanel } from "@/components/NodesPanel";
 import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 import { ServerManagementPanel } from "@/components/ServerManagementPanel";
 import { SystemStatus } from "@/components/SystemStatus";
@@ -21,9 +20,7 @@ import {
   type TransitRouteListResult,
 } from "@/lib/api";
 
-const RECREATE_VPS_STORAGE_KEY = "livelines.recreateVpsId";
-
-type PanelId = "dashboard" | "servers" | "nodes" | "transitRoutes" | "tasks" | "diagnostics" | "settings";
+type PanelId = "dashboard" | "servers" | "transitRoutes" | "tasks" | "diagnostics" | "settings";
 
 const panels: Array<{
   id: PanelId;
@@ -40,25 +37,18 @@ const panels: Array<{
     description: "查看本地控制台健康状态、节点规模、中转链路和最近任务状态。",
   },
   {
-    id: "servers",
-    label: "服务器",
-    title: "服务器",
-    eyebrow: "VPS 与中转资源",
-    description: "管理 VPS 读取和中转资源元信息；资源记录不等于真实线路。",
-  },
-  {
-    id: "nodes",
-    label: "节点",
-    title: "节点",
-    eyebrow: "Reality 节点运维",
-    description: "查看直连节点、状态、导出体验和 Xray 备份元数据。",
-  },
-  {
     id: "transitRoutes",
-    label: "中转链路",
-    title: "中转链路",
+    label: "中转服务器",
+    title: "中转服务器",
     eyebrow: "链路规划与安全",
-    description: "规划、查看和诊断单条中转链路；正式切换必须单独审批。",
+    description: "管理中转服务器及其转发链路；正式切换必须单独审批。",
+  },
+  {
+    id: "servers",
+    label: "落地服务器",
+    title: "落地服务器",
+    eyebrow: "VPS 与节点",
+    description: "管理落地服务器记录和下级节点；节点链接只按需查看或复制。",
   },
   {
     id: "tasks",
@@ -98,16 +88,11 @@ function taskStatusLabel(status: string) {
 }
 
 export function AppShell() {
-  const [recreateVpsId, setRecreateVpsId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<PanelId>("dashboard");
   const [currentAdmin, setCurrentAdmin] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const activePanelMeta = panels.find((panel) => panel.id === activePanel) ?? panels[1];
-
-  useEffect(() => {
-    setRecreateVpsId(window.localStorage.getItem(RECREATE_VPS_STORAGE_KEY));
-  }, []);
 
   useEffect(() => {
     async function checkAuth() {
@@ -134,16 +119,6 @@ export function AppShell() {
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   }, []);
-
-  function handleVpsReadyForRecreate(vpsId: string) {
-    setRecreateVpsId(vpsId);
-    window.localStorage.setItem(RECREATE_VPS_STORAGE_KEY, vpsId);
-  }
-
-  function clearRecreateVps() {
-    setRecreateVpsId(null);
-    window.localStorage.removeItem(RECREATE_VPS_STORAGE_KEY);
-  }
 
   async function handleLogout() {
     const csrfResult = await apiFetch<CsrfResult>("/api/auth/csrf");
@@ -234,7 +209,6 @@ export function AppShell() {
         <div className="grid">
           {activePanel === "dashboard" ? <DashboardPanel /> : null}
           {activePanel === "servers" ? <ServerManagementPanel /> : null}
-          {activePanel === "nodes" ? <NodesPanel onVpsReadyForRecreate={handleVpsReadyForRecreate} /> : null}
           {activePanel === "transitRoutes" ? <TransitRoutesPanel /> : null}
           {activePanel === "tasks" ? <TaskHistoryPanel /> : null}
           {activePanel === "diagnostics" ? (
