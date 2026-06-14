@@ -8,6 +8,9 @@ import {
   type CsrfResult,
   type NodeData,
   type NodeListResult,
+  type ReadonlyPreflightCheckItem,
+  type ReadonlyPreflightPlanRequest,
+  type ReadonlyPreflightPlanResponse,
   type TaskData,
   type TaskLogData,
   type TransitResourceData,
@@ -17,6 +20,7 @@ import {
   type TransitRouteDiagnoseResult,
   type TransitRouteListResult,
   type TransitRouteRestartSocatResult,
+  requestReadonlyPreflightPlan,
 } from "@/lib/api";
 import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 
@@ -250,6 +254,33 @@ function checkStatus(check: Record<string, unknown> | null) {
   return check["ok"] === true ? { className: "ok", label: "通过" } : { className: "bad", label: "失败" };
 }
 
+function preflightStatusClass(status: string | null | undefined, ready?: boolean) {
+  if (ready || status === "ready") {
+    return "ok";
+  }
+  if (status === "no_go") {
+    return "warn";
+  }
+  return "bad";
+}
+
+function preflightCheckClass(check: ReadonlyPreflightCheckItem) {
+  if (check.passed) {
+    return "ok";
+  }
+  if (check.id.startsWith("future_") || check.status === "skipped") {
+    return "warn";
+  }
+  return "bad";
+}
+
+function preflightCheckStatusLabel(check: ReadonlyPreflightCheckItem) {
+  if (check.id.startsWith("future_") || check.status === "skipped") {
+    return "future check / not executed";
+  }
+  return check.status;
+}
+
 function diagnosticOutcome(task: TaskData) {
   if (task.status === "failed") {
     return task.error_message ? redactString(task.error_message) : "诊断任务失败，请查看任务记录。";
@@ -302,7 +333,11 @@ export function TransitRoutesPanel() {
   const [planSummaryCopied, setPlanSummaryCopied] = useState(false);
   const [preflightHealthConfirmed, setPreflightHealthConfirmed] = useState(false);
   const [preflightBoundaryAcknowledged, setPreflightBoundaryAcknowledged] = useState(false);
+  const [preflightWorkbuddyBoundaryConfirmed, setPreflightWorkbuddyBoundaryConfirmed] = useState(false);
   const [preflightSummaryCopied, setPreflightSummaryCopied] = useState(false);
+  const [readonlyPreflightPlan, setReadonlyPreflightPlan] = useState<ReadonlyPreflightPlanResponse | null>(null);
+  const [readonlyPreflightApiMessage, setReadonlyPreflightApiMessage] = useState("");
+  const [readonlyPreflightLoading, setReadonlyPreflightLoading] = useState(false);
 
   async function ensureCsrfToken() {
     const csrf = await apiFetch<CsrfResult>("/api/auth/csrf");
@@ -354,6 +389,25 @@ export function TransitRoutesPanel() {
   useEffect(() => {
     void loadData();
   }, []);
+
+  useEffect(() => {
+    setReadonlyPreflightPlan(null);
+    setReadonlyPreflightApiMessage("");
+    setPreflightSummaryCopied(false);
+  }, [
+    planResourceId,
+    planNodeId,
+    planListenPort,
+    planTargetPort,
+    planPurpose,
+    planCloudSecurityGroupConfirmed,
+    planCloudFirewallConfirmed,
+    planServerFirewallConfirmed,
+    planLocalBackupConfirmed,
+    preflightHealthConfirmed,
+    preflightBoundaryAcknowledged,
+    preflightWorkbuddyBoundaryConfirmed,
+  ]);
 
   useEffect(() => {
     setConfirm(false);
@@ -660,8 +714,50 @@ export function TransitRoutesPanel() {
   }
 
   async function copyReadonlyPreflightSummary() {
-    await navigator.clipboard.writeText(readonlyPreflightSummaryText);
+    await navigator.clipboard.writeText(readonlyPreflightPlan?.redacted_summary ?? readonlyPreflightSummaryText);
     setPreflightSummaryCopied(true);
+  }
+
+  function buildReadonlyPreflightPayload(): ReadonlyPreflightPlanRequest {
+    return {
+      transit_resource_id: planResourceId || null,
+      transit_resource_name: planResource?.name ?? null,
+      transit_host_hint: planResource?.entry_host ?? planResource?.ssh_host ?? null,
+      landing_node_id: planNodeId || null,
+      landing_node_name: planNode?.node_name ?? null,
+      landing_host_hint: planNode?.vps_ip ?? null,
+      landing_target_port: planTargetPort,
+      planned_listen_port: planListenPort,
+      route_purpose: planPurpose.trim() || null,
+      firewall_security_group_confirmed: planCloudSecurityGroupConfirmed,
+      cloud_firewall_confirmed: planCloudFirewallConfirmed,
+      server_firewall_confirmed: planServerFirewallConfirmed,
+      local_backup_confirmed: planLocalBackupConfirmed,
+      user_approved_readonly_preflight: preflightHealthConfirmed && preflightBoundaryAcknowledged,
+      workbuddy_authorized: preflightWorkbuddyBoundaryConfirmed,
+      no_cutover_confirmed: preflightBoundaryAcknowledged,
+      no_node_share_link_change_confirmed: preflightBoundaryAcknowledged,
+    };
+  }
+
+  async function generateReadonlyPreflightPlan() {
+    setReadonlyPreflightLoading(true);
+    setReadonlyPreflightApiMessage("正在校验后端 no-op 只读预检计划。");
+    try {
+      const result = await requestReadonlyPreflightPlan(buildReadonlyPreflightPayload());
+      if (!result.success) {
+        setReadonlyPreflightPlan(null);
+        setReadonlyPreflightApiMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setReadonlyPreflightPlan(result.data);
+      setReadonlyPreflightApiMessage(result.message);
+    } catch (error) {
+      setReadonlyPreflightPlan(null);
+      setReadonlyPreflightApiMessage(error instanceof Error ? error.message : "后端 no-op 只读预检计划校验失败。");
+    } finally {
+      setReadonlyPreflightLoading(false);
+    }
   }
 
   function transitHostForRoute(route: TransitRouteData) {
@@ -832,6 +928,9 @@ export function TransitRoutesPanel() {
     preflightBoundaryAcknowledged
       ? null
       : "请确认这只是只读预检计划，不会执行 SSH、创建真实转发或修改 node.share_link。",
+    preflightWorkbuddyBoundaryConfirmed
+      ? null
+      : "请确认真正远程只读预检必须后续单独授权 Workbuddy 或等价远程执行方式。",
   ].filter((item): item is string => Boolean(item));
   const readonlyPreflightReady = readonlyPreflightIssues.length === 0;
   const readonlyPreflightStatusLabel = readonlyPreflightReady
@@ -851,6 +950,7 @@ export function TransitRoutesPanel() {
     `Local database backup confirmed: ${planLocalBackupConfirmed ? "yes" : "no"}`,
     `Local health confirmed: ${preflightHealthConfirmed ? "yes" : "no"}`,
     `Readonly-only boundary acknowledged: ${preflightBoundaryAcknowledged ? "yes" : "no"}`,
+    `Future Workbuddy authorization boundary acknowledged: ${preflightWorkbuddyBoundaryConfirmed ? "yes" : "no"}`,
     "Future readonly checks:",
     ...readonlyPreflightItemSpecs.map((item) => `- ${item.label}: ${item.scope}`),
     "SSH: not executed in this stage",
@@ -893,7 +993,7 @@ export function TransitRoutesPanel() {
         </div>
         <div className="warning-box">
           <strong>Local plan only</strong>
-          <span>即使显示 Ready，也只代表可以进入 readonly preflight approval，不代表可以创建真实转发。</span>
+          <span>即使显示 Ready，也只代表可以进入 readonly preflight approval；真实转发创建仍未授权。</span>
           <span>8443 保留给 gost 回退链路；18443 是当前 socat 正式链路；22 / 20575 不得用于业务转发。</span>
           <span>新增或变更端口前，必须确认云服务器安全组、云防火墙和服务器防火墙均放行对应 TCP 端口。</span>
         </div>
@@ -1100,9 +1200,19 @@ export function TransitRoutesPanel() {
           <div className="local-plan-summary">
             <div className="status-row">
               <h4>只读预检审批摘要</h4>
-              <button className="secondary compact" type="button" onClick={() => void copyReadonlyPreflightSummary()}>
-                {preflightSummaryCopied ? "已复制" : "复制摘要"}
-              </button>
+              <div className="route-card-actions">
+                <button
+                  className="secondary compact"
+                  disabled={readonlyPreflightLoading}
+                  type="button"
+                  onClick={() => void generateReadonlyPreflightPlan()}
+                >
+                  {readonlyPreflightLoading ? "校验中" : "校验只读预检计划"}
+                </button>
+                <button className="secondary compact" type="button" onClick={() => void copyReadonlyPreflightSummary()}>
+                  {preflightSummaryCopied ? "已复制" : "复制摘要"}
+                </button>
+              </div>
             </div>
             <div className="local-plan-checks">
               <label className="check-row">
@@ -1126,6 +1236,17 @@ export function TransitRoutesPanel() {
                   }}
                 />
                 <span>我确认这只是只读预检计划，不会创建真实转发、不会修改 node.share_link、不会做 cutover</span>
+              </label>
+              <label className="check-row">
+                <input
+                  checked={preflightWorkbuddyBoundaryConfirmed}
+                  type="checkbox"
+                  onChange={(event) => {
+                    setPreflightWorkbuddyBoundaryConfirmed(event.target.checked);
+                    setPreflightSummaryCopied(false);
+                  }}
+                />
+                <span>我确认真正远程只读预检必须后续单独授权 Workbuddy 或等价远程执行方式，本阶段不执行</span>
               </label>
             </div>
             <div className="detail-grid">
@@ -1154,6 +1275,100 @@ export function TransitRoutesPanel() {
               </div>
             )}
             <pre className="local-plan-output">{readonlyPreflightSummaryText}</pre>
+            {readonlyPreflightApiMessage ? <p className="message">{readonlyPreflightApiMessage}</p> : null}
+            {readonlyPreflightPlan ? (
+              <div className="readonly-preflight-api-result">
+                <div className="status-row">
+                  <div>
+                    <h4>后端 no-op 预检计划结果</h4>
+                    <p className="message">来自 POST /api/transit-routes/readonly-preflight-plan。该接口不执行远程操作。</p>
+                  </div>
+                  <span
+                    className={`pill ${preflightStatusClass(
+                      readonlyPreflightPlan.status,
+                      readonlyPreflightPlan.ready,
+                    )}`}
+                  >
+                    {readonlyPreflightPlan.status}
+                  </span>
+                </div>
+                <div className="detail-grid">
+                  <span>ready</span>
+                  <strong>{String(readonlyPreflightPlan.ready)}</strong>
+                  <span>blocked</span>
+                  <strong>{String(readonlyPreflightPlan.blocked)}</strong>
+                  <span>summary</span>
+                  <strong>{readonlyPreflightPlan.summary}</strong>
+                  <span>next_action</span>
+                  <strong>{readonlyPreflightPlan.next_action}</strong>
+                </div>
+                {readonlyPreflightPlan.ready ? (
+                  <div className="warning-box">
+                    <strong>Ready 只代表可进入 readonly preflight approval</strong>
+                    <span>远程命令、真实转发创建和 node.share_link 修改仍未授权。</span>
+                    <span>真正远程只读预检必须另开授权阶段，并继续保持 cutover No-Go。</span>
+                  </div>
+                ) : (
+                  <div className="failure-box">
+                    <strong>No-Go / blocked 原因</strong>
+                    <span>{readonlyPreflightPlan.summary}</span>
+                    <span>{readonlyPreflightPlan.next_action}</span>
+                  </div>
+                )}
+                <div className="readonly-preflight-checklist api-check-list">
+                  {readonlyPreflightPlan.checks.map((check) => {
+                    const isFuture = check.id.startsWith("future_") || check.status === "skipped";
+                    return (
+                      <div className="readonly-preflight-item api-check-card" key={check.id}>
+                        <div className="status-row">
+                          <div>
+                            <strong>{check.label}</strong>
+                            <p className="message">{check.id}</p>
+                          </div>
+                          <span className={`pill ${preflightCheckClass(check)}`}>
+                            {preflightCheckStatusLabel(check)}
+                          </span>
+                        </div>
+                        {isFuture ? (
+                          <div className="warning-box">
+                            <span>future check / not executed in this stage / 本阶段未远程执行。</span>
+                          </div>
+                        ) : null}
+                        <div className="detail-grid compact-detail-grid">
+                          <span>category</span>
+                          <strong>{check.category}</strong>
+                          <span>passed</span>
+                          <strong>{String(check.passed)}</strong>
+                          <span>message</span>
+                          <strong>{check.message}</strong>
+                          <span>evidence_summary</span>
+                          <strong>{check.evidence_summary}</strong>
+                          <span>next_action</span>
+                          <strong>{check.next_action}</strong>
+                          <span>sensitive_output_redacted</span>
+                          <strong>{String(check.sensitive_output_redacted)}</strong>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="warning-box">
+                  <strong>safety_boundary</strong>
+                  {readonlyPreflightPlan.safety_boundary.map((boundary) => (
+                    <span key={boundary}>{boundary}</span>
+                  ))}
+                </div>
+                <div>
+                  <h4>redacted_summary</h4>
+                  <pre className="local-plan-output">{readonlyPreflightPlan.redacted_summary}</pre>
+                </div>
+              </div>
+            ) : (
+              <div className="warning-box">
+                <strong>尚未调用后端 no-op API</strong>
+                <span>点击“校验只读预检计划”后，只会生成本地无副作用计划，不会 SSH、不会远程命令、不会连接远程服务器。</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
