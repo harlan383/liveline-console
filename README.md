@@ -1603,6 +1603,20 @@ firewall rules, Worker/RQ tasks, current route state, or current transit links.
 The current formal link remains `socat` 18443, the fallback link remains
 `gost` 8443, and remote execution remains No-Go.
 
+## Stage 3.10.1 Readonly preflight local package stability and next-step plan scope
+
+Stage 3.10.1 archives the Stage 3.9 readonly preflight local package and
+records the next-step plan. The archive covers the execution contract, no-op
+API scaffold, no-op API acceptance record, frontend UI integration, and browser
+acceptance record.
+
+Stage 3.10.1 is documentation-only. It does not modify code, frontend behavior,
+backend logic, scripts, database schema, `node.share_link`, listening ports,
+firewall rules, Worker/RQ tasks, current route state, or current transit links.
+The current formal link remains `socat` 18443, the fallback link remains
+`gost` 8443, and remote execution remains No-Go until the user later provides a
+target route, target port, firewall confirmations, and explicit authorization.
+
 ## Stage Status
 
 | Stage | Status |
@@ -1696,6 +1710,7 @@ The current formal link remains `socat` 18443, the fallback link remains
 | Stage 3.9.3 Readonly preflight no-op API acceptance record | Readonly preflight no-op API acceptance recorded; remote execution remains No-Go |
 | Stage 3.9.4 Readonly preflight UI API integration | Readonly preflight UI integrated with no-op API; remote execution remains No-Go |
 | Stage 3.9.5 Readonly preflight UI API browser acceptance record | Readonly preflight UI API browser acceptance recorded |
+| Stage 3.10.1 Readonly preflight local package stability and next-step plan | Readonly preflight local package archived; remote execution remains No-Go |
 
 ## Environment
 
