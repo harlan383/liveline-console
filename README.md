@@ -551,6 +551,22 @@ does not change existing node-creation API compatibility, does not execute
 formal cutover, and does not automatically clean remote Xray or node
 configuration when deleting a server record.
 
+## Stage 3.3.17 Server management UI table scope
+
+Stage 3.3.17 replaces the default Servers page with a local server-management
+table backed by the Stage 3.3.16 VPS management APIs. The page lists server
+records, SSH status, SSH port, actions, and child node summary rows. It adds
+modal flows for adding a server, rechecking SSH, editing server metadata,
+deleting system records, and submitting the existing direct-node creation flow
+for online servers.
+
+Stage 3.3.17 does not change backend core logic, does not add database
+migrations, does not modify `node.share_link`, does not add listening ports by
+page load or modal open, does not create transit routes, does not execute
+formal cutover, and does not run SSH or remote commands unless the operator
+explicitly submits an existing task-backed form such as add server, recheck, or
+add node.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1726,6 +1742,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.13 B+ readiness record | Plan B+ readiness recorded, no formal cutover |
 | Stage 3.3.13 UI polish | Dark SaaS operations-console UI polished; no cutover / no `node.share_link` change |
 | Stage 3.3.14 UI zh-CN collapsible tips | Console UI localized to Chinese; large safety tips collapsed by default |
+| Stage 3.3.17 Server management UI table | Servers page changed to server-management table backed by VPS APIs |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
