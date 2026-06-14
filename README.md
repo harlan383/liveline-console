@@ -504,6 +504,36 @@ does not modify `transit_routes`, does not add database migrations, does not add
 listening ports, does not trigger Worker/RQ tasks, does not connect to servers,
 does not stop `gost` 8443, and does not let `socat` take over 8443.
 
+## Stage 3.3.13 UI polish scope
+
+Stage 3.3.13 UI polish upgrades the local console from a development-style
+debug panel toward a darker SaaS operations console. It improves AppShell,
+navigation, top status messaging, dashboard overview cards, status labels,
+server summaries, node status presentation, transit-route route-flow display,
+task progress display, and formal/candidate/rollback safety boundaries.
+
+Stage 3.3.13 UI polish is not a formal cutover. It does not modify
+`node.share_link`, does not change backend core deployment logic, does not
+change existing API compatibility, does not add database migrations, does not
+add listening ports, does not trigger Worker/RQ tasks, does not execute SSH or
+remote commands, does not stop `gost` 8443, and does not let `socat` take over
+8443.
+
+## Stage 3.3.14 UI zh-CN collapsible tips scope
+
+Stage 3.3.14 UI zh-CN collapsible tips localizes the main console UI into
+Chinese and turns large route-safety, cutover-risk, task-history, and
+diagnostic guardrail blocks into default-collapsed notices. The safety content
+is retained and can be expanded with "查看说明", while the main operation panels
+stay visible first.
+
+Stage 3.3.14 UI zh-CN collapsible tips is not a formal cutover. It does not
+modify `node.share_link`, does not change backend core deployment logic, does
+not change existing API compatibility, does not add database migrations, does
+not add listening ports, does not trigger Worker/RQ tasks, does not execute SSH
+or remote commands, does not stop `gost` 8443, and does not let `socat` take
+over 8443.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1677,6 +1707,8 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.11 Formal cutover runbook | Runbook documented, no formal cutover |
 | Stage 3.3.12 Formal cutover approval | Approval gate documented, no formal cutover |
 | Stage 3.3.13 B+ readiness record | Plan B+ readiness recorded, no formal cutover |
+| Stage 3.3.13 UI polish | Dark SaaS operations-console UI polished; no cutover / no `node.share_link` change |
+| Stage 3.3.14 UI zh-CN collapsible tips | Console UI localized to Chinese; large safety tips collapsed by default |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

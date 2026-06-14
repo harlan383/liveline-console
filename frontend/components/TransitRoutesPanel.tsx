@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   apiFetch,
@@ -50,6 +50,29 @@ type ReadonlyPreflightItemSpec = {
   scope: string;
   detail: string;
 };
+
+function CollapsibleWarning({
+  title,
+  children,
+  wide = false,
+}: {
+  title: string;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <details className={`warning-box collapsible-notice${wide ? " wide-field" : ""}`}>
+      <summary className="collapsible-summary">
+        <strong>{title}</strong>
+        <span className="notice-toggle-text">
+          <span className="when-closed">查看说明</span>
+          <span className="when-open">收起说明</span>
+        </span>
+      </summary>
+      <div className="collapsible-body">{children}</div>
+    </details>
+  );
+}
 
 const readonlyPreflightItemSpecs: ReadonlyPreflightItemSpec[] = [
   {
@@ -201,7 +224,7 @@ function diagnosticItemSpecs(task: TaskData | null): DiagnosticItemSpec[] {
       {
         key: "listen_check",
         label: "监听端口检查",
-        purpose: "确认中转机正在监听该 route 的 listen_port。",
+        purpose: "确认中转机正在监听该线路的监听端口。",
         failureMeaning: "ss 没有监听，转发服务可能未启动或已经退出。",
         nextAction: "优先检查服务状态；如本地 nc timeout，同步检查云安全组、云防火墙和服务器防火墙。",
       },
@@ -219,7 +242,7 @@ function diagnosticItemSpecs(task: TaskData | null): DiagnosticItemSpec[] {
     {
       key: "listen_check",
       label: "监听端口检查",
-      purpose: "确认中转机正在监听该 route 的 listen_port。",
+      purpose: "确认中转机正在监听该线路的监听端口。",
       failureMeaning: "ss 没有监听，转发服务可能未启动、已退出，或端口被其它进程占用。",
       nextAction: "查看 systemd 状态和进程检查；如外部访问 timeout，同步检查云安全组、云防火墙和服务器防火墙。",
     },
@@ -276,9 +299,59 @@ function preflightCheckClass(check: ReadonlyPreflightCheckItem) {
 
 function preflightCheckStatusLabel(check: ReadonlyPreflightCheckItem) {
   if (check.id.startsWith("future_") || check.status === "skipped") {
-    return "future check / not executed";
+    return "未来检查 / 本阶段不执行";
   }
-  return check.status;
+  const labels: Record<string, string> = {
+    ready: "就绪",
+    no_go: "不通过",
+    blocked: "已阻止",
+    passed: "通过",
+    failed: "失败",
+    skipped: "已跳过",
+  };
+  return labels[check.status] ?? check.status;
+}
+
+function preflightPlanStatusLabel(status: string | null | undefined, ready?: boolean) {
+  if (ready || status === "ready") {
+    return "就绪";
+  }
+  if (status === "no_go") {
+    return "不通过";
+  }
+  if (status === "blocked") {
+    return "已阻止";
+  }
+  return status ?? "未知";
+}
+
+function booleanLabel(value: boolean) {
+  return value ? "是" : "否";
+}
+
+function routeStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    active: "已启用",
+    disabled: "已停用",
+    deleted: "已删除",
+    pending: "等待中",
+    failed: "失败",
+    unknown: "未知",
+  };
+  return labels[status] ?? status;
+}
+
+function taskStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: "等待中",
+    running: "执行中",
+    success: "成功",
+    completed: "成功",
+    failed: "失败",
+    cancelled: "已取消",
+    timeout: "超时",
+  };
+  return labels[status] ?? status;
 }
 
 function diagnosticOutcome(task: TaskData) {
@@ -557,7 +630,7 @@ export function TransitRoutesPanel() {
   async function createTransitRoute() {
     setCopied(false);
     if (!selectedResourceId || !selectedNodeId) {
-      setMessage("请选择中转资源和 active 节点。");
+      setMessage("请选择中转资源和已启用节点。");
       return;
     }
     const listenPortError = listenPortValidationMessage(listenPort);
@@ -893,7 +966,7 @@ export function TransitRoutesPanel() {
   const planTargetPortError = planTargetPortNumber === null ? "落地目标端口必须是 1-65535 之间的整数。" : null;
   const localPlanIssues = [
     !planResource ? "请选择目标中转资源。" : null,
-    !planNode ? "请选择落地 VPS / active 节点。" : null,
+    !planNode ? "请选择落地 VPS / 已启用节点。" : null,
     planListenPortError,
     planTargetPortError,
     planPurpose.trim() ? null : "请填写目标平台 / 用途。",
@@ -903,24 +976,24 @@ export function TransitRoutesPanel() {
     planLocalBackupConfirmed ? null : "本地数据库备份尚未确认完成。",
   ].filter((item): item is string => Boolean(item));
   const localPlanReady = localPlanIssues.length === 0;
-  const localPlanStatusLabel = localPlanReady ? "Ready for readonly preflight approval" : "No-Go";
+  const localPlanStatusLabel = localPlanReady ? "可进入只读预检审批" : "不通过";
   const localPlanSummaryText = [
-    "LiveLine single-route local dry-run plan",
-    `Status: ${localPlanStatusLabel}`,
-    `Transit resource: ${planResource?.name ?? "Pending confirmation"}`,
-    `Landing node: ${planNode?.node_name ?? "Pending confirmation"}`,
-    `Planned listen port: ${planListenPort || "Pending confirmation"}`,
-    `Landing target port: ${planTargetPortNumber ?? "Pending confirmation"}`,
-    `Purpose: ${planPurpose.trim() || "Pending confirmation"}`,
-    `Cloud security group confirmed: ${planCloudSecurityGroupConfirmed ? "yes" : "no"}`,
-    `Cloud firewall confirmed: ${planCloudFirewallConfirmed ? "yes" : "no"}`,
-    `Server firewall confirmed: ${planServerFirewallConfirmed ? "yes" : "no"}`,
-    `Local database backup confirmed: ${planLocalBackupConfirmed ? "yes" : "no"}`,
-    "Remote execution: not authorized",
-    "Real forwarding creation: not authorized",
-    "node.share_link modification: not authorized",
-    "Cutover: not authorized",
-    "Sensitive data: complete node links, SSH keys, passwords, tokens, and SESSION_SECRET values are excluded.",
+    "LiveLine 单条转发本地 dry-run 规划",
+    `状态：${localPlanStatusLabel}`,
+    `中转资源：${planResource?.name ?? "待确认"}`,
+    `落地节点：${planNode?.node_name ?? "待确认"}`,
+    `计划监听端口：${planListenPort || "待确认"}`,
+    `落地目标端口：${planTargetPortNumber ?? "待确认"}`,
+    `用途：${planPurpose.trim() || "待确认"}`,
+    `云服务器安全组已确认：${planCloudSecurityGroupConfirmed ? "是" : "否"}`,
+    `云防火墙已确认：${planCloudFirewallConfirmed ? "是" : "否"}`,
+    `服务器防火墙已确认：${planServerFirewallConfirmed ? "是" : "否"}`,
+    `本地数据库备份已确认：${planLocalBackupConfirmed ? "是" : "否"}`,
+    "远程执行：未授权",
+    "真实转发创建：未授权",
+    "node.share_link 修改：未授权",
+    "正式 cutover：未授权",
+    "敏感信息：完整节点链接、SSH Key、密码、token、SESSION_SECRET 均不写入摘要。",
   ].join("\n");
   const readonlyPreflightIssues = [
     ...localPlanIssues,
@@ -934,32 +1007,32 @@ export function TransitRoutesPanel() {
   ].filter((item): item is string => Boolean(item));
   const readonlyPreflightReady = readonlyPreflightIssues.length === 0;
   const readonlyPreflightStatusLabel = readonlyPreflightReady
-    ? "Ready for readonly preflight approval"
-    : "No-Go";
+    ? "可进入只读预检审批"
+    : "不通过";
   const readonlyPreflightSummaryText = [
-    "LiveLine single-route readonly preflight framework",
-    `Status: ${readonlyPreflightStatusLabel}`,
-    `Transit resource: ${planResource?.name ?? "Pending confirmation"}`,
-    `Landing node: ${planNode?.node_name ?? "Pending confirmation"}`,
-    `Planned listen port: ${planListenPort || "Pending confirmation"}`,
-    `Landing target port: ${planTargetPortNumber ?? "Pending confirmation"}`,
-    `Purpose: ${planPurpose.trim() || "Pending confirmation"}`,
-    `Cloud security group confirmed: ${planCloudSecurityGroupConfirmed ? "yes" : "no"}`,
-    `Cloud firewall confirmed: ${planCloudFirewallConfirmed ? "yes" : "no"}`,
-    `Server firewall confirmed: ${planServerFirewallConfirmed ? "yes" : "no"}`,
-    `Local database backup confirmed: ${planLocalBackupConfirmed ? "yes" : "no"}`,
-    `Local health confirmed: ${preflightHealthConfirmed ? "yes" : "no"}`,
-    `Readonly-only boundary acknowledged: ${preflightBoundaryAcknowledged ? "yes" : "no"}`,
-    `Future Workbuddy authorization boundary acknowledged: ${preflightWorkbuddyBoundaryConfirmed ? "yes" : "no"}`,
-    "Future readonly checks:",
+    "LiveLine 单条转发只读预检框架",
+    `状态：${readonlyPreflightStatusLabel}`,
+    `中转资源：${planResource?.name ?? "待确认"}`,
+    `落地节点：${planNode?.node_name ?? "待确认"}`,
+    `计划监听端口：${planListenPort || "待确认"}`,
+    `落地目标端口：${planTargetPortNumber ?? "待确认"}`,
+    `用途：${planPurpose.trim() || "待确认"}`,
+    `云服务器安全组已确认：${planCloudSecurityGroupConfirmed ? "是" : "否"}`,
+    `云防火墙已确认：${planCloudFirewallConfirmed ? "是" : "否"}`,
+    `服务器防火墙已确认：${planServerFirewallConfirmed ? "是" : "否"}`,
+    `本地数据库备份已确认：${planLocalBackupConfirmed ? "是" : "否"}`,
+    `本地 health 已确认：${preflightHealthConfirmed ? "是" : "否"}`,
+    `只读边界已确认：${preflightBoundaryAcknowledged ? "是" : "否"}`,
+    `后续 Workbuddy 授权边界已确认：${preflightWorkbuddyBoundaryConfirmed ? "是" : "否"}`,
+    "未来只读检查项：",
     ...readonlyPreflightItemSpecs.map((item) => `- ${item.label}: ${item.scope}`),
-    "SSH: not executed in this stage",
-    "Remote commands: not executed in this stage",
-    "Real forwarding creation: not authorized",
-    "Real listening port addition: not authorized",
-    "node.share_link modification: not authorized",
-    "Cutover: not authorized",
-    "Sensitive data: complete node links, SSH keys, passwords, tokens, and SESSION_SECRET values are excluded.",
+    "SSH：本阶段不执行",
+    "远程命令：本阶段不执行",
+    "真实转发创建：未授权",
+    "真实监听端口新增：未授权",
+    "node.share_link 修改：未授权",
+    "正式 cutover：未授权",
+    "敏感信息：完整节点链接、SSH Key、密码、token、SESSION_SECRET 均不写入摘要。",
   ].join("\n");
 
   return (
@@ -971,32 +1044,60 @@ export function TransitRoutesPanel() {
         </button>
       </div>
 
-      <div className="warning-box">
-        <strong>⚠️ 单条转发安全门槛</strong>
+      <CollapsibleWarning title="查看单条转发安全门槛">
         <span>创建单条转发不等于正式切换，也不会修改 node.share_link。</span>
         <span>8443 当前保留给 gost 回退链路；18443 当前为 socat 正式链路。</span>
         <span>不要把 8443 / 18443 用作新转发端口，也不要让 socat 接管 8443。</span>
         <span>修改 node.share_link 必须单独进入正式切换审批阶段。</span>
         <span>真正创建远程转发或检查远程端口时，需要 Workbuddy 或单独授权阶段。</span>
-      </div>
+      </CollapsibleWarning>
       <RouteSafetyGuardrails context="routes" />
+
+      <details className="cutover-boundary-banner collapsible-notice">
+        <summary className="collapsible-summary">
+          <strong>查看 cutover 风险提示</strong>
+          <span className="notice-toggle-text">
+            <span className="when-closed">查看说明</span>
+            <span className="when-open">收起说明</span>
+          </span>
+        </summary>
+        <div className="cutover-boundary-grid">
+          <div>
+            <span className="route-role candidate">候选链路</span>
+            <strong>socat 18443</strong>
+            <p>已验收候选链路；复制和预检不等于新增真实转发。</p>
+          </div>
+          <div>
+            <span className="route-role formal">正式链路</span>
+            <strong>node.share_link → socat 18443</strong>
+            <p>本阶段只展示现状，不读取、不写入、不替换正式节点链接。</p>
+          </div>
+          <div>
+            <span className="route-role rollback">回滚链路</span>
+            <strong>gost 8443</strong>
+            <p>继续保留为回退链路；不得关闭、降级、替换或让 socat 接管 8443。</p>
+          </div>
+          <button className="danger compact" disabled type="button">
+            正式切换需单独审批
+          </button>
+        </div>
+      </details>
 
       <div className="local-plan-builder">
         <div className="status-row">
           <div>
-            <h3>单条转发本地规划 / Dry-run only</h3>
+            <h3>单条转发本地规划 / 仅 dry-run</h3>
             <p className="message">
               只做本地规则检查和审批摘要，不连接远端、不写入远程配置、不创建真实转发、不修改 node.share_link、不做 cutover。
             </p>
           </div>
           <span className={`pill ${localPlanReady ? "ok" : "bad"}`}>{localPlanStatusLabel}</span>
         </div>
-        <div className="warning-box">
-          <strong>Local plan only</strong>
-          <span>即使显示 Ready，也只代表可以进入 readonly preflight approval；真实转发创建仍未授权。</span>
+        <CollapsibleWarning title="查看本地规划边界">
+          <span>即使显示“可进入只读预检审批”，也只代表可以进入只读预检审批；真实转发创建仍未授权。</span>
           <span>8443 保留给 gost 回退链路；18443 是当前 socat 正式链路；22 / 20575 不得用于业务转发。</span>
           <span>新增或变更端口前，必须确认云服务器安全组、云防火墙和服务器防火墙均放行对应 TCP 端口。</span>
-        </div>
+        </CollapsibleWarning>
         <div className="local-plan-layout">
           <div className="form route-form local-plan-form">
             <label>
@@ -1018,7 +1119,7 @@ export function TransitRoutesPanel() {
               </select>
             </label>
             <label>
-              落地 VPS / active 节点
+              落地 VPS / 已启用节点
               <select
                 value={planNodeId}
                 onChange={(event) => {
@@ -1027,7 +1128,7 @@ export function TransitRoutesPanel() {
                   setPreflightSummaryCopied(false);
                 }}
               >
-                {nodes.length === 0 ? <option value="">暂无 active 节点</option> : null}
+                {nodes.length === 0 ? <option value="">暂无已启用节点</option> : null}
                 {nodes.map((node) => (
                   <option key={node.id} value={node.id}>
                     {node.node_name} / {displayValue(node.vps_ip)}:{displayValue(node.port)}
@@ -1151,15 +1252,15 @@ export function TransitRoutesPanel() {
             </div>
             {localPlanIssues.length > 0 ? (
               <div className="failure-box">
-                <strong>No-Go 原因</strong>
+                <strong>不通过原因</strong>
                 {localPlanIssues.map((issue) => (
                   <span key={issue}>{issue}</span>
                 ))}
               </div>
             ) : (
               <div className="warning-box">
-                <strong>Ready 仅限下一阶段审批</strong>
-                <span>当前只可进入 readonly preflight approval；不得创建真实转发，不得修改 node.share_link。</span>
+                <strong>就绪仅限下一阶段审批</strong>
+                <span>当前只可进入只读预检审批；不得创建真实转发，不得修改 node.share_link。</span>
               </div>
             )}
             <pre className="local-plan-output">{localPlanSummaryText}</pre>
@@ -1170,7 +1271,7 @@ export function TransitRoutesPanel() {
       <div className="local-plan-builder readonly-preflight-plan">
         <div className="status-row">
           <div>
-            <h3>远程只读预检计划 / Framework only</h3>
+            <h3>远程只读预检计划 / 仅生成框架</h3>
             <p className="message">
               基于上方本地规划生成未来只读预检清单。本阶段只展示计划，不执行 SSH、不连接远端、不创建真实转发、不新增监听端口、不修改 node.share_link、不做 cutover。
             </p>
@@ -1179,12 +1280,11 @@ export function TransitRoutesPanel() {
             {readonlyPreflightStatusLabel}
           </span>
         </div>
-        <div className="warning-box">
-          <strong>只读预检计划，不是远程执行</strong>
+        <CollapsibleWarning title="查看只读预检安全边界">
           <span>下面列出的远程项目全部标记为“未来执行”，本阶段不会运行任何 systemd、ss、nc、curl、iptables 或 SSH 命令。</span>
           <span>真正远程只读预检需要后续 Workbuddy 授权阶段；真正创建远程转发和切换 node.share_link 也必须单独审批。</span>
           <span>当前正式链路仍是 socat 18443，回退链路仍是 gost 8443，本计划不会关闭 gost，也不会让 socat 接管 8443。</span>
-        </div>
+        </CollapsibleWarning>
         <div className="local-plan-layout">
           <div className="readonly-preflight-checklist">
             {readonlyPreflightItemSpecs.map((item) => (
@@ -1263,14 +1363,14 @@ export function TransitRoutesPanel() {
             </div>
             {readonlyPreflightIssues.length > 0 ? (
               <div className="failure-box">
-                <strong>No-Go 原因</strong>
+                <strong>不通过原因</strong>
                 {readonlyPreflightIssues.map((issue) => (
                   <span key={issue}>{issue}</span>
                 ))}
               </div>
             ) : (
               <div className="warning-box">
-                <strong>Ready 只代表可进入审批</strong>
+                <strong>就绪只代表可进入审批</strong>
                 <span>当前仅可进入远程只读预检审批；仍不得执行 SSH、不得创建真实转发、不得新增监听端口。</span>
               </div>
             )}
@@ -1289,28 +1389,28 @@ export function TransitRoutesPanel() {
                       readonlyPreflightPlan.ready,
                     )}`}
                   >
-                    {readonlyPreflightPlan.status}
+                      {preflightPlanStatusLabel(readonlyPreflightPlan.status, readonlyPreflightPlan.ready)}
                   </span>
                 </div>
                 <div className="detail-grid">
-                  <span>ready</span>
-                  <strong>{String(readonlyPreflightPlan.ready)}</strong>
-                  <span>blocked</span>
-                  <strong>{String(readonlyPreflightPlan.blocked)}</strong>
-                  <span>summary</span>
+                  <span>是否就绪</span>
+                  <strong>{booleanLabel(readonlyPreflightPlan.ready)}</strong>
+                  <span>是否阻塞</span>
+                  <strong>{booleanLabel(readonlyPreflightPlan.blocked)}</strong>
+                  <span>摘要</span>
                   <strong>{readonlyPreflightPlan.summary}</strong>
-                  <span>next_action</span>
+                  <span>下一步</span>
                   <strong>{readonlyPreflightPlan.next_action}</strong>
                 </div>
                 {readonlyPreflightPlan.ready ? (
                   <div className="warning-box">
-                    <strong>Ready 只代表可进入 readonly preflight approval</strong>
+                    <strong>就绪只代表可进入只读预检审批</strong>
                     <span>远程命令、真实转发创建和 node.share_link 修改仍未授权。</span>
-                    <span>真正远程只读预检必须另开授权阶段，并继续保持 cutover No-Go。</span>
+                    <span>真正远程只读预检必须另开授权阶段，并继续保持 cutover 不通过。</span>
                   </div>
                 ) : (
                   <div className="failure-box">
-                    <strong>No-Go / blocked 原因</strong>
+                    <strong>不通过 / 阻塞原因</strong>
                     <span>{readonlyPreflightPlan.summary}</span>
                     <span>{readonlyPreflightPlan.next_action}</span>
                   </div>
@@ -1331,35 +1431,35 @@ export function TransitRoutesPanel() {
                         </div>
                         {isFuture ? (
                           <div className="warning-box">
-                            <span>future check / not executed in this stage / 本阶段未远程执行。</span>
+                            <span>未来检查 / 本阶段不执行远程命令。</span>
                           </div>
                         ) : null}
                         <div className="detail-grid compact-detail-grid">
-                          <span>category</span>
+                          <span>检查分类</span>
                           <strong>{check.category}</strong>
-                          <span>passed</span>
-                          <strong>{String(check.passed)}</strong>
-                          <span>message</span>
+                          <span>是否通过</span>
+                          <strong>{booleanLabel(check.passed)}</strong>
+                          <span>信息</span>
                           <strong>{check.message}</strong>
-                          <span>evidence_summary</span>
+                          <span>证据摘要</span>
                           <strong>{check.evidence_summary}</strong>
-                          <span>next_action</span>
+                          <span>下一步</span>
                           <strong>{check.next_action}</strong>
-                          <span>sensitive_output_redacted</span>
-                          <strong>{String(check.sensitive_output_redacted)}</strong>
+                          <span>输出已脱敏</span>
+                          <strong>{booleanLabel(check.sensitive_output_redacted)}</strong>
                         </div>
                       </div>
                     );
                   })}
                 </div>
                 <div className="warning-box">
-                  <strong>safety_boundary</strong>
+                  <strong>安全边界</strong>
                   {readonlyPreflightPlan.safety_boundary.map((boundary) => (
                     <span key={boundary}>{boundary}</span>
                   ))}
                 </div>
                 <div>
-                  <h4>redacted_summary</h4>
+                  <h4>脱敏摘要</h4>
                   <pre className="local-plan-output">{readonlyPreflightPlan.redacted_summary}</pre>
                 </div>
               </div>
@@ -1374,23 +1474,23 @@ export function TransitRoutesPanel() {
       </div>
 
       {forwardingMethod === "socat" ? (
-        <div className="warning-box">
+        <CollapsibleWarning title="查看 socat 创建阶段边界">
           <strong>Stage 3.3.3-fix-b1：只创建 socat 测试转发。</strong>
           <span>创建前请先在云服务器安全组/云防火墙放行 TCP {listenPort}。</span>
           <span>同时确认服务器防火墙允许 TCP {listenPort}。</span>
           <span>禁止使用 22 / 8443 / 18443 / 20575。</span>
           <span>不替换 gost，不修改现有节点链接。</span>
           <span>本模式不生成 share_link；真实客户端链接仍需单独验收。</span>
-        </div>
+        </CollapsibleWarning>
       ) : (
-        <div className="warning-box">
+        <CollapsibleWarning title="查看 gost 创建阶段边界">
           <strong>Stage 3.3.3 只创建一条 gost TCP 转发规则。</strong>
           <span>会在香港服务器创建 systemd 转发服务，并监听一个新端口。</span>
           <span>不会自动开放云安全组，不会修改防火墙，不会写 iptables。</span>
           <span>不会连接或修改落地 VPS，不会影响现有直连链接。</span>
           <span>8443 保留给 gost 回退链路，18443 保留给当前 socat 正式链路，不能作为新转发端口。</span>
           <span>22 / 20575 也不能作为中转监听端口。删除功能不在本阶段。</span>
-        </div>
+        </CollapsibleWarning>
       )}
 
       <div className="route-layout">
@@ -1407,9 +1507,9 @@ export function TransitRoutesPanel() {
             </select>
           </label>
           <label>
-            active 节点
+            已启用节点
             <select value={selectedNodeId} onChange={(event) => setSelectedNodeId(event.target.value)}>
-              {nodes.length === 0 ? <option value="">暂无 active 节点</option> : null}
+              {nodes.length === 0 ? <option value="">暂无已启用节点</option> : null}
               {nodes.map((node) => (
                 <option key={node.id} value={node.id}>
                   {node.node_name} / {displayValue(node.vps_ip)}:{displayValue(node.port)}
@@ -1552,14 +1652,14 @@ export function TransitRoutesPanel() {
                 />
               </label>
             </div>
-            <div className="warning-box">
+            <CollapsibleWarning title="查看诊断安全边界">
               <span>本区域展示诊断结果，不等于正式切换，也不会修改 node.share_link。</span>
               <span>运行只读诊断只会执行白名单诊断命令；重启按钮只对 socat 18443 测试链路开放。</span>
               <span>不提供停止、删除、创建入口，不允许操作 gost 8443 正式链路。</span>
               <span>诊断不会关闭 gost 8443，也不会让 socat 接管 8443。</span>
               <span>当前正式链路 socat 18443 不应被误删、覆盖或替换；正式链路变更必须进入单独审批阶段。</span>
               <span>新增或变更端口后诊断失败，优先检查云安全组、云防火墙和服务器防火墙。</span>
-            </div>
+            </CollapsibleWarning>
             <p className="message">{diagnosticMessage}</p>
           </div>
           {routes.map((route) => {
@@ -1581,7 +1681,9 @@ export function TransitRoutesPanel() {
                   <p className="message">{routeBadge(route)}</p>
                 </div>
                 <div className="route-card-actions">
-                  <span className={`pill ${route.status === "active" ? "ok" : "bad"}`}>{route.status}</span>
+                  <span className={`pill ${route.status === "active" ? "ok" : "bad"}`}>
+                    {routeStatusLabel(route.status)}
+                  </span>
                   <button className="secondary compact" type="button" onClick={() => void diagnoseRoute(route)}>
                     运行只读诊断
                   </button>
@@ -1593,26 +1695,51 @@ export function TransitRoutesPanel() {
                 </div>
               </div>
               <div className="detail-grid">
-                <span>route_name</span>
+                <span>线路名称</span>
                 <strong>{route.name}</strong>
-                <span>method</span>
+                <span>转发方式</span>
                 <strong>{route.forwarding_method}</strong>
-                <span>listen_ip / transit_ip</span>
+                <span>监听地址 / 中转地址</span>
                 <strong>{displayValue(transitHostForRoute(route))}</strong>
-                <span>listen_port</span>
+                <span>监听端口</span>
                 <strong>{route.listen_port}</strong>
-                <span>target_host</span>
+                <span>落地地址</span>
                 <strong>{route.target_host}</strong>
-                <span>target_port</span>
+                <span>落地端口</span>
                 <strong>{route.target_port}</strong>
-                <span>systemd service</span>
+                <span>systemd 服务</span>
                 <strong>{route.service_name}</strong>
                 <span>本地测试命令</span>
                 <strong>
                   nc -vz {displayValue(transitHostForRoute(route))} {route.listen_port}
                 </strong>
               </div>
-              <div className="warning-box">
+              <div className="route-flow">
+                <div>
+                  <span>本地客户端</span>
+                  <strong>本地客户端</strong>
+                </div>
+                <span className="route-flow-arrow">→</span>
+                <div>
+                  <span>香港中转机</span>
+                  <strong>
+                    {displayValue(transitHostForRoute(route))}:{route.listen_port}
+                  </strong>
+                </div>
+                <span className="route-flow-arrow">→</span>
+                <div>
+                  <span>落地机</span>
+                  <strong>
+                    {route.target_host}:{route.target_port}
+                  </strong>
+                </div>
+                <span className="route-flow-arrow">→</span>
+                <div>
+                  <span>Xray Reality 节点</span>
+                  <strong>{route.node_name ?? "已启用节点"}</strong>
+                </div>
+              </div>
+              <CollapsibleWarning title="查看该线路端口提醒">
                 <span>请确认云服务器安全组/云防火墙已放行 TCP {route.listen_port}。</span>
                 <span>如果本地 nc timeout，优先检查云安全组/云防火墙和本机代理测试路径。</span>
                 {route.forwarding_method === "socat" ? (
@@ -1621,21 +1748,21 @@ export function TransitRoutesPanel() {
                 {route.forwarding_method === "gost" && route.listen_port === 8443 ? (
                   <span>此链路保留为回退链路。此前与 Xray Reality 兼容性存在问题，不建议作为当前优先测试入口。</span>
                 ) : null}
-              </div>
+              </CollapsibleWarning>
               {isSocatTestRoute(route) ? (
                 <div className="diagnostic-box">
                   <h5>socat 18443 候选正式链接</h5>
                   <p className="message">
                     此链接由当前 active Reality 节点的 share_link 派生，仅将 server 改为{" "}
-                    {displayValue(transitHostForRoute(route))}，port 改为 {route.listen_port}。
+                    {displayValue(transitHostForRoute(route))}，端口改为 {route.listen_port}。
                     UUID、flow、Reality、SNI、publicKey、shortId、fingerprint、spiderX 等参数保持不变。
                     本阶段不会写入数据库，不会替换 node.share_link。
                   </p>
-                  <div className="warning-box">
+                  <CollapsibleWarning title="查看候选链接安全提示">
                     <span>尚未正式 cutover：复制后请手动在客户端测试。</span>
                     <span>gost 8443 仍保留为回退链路，不会被停用或替换。</span>
                     <span>如果候选链接不可用，请继续使用原直连链接或 gost 8443 回退链路。</span>
-                  </div>
+                  </CollapsibleWarning>
                   {derivedSocatCandidateLink ? (
                     <div className="route-copy-row">
                       <span className="route-share-link">{maskLink(derivedSocatCandidateLink)}</span>
@@ -1669,12 +1796,12 @@ export function TransitRoutesPanel() {
                     </div>
                   ))}
                 </div>
-                <div className="warning-box">
+                <CollapsibleWarning title="查看诊断排查提示">
                   <span>nc timeout：优先检查云安全组/云防火墙 TCP {route.listen_port} 是否放行。</span>
                   <span>ss 没有监听：说明转发服务未启动或已退出。</span>
                   <span>目标 nc 不通：说明中转机到落地机不通。</span>
                   <span>本机开代理客户端时，nc/curl 测试路径可能被代理规则污染。</span>
-                </div>
+                </CollapsibleWarning>
               </div>
               {routeDiagnosticActive && diagnosticTask ? (
                 <div className="diagnostic-result">
@@ -1693,15 +1820,15 @@ export function TransitRoutesPanel() {
                       }`}
                     >
                       {diagnosticTask.result_data?.["passed"] === true
-                        ? "passed"
+                        ? "通过"
                         : diagnosticTask.result_data?.["passed"] === false
-                          ? "failed"
-                          : diagnosticTask.status}
+                          ? "失败"
+                          : taskStatusLabel(diagnosticTask.status)}
                     </span>
                   </div>
                   <div className="detail-grid">
                     <span>任务状态</span>
-                    <strong>{diagnosticTask.status}</strong>
+                    <strong>{taskStatusLabel(diagnosticTask.status)}</strong>
                     <span>当前步骤</span>
                     <strong>{diagnosticTask.current_step ?? "-"}</strong>
                     <span>进度</span>
@@ -1776,14 +1903,14 @@ export function TransitRoutesPanel() {
                             <strong>
                               {checkRecord?.["ok"] === true ? "无需处理，继续观察其它检查项。" : item.nextAction}
                             </strong>
-                            <span>exit_code</span>
+                            <span>退出码</span>
                             <strong>{scalarValue(checkRecord, "exit_code")}</strong>
                           </div>
                           <code>
                             {typeof checkRecord?.["command"] === "string" ? redactString(checkRecord["command"]) : "-"}
                           </code>
                           <details className="diagnostic-output-details">
-                            <summary>查看脱敏 raw_output</summary>
+                            <summary>查看脱敏原始输出</summary>
                             <pre>{checkOutput(checkRecord)}</pre>
                           </details>
                         </div>
@@ -1828,7 +1955,7 @@ export function TransitRoutesPanel() {
             <span>任务类型</span>
             <strong>{task.task_type}</strong>
             <span>任务状态</span>
-            <strong>{task.status}</strong>
+            <strong>{taskStatusLabel(task.status)}</strong>
             <span>当前步骤</span>
             <strong>{task.current_step ?? "-"}</strong>
             <span>进度</span>
@@ -1858,27 +1985,27 @@ export function TransitRoutesPanel() {
             <div className="transit-read-result">
               <h4>中转规则结果</h4>
               <div className="detail-grid">
-                <span>route_name</span>
+                <span>线路名称</span>
                 <strong>{stringValue(resultRoute, "name")}</strong>
-                <span>method</span>
+                <span>转发方式</span>
                 <strong>{resultMethod}</strong>
-                <span>listen_port</span>
+                <span>监听端口</span>
                 <strong>{resultListenPort}</strong>
-                <span>target</span>
+                <span>落地目标</span>
                 <strong>
                   {resultTargetHost}:{resultTargetPort}
                 </strong>
-                <span>service</span>
+                <span>systemd 服务</span>
                 <strong>{stringValue(resultRoute, "service_name")}</strong>
-                <span>status</span>
-                <strong>{stringValue(resultRoute, "status")}</strong>
+                <span>状态</span>
+                <strong>{routeStatusLabel(stringValue(resultRoute, "status"))}</strong>
                 <span>gost</span>
                 <strong>{stringValue(resultGost, "version")}</strong>
                 <span>socat</span>
                 <strong>{stringValue(resultSocat, "version")}</strong>
-                <span>service active</span>
+                <span>服务 active</span>
                 <strong>{String(resultVerify?.["service_active"] ?? "-")}</strong>
-                <span>listening</span>
+                <span>监听状态</span>
                 <strong>{String(resultVerify?.["listening"] ?? "-")}</strong>
               </div>
               {resultShareLink !== "-" ? (

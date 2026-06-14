@@ -36,31 +36,39 @@ const contextTitle: Record<NonNullable<RouteSafetyGuardrailsProps["context"]>, s
 
 export function RouteSafetyGuardrails({ context = "global" }: RouteSafetyGuardrailsProps) {
   return (
-    <section className={`route-safety-guardrail ${context}`} aria-label={contextTitle[context]}>
-      <div className="route-safety-heading">
-        <span>Route Guardrails</span>
-        <strong>{contextTitle[context]}</strong>
+    <details className={`route-safety-guardrail collapsible-notice ${context}`} aria-label={contextTitle[context]}>
+      <summary className="route-safety-summary">
+        <div className="route-safety-heading">
+          <span>安全提示</span>
+          <strong>{contextTitle[context]}</strong>
+        </div>
+        <span className="notice-toggle-text">
+          <span className="when-closed">查看说明</span>
+          <span className="when-open">收起说明</span>
+        </span>
+      </summary>
+      <div className="route-safety-body">
+        <div className="route-safety-grid">
+          <div>
+            <span>当前正式链路</span>
+            <strong>socat 18443</strong>
+          </div>
+          <div>
+            <span>当前回退链路</span>
+            <strong>gost 8443</strong>
+          </div>
+          <div>
+            <span>node.share_link</span>
+            <strong>已指向 socat 18443</strong>
+          </div>
+        </div>
+        <ul className="route-safety-list">
+          {contextNotes[context].map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+          <li>以后新增或变更监听端口时，必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙。</li>
+        </ul>
       </div>
-      <div className="route-safety-grid">
-        <div>
-          <span>当前正式链路</span>
-          <strong>socat 18443</strong>
-        </div>
-        <div>
-          <span>当前回退链路</span>
-          <strong>gost 8443</strong>
-        </div>
-        <div>
-          <span>node.share_link</span>
-          <strong>已指向 socat 18443</strong>
-        </div>
-      </div>
-      <ul className="route-safety-list">
-        {contextNotes[context].map((note) => (
-          <li key={note}>{note}</li>
-        ))}
-        <li>以后新增或变更监听端口时，必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙。</li>
-      </ul>
-    </section>
+    </details>
   );
 }
