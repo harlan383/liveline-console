@@ -53,6 +53,20 @@ function resultNode(task: TaskData | null) {
   return node && typeof node === "object" ? (node as Record<string, unknown>) : null;
 }
 
+function statusLabel(status: string | undefined | null) {
+  const labels: Record<string, string> = {
+    pending: "等待中",
+    running: "执行中",
+    success: "成功",
+    completed: "成功",
+    failed: "失败",
+    cancelled: "已取消",
+    timeout: "超时",
+    unknown: "未知",
+  };
+  return labels[status ?? ""] ?? status ?? "-";
+}
+
 function canInstallXray(task: TaskData | null) {
   return (
     task?.task_type === "prepare_node" &&
@@ -342,6 +356,24 @@ export function ReadVpsPanel({ recreateVpsId, onRecreateVpsConsumed }: ReadVpsPa
   return (
     <section className="panel wide">
       <h2>读取 VPS</h2>
+      <div className="server-ops-summary" aria-label="服务器运维状态摘要">
+        <div>
+          <span>SSH 状态</span>
+          <strong>{task ? "由最近任务确认" : "等待只读检测"}</strong>
+        </div>
+        <div>
+          <span>Xray 状态</span>
+          <strong>{resultInstalled(task) === true ? "已安装" : "由节点检查确认"}</strong>
+        </div>
+        <div>
+          <span>3x-ui 状态</span>
+          <strong>未接入 / 不使用</strong>
+        </div>
+        <div>
+          <span>最近检测</span>
+          <strong>{task?.updated_at ? new Date(task.updated_at).toLocaleString() : "暂无记录"}</strong>
+        </div>
+      </div>
       <form className="form read-form" onSubmit={(event) => void submit(event)}>
         <label>
           VPS IP
@@ -430,11 +462,11 @@ export function ReadVpsPanel({ recreateVpsId, onRecreateVpsConsumed }: ReadVpsPa
             <div>
               <strong>任务状态</strong>
               <p className="message">
-                {task.status} / {task.current_step ?? "-"} / {task.progress}%
+                {statusLabel(task.status)} / {task.current_step ?? "-"} / {task.progress}%
               </p>
             </div>
             <span className={`pill ${task.status === "success" ? "ok" : "bad"}`}>
-              {task.error_code ?? task.status}
+              {task.error_code ?? statusLabel(task.status)}
             </span>
           </div>
 

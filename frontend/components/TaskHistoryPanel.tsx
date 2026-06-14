@@ -32,10 +32,11 @@ function statusLabel(status: string) {
     pending: "等待中",
     running: "运行中",
     success: "成功",
-    completed: "完成",
+    completed: "成功",
     failed: "失败",
     cancelled: "已取消",
     timeout: "超时",
+    unknown: "未知",
   };
   return labels[status] ?? status;
 }
@@ -194,11 +195,20 @@ export function TaskHistoryPanel() {
         </button>
       </div>
 
-      <div className="warning-box">
-        <strong>任务记录只用于本地排查。</strong>
-        <span>不要把包含敏感信息的原始日志复制到外部，也不要把完整节点链接、SSH Key、密码或 token 发给 Codex / ChatGPT。</span>
-        <span>本页面会对 result_data 和 raw_output 做基础脱敏；如需真实原始输出，应只在本机安全环境中查看。</span>
-      </div>
+      <details className="warning-box collapsible-notice">
+        <summary className="collapsible-summary">
+          <strong>查看任务记录安全提示</strong>
+          <span className="notice-toggle-text">
+            <span className="when-closed">查看说明</span>
+            <span className="when-open">收起说明</span>
+          </span>
+        </summary>
+        <div className="collapsible-body">
+          <span>任务记录只用于本地排查。</span>
+          <span>不要把包含敏感信息的原始日志复制到外部，也不要把完整节点链接、SSH Key、密码或 token 发给 Codex / ChatGPT。</span>
+          <span>本页面会对任务结果和原始输出做基础脱敏；如需真实原始输出，应只在本机安全环境中查看。</span>
+        </div>
+      </details>
 
       {tasks.length === 0 ? (
         <div className="empty">暂无任务记录。执行已授权的本地流程后，任务摘要会显示在这里。</div>
@@ -218,6 +228,7 @@ export function TaskHistoryPanel() {
                 <span>{task.current_step ?? "-"}</span>
                 <span>{task.progress}%</span>
                 <span>{formatDate(task.updated_at ?? task.created_at)}</span>
+                <span className="task-row-action">查看详情</span>
               </button>
             ))}
           </div>
@@ -227,30 +238,44 @@ export function TaskHistoryPanel() {
               <div className="status-row">
                 <div>
                   <h3>{selectedTask.task_type}</h3>
-                  <p className="message">Task ID: {shortId(selectedTask.id)}</p>
+                  <p className="message">任务 ID：{shortId(selectedTask.id)}</p>
                 </div>
-                <span className={`pill ${statusClass(selectedTask.status)}`}>{statusLabel(selectedTask.status)}</span>
+                <div className="task-detail-actions">
+                  <span className={`pill ${statusClass(selectedTask.status)}`}>{statusLabel(selectedTask.status)}</span>
+                  <button className="danger" disabled type="button">
+                    重试需单独审批
+                  </button>
+                </div>
               </div>
 
               <div className="detail-grid">
-                <span>status</span>
-                <strong>{selectedTask.status}</strong>
-                <span>current_step</span>
+                <span>状态</span>
+                <strong>{statusLabel(selectedTask.status)}</strong>
+                <span>当前步骤</span>
                 <strong>{selectedTask.current_step ?? "-"}</strong>
-                <span>progress</span>
+                <span>进度</span>
                 <strong>{selectedTask.progress}%</strong>
-                <span>created_at</span>
+                <span>创建时间</span>
                 <strong>{formatDate(selectedTask.created_at)}</strong>
-                <span>updated_at</span>
+                <span>更新时间</span>
                 <strong>{formatDate(selectedTask.updated_at)}</strong>
-                <span>started_at</span>
+                <span>开始时间</span>
                 <strong>{formatDate(selectedTask.started_at)}</strong>
-                <span>finished_at</span>
+                <span>完成时间</span>
                 <strong>{formatDate(selectedTask.finished_at)}</strong>
-                <span>error_code</span>
+                <span>错误码</span>
                 <strong>{selectedTask.error_code ?? "-"}</strong>
                 <span>失败原因摘要</span>
                 <strong>{taskFailureSummary(selectedTask)}</strong>
+              </div>
+              <div className="task-progress-card">
+                <div className="status-row">
+                  <strong>任务进度</strong>
+                  <span>{selectedTask.progress}%</span>
+                </div>
+                <div className="task-progress-bar" aria-label={`任务进度 ${selectedTask.progress}%`}>
+                  <span style={{ width: `${Math.max(0, Math.min(100, selectedTask.progress))}%` }} />
+                </div>
               </div>
 
               {selectedTask.error_message ? (
@@ -258,7 +283,7 @@ export function TaskHistoryPanel() {
               ) : null}
 
               <details className="task-history-details" open>
-                <summary>脱敏 result_data 摘要</summary>
+                <summary>脱敏任务结果摘要</summary>
                 <pre>{resultSummary(selectedTask)}</pre>
               </details>
 
@@ -278,7 +303,7 @@ export function TaskHistoryPanel() {
                             {redactString(log.message)}
                             {output ? (
                               <details className="task-log-output">
-                                <summary>查看脱敏 raw_output</summary>
+                                <summary>查看脱敏原始输出</summary>
                                 <pre>{output}</pre>
                               </details>
                             ) : null}

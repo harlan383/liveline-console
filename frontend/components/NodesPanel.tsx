@@ -133,6 +133,35 @@ function displayDate(value: unknown) {
   return typeof value === "string" ? new Date(value).toLocaleString() : "-";
 }
 
+function statusLabel(status: string | undefined | null) {
+  const labels: Record<string, string> = {
+    active: "已启用",
+    disabled: "已停用",
+    deleted: "已删除",
+    pending: "等待中",
+    running: "执行中",
+    success: "成功",
+    completed: "成功",
+    failed: "失败",
+    cancelled: "已取消",
+    timeout: "超时",
+    unknown: "未知",
+  };
+  return labels[status ?? ""] ?? status ?? "-";
+}
+
+function fileTypeLabel(value: unknown) {
+  const type = typeof value === "string" ? value : "unknown";
+  const labels: Record<string, string> = {
+    current: "当前配置",
+    backup: "备份文件",
+    disabled: "已停用配置",
+    failed: "failed 候选",
+    unknown: "未知类型",
+  };
+  return labels[type] ?? type;
+}
+
 export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [nodes, setNodes] = useState<NodeData[]>([]);
@@ -508,7 +537,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
               <span>{node.vps_ip ?? "-"}</span>
               <span>{node.protocol}</span>
               <span>{node.port ?? "-"}</span>
-              <span>{node.status}</span>
+              <span className={`pill ${node.status === "active" ? "ok" : "bad"}`}>{statusLabel(node.status)}</span>
               <span>{node.created_at ? new Date(node.created_at).toLocaleString() : "-"}</span>
             </button>
           ))}
@@ -528,7 +557,9 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
             <span>端口</span>
             <strong>{selectedNode.port ?? "-"}</strong>
             <span>状态</span>
-            <strong>{selectedNode.status}</strong>
+            <strong>{statusLabel(selectedNode.status)}</strong>
+            <span>share_link 状态</span>
+            <strong>{shareLink ? "已生成 / 默认脱敏展示" : "未生成"}</strong>
             <span>Reality serverName</span>
             <strong>{selectedNode.reality_server_name ?? "-"}</strong>
             <span>Reality publicKey</span>
@@ -633,7 +664,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
               <div className="backup-status">
                 <span>config.json 存在</span>
                 <strong>{displayBoolean(xrayBackupStatus["config_exists"])}</strong>
-                <span>xray.service active</span>
+                <span>xray.service 状态</span>
                 <strong>{displayBoolean(xrayBackupStatus["service_active"])}</strong>
                 <span>443 监听</span>
                 <strong>{displayBoolean(xrayBackupStatus["port_443_listening"])}</strong>
@@ -647,7 +678,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
                   return (
                     <div className="backup-row" key={String(data["path"] ?? data["name"])}>
                       <strong>{String(data["name"] ?? "-")}</strong>
-                      <span>{String(data["type"] ?? "unknown")}</span>
+                      <span>{fileTypeLabel(data["type"])}</span>
                       <span>{displayBytes(data["size_bytes"])}</span>
                       <span>{displayDate(data["modified_at"])}</span>
                       <code>{String(data["path"] ?? "-")}</code>
@@ -673,7 +704,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
                   <strong>{displayBytes(cleanupSummary["estimated_reclaim_bytes"])}</strong>
                   <span>保留文件数</span>
                   <strong>{String(cleanupSummary["retained_count"] ?? 0)}</strong>
-                  <span>xray.service active</span>
+                  <span>xray.service 状态</span>
                   <strong>{displayBoolean(cleanupStatus?.["service_active"])}</strong>
                   <span>443 监听</span>
                   <strong>{displayBoolean(cleanupStatus?.["port_443_listening"])}</strong>
@@ -688,7 +719,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
                         return (
                           <div className="backup-row cleanup-row" key={String(data["path"] ?? data["name"])}>
                             <strong>{String(data["name"] ?? "-")}</strong>
-                            <span>{String(data["type"] ?? "unknown")}</span>
+                            <span>{fileTypeLabel(data["type"])}</span>
                             <span>{displayBytes(data["size_bytes"])}</span>
                             <span>{displayDate(data["modified_at"])}</span>
                             <span>原因：{String(data["reason"] ?? "-")}</span>
@@ -728,7 +759,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
                         return (
                           <div className="backup-row cleanup-row" key={String(data["path"] ?? data["name"])}>
                             <strong>{String(data["name"] ?? "-")}</strong>
-                            <span>{String(data["type"] ?? "unknown")}</span>
+                            <span>{fileTypeLabel(data["type"])}</span>
                             <span>{displayBytes(data["size_bytes"])}</span>
                             <span>{displayDate(data["modified_at"])}</span>
                             <span>原因：{String(data["reason"] ?? "-")}</span>
@@ -757,7 +788,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
                   <span>路径</span>
                   <strong>{String(backupDeleteTarget["path"] ?? "-")}</strong>
                   <span>类型</span>
-                  <strong>{String(backupDeleteTarget["type"] ?? "-")}</strong>
+                  <strong>{fileTypeLabel(backupDeleteTarget["type"])}</strong>
                   <span>大小</span>
                   <strong>{displayBytes(backupDeleteTarget["size_bytes"])}</strong>
                   <span>修改时间</span>
@@ -925,11 +956,11 @@ ss -ltnH | grep ':443'`}</pre>
             <div>
               <strong>任务状态</strong>
               <p className="message">
-                {task.status} / {task.current_step ?? "-"} / {task.progress}%
+                {statusLabel(task.status)} / {task.current_step ?? "-"} / {task.progress}%
               </p>
             </div>
             <span className={`pill ${task.status === "success" ? "ok" : "bad"}`}>
-              {task.error_code ?? task.status}
+              {task.error_code ?? statusLabel(task.status)}
             </span>
           </div>
           {taskFailures(task).length > 0 ? (
