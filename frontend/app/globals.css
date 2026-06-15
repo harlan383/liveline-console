@@ -1038,6 +1038,91 @@ textarea {
   white-space: pre-wrap;
 }
 
+.landing-plan-checklist {
+  background: rgba(19, 31, 45, 0.74);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.landing-plan-checklist label {
+  align-items: flex-start;
+  color: var(--muted);
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  line-height: 1.45;
+}
+
+.landing-plan-checklist input {
+  margin-top: 2px;
+  width: auto;
+}
+
+.landing-plan-result {
+  display: grid;
+  gap: 12px;
+}
+
+.plan-status-card {
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.plan-status-card.ready {
+  background: var(--ok-soft);
+  border: 1px solid rgba(50, 213, 131, 0.32);
+  color: var(--ok);
+}
+
+.plan-status-card.blocked {
+  background: var(--danger-soft);
+  border: 1px solid rgba(249, 112, 102, 0.32);
+  color: var(--danger);
+}
+
+.plan-status-card span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.landing-plan-grid {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 0;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(0, 1.2fr);
+  overflow: hidden;
+}
+
+.landing-plan-grid span,
+.landing-plan-grid strong {
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 9px 10px;
+}
+
+.landing-plan-grid span:nth-last-child(-n + 2),
+.landing-plan-grid strong:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.landing-plan-grid span {
+  color: var(--muted);
+}
+
+.landing-plan-grid strong {
+  color: var(--text);
+}
+
 .task-card {
   border-top: 1px solid var(--line);
   display: grid;
