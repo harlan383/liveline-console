@@ -819,6 +819,29 @@ links, does not modify `node.share_link`, does not add listening ports, does not
 modify firewall rules, does not execute SSH or remote commands, and does not
 perform cutover.
 
+## Stage 3.3.33 Worker preflight interface normalization scope
+
+Stage 3.3.33 normalizes the landing Worker readonly preflight result shape. The
+Worker version is `0.1.3-stage-3.3.33`, and `landing_preflight` now reports
+`preflight_version=0.2`.
+
+The Worker separates the configured interface from the default public route
+interface. It returns `worker_config_interface`, `default_route_interface`,
+`default_route_gateway`, `primary_interface`, `primary_interface_ip`, and
+`interface_mismatch`, while keeping `system.interface_name` for compatibility.
+The backend dry-run plan prefers these new fields and keeps old-field fallbacks.
+If the configured Worker interface differs from the default route interface, the
+plan remains No-Go with `interface_mismatch`.
+
+Stage 3.3.33 also fixes the `ss -lntup` listener parser so invalid rows no
+longer produce `port=0`; only valid TCP `LISTEN` rows are counted. The
+linux/amd64 Worker binary is rebuilt with the local Go toolchain.
+
+Stage 3.3.33 does not install Xray, x-ui, 3x-ui, socat, or gost, does not
+execute SSH or remote commands, does not connect to real VPS hosts, does not
+create nodes or transit routes, does not add listening ports, does not modify
+firewall rules, does not modify `node.share_link`, and does not perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2009,6 +2032,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.29 Worker command target selection fix | Worker checks now target the latest online command-capable Worker |
 | Stage 3.3.30 Worker landing readonly preflight | Landing Worker read-only preflight command added; no remote SSH or cutover |
 | Stage 3.3.32 Landing node create plan | Dry-run landing node creation plan added; no node creation, no SSH, no cutover |
+| Stage 3.3.33 Worker preflight interface normalization | Landing preflight interface fields normalized and listener parsing fixed; no remote execution |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

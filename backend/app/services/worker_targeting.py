@@ -10,8 +10,8 @@ from app.services.worker_binding import worker_runtime_status
 
 MIN_COMMAND_CHANNEL_VERSION = "0.1.1-stage-3.3.28"
 MIN_COMMAND_CHANNEL_VERSION_KEY = (0, 1, 1, 3, 3, 28)
-MIN_LANDING_PREFLIGHT_VERSION = "0.1.2-stage-3.3.30"
-MIN_LANDING_PREFLIGHT_VERSION_KEY = (0, 1, 2, 3, 3, 30)
+MIN_LANDING_PREFLIGHT_VERSION = "0.1.3-stage-3.3.33"
+MIN_LANDING_PREFLIGHT_VERSION_KEY = (0, 1, 3, 3, 3, 33)
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+))?$")
 
 

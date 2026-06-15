@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.2-stage-3.3.30"
+const workerVersion = "0.1.3-stage-3.3.33"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -671,19 +671,37 @@ func serviceSummary(role string) map[string]any {
 }
 
 func collectLandingPreflight(cfg config, hostname string) map[string]any {
-	warnings := []string{}
+	warnings := []any{}
 	errors := []string{}
 	ssOutput, ssErr := readonlyCommandOutput("ss", "-lntup")
 	if ssErr != "" {
-		warnings = append(warnings, "ss -lntup unavailable: "+ssErr)
+		warnings = append(warnings, map[string]any{
+			"code":    "ss_unavailable",
+			"message": "ss -lntup unavailable: " + ssErr,
+		})
 	}
 	firewall, firewallWarnings := firewallReadonlySummary()
-	warnings = append(warnings, firewallWarnings...)
+	for _, warning := range firewallWarnings {
+		warnings = append(warnings, map[string]any{
+			"code":    "firewall_readonly_warning",
+			"message": warning,
+		})
+	}
+	network := landingNetworkSummary(cfg.InterfaceName, ssOutput)
+	if mismatch, ok := network["interface_mismatch"].(bool); ok && mismatch {
+		defaultIface, _ := network["default_route_interface"].(string)
+		warnings = append(warnings, map[string]any{
+			"code":                    "interface_mismatch",
+			"message":                 fmt.Sprintf("Worker configured interface %s differs from default route interface %s.", cfg.InterfaceName, defaultIface),
+			"worker_config_interface": cfg.InterfaceName,
+			"default_route_interface": defaultIface,
+		})
+	}
 	return map[string]any{
-		"preflight_version": "0.1",
+		"preflight_version": "0.2",
 		"worker_version":    workerVersion,
 		"system":            landingSystemSummary(cfg, hostname),
-		"network":           landingNetworkSummary(cfg.InterfaceName, ssOutput),
+		"network":           network,
 		"ports":             landingPortSummary(ssOutput),
 		"services":          landingServiceChecks(),
 		"binaries":          binaryChecks([]string{"xray", "x-ui", "3x-ui", "nginx", "caddy", "socat", "gost", "docker", "iptables", "ufw", "firewall-cmd"}),
@@ -696,28 +714,89 @@ func collectLandingPreflight(cfg config, hostname string) map[string]any {
 
 func landingSystemSummary(cfg config, hostname string) map[string]any {
 	return map[string]any{
-		"hostname":            hostname,
-		"uname":               readonlyCommandValue("uname", "-a"),
-		"os_release":          osReleaseSummary(),
-		"uptime_seconds":      uptimeSeconds(),
-		"current_user":        readonlyCommandValue("whoami"),
-		"worker_running_user": readonlyCommandValue("whoami"),
-		"uid":                 os.Getuid(),
-		"architecture":        readonlyCommandValue("uname", "-m"),
-		"role":                cfg.Role,
-		"interface_name":      cfg.InterfaceName,
+		"hostname":                hostname,
+		"uname":                   readonlyCommandValue("uname", "-a"),
+		"os_release":              osReleaseSummary(),
+		"uptime_seconds":          uptimeSeconds(),
+		"current_user":            readonlyCommandValue("whoami"),
+		"worker_running_user":     readonlyCommandValue("whoami"),
+		"uid":                     os.Getuid(),
+		"architecture":            readonlyCommandValue("uname", "-m"),
+		"role":                    cfg.Role,
+		"interface_name":          cfg.InterfaceName,
+		"worker_config_interface": cfg.InterfaceName,
 	}
 }
 
 func landingNetworkSummary(interfaceName string, ssOutput string) map[string]any {
-	return map[string]any{
-		"primary_interface":    interfaceName,
-		"primary_interface_ip": interfaceAddress(interfaceName),
-		"local_ips":            localIPList(),
-		"public_ip":            "not_checked",
-		"ip_route":             readonlyCommandValue("ip", "route"),
-		"listening_summary":    summarizeListeningPorts(ssOutput, 30),
+	defaultRoute := readonlyCommandValue("ip", "route", "show", "default")
+	defaultInfo := parseDefaultRoute(defaultRoute)
+	localIPs := localIPList()
+	primaryInterface := defaultInfo.Interface
+	if primaryInterface == "" {
+		primaryInterface = interfaceName
 	}
+	primaryIP := localIPv4ForInterface(localIPs, primaryInterface)
+	if primaryIP == "" && primaryInterface == interfaceName {
+		primaryIP = interfaceAddress(interfaceName)
+	}
+	interfaceMismatch := strings.TrimSpace(interfaceName) != "" &&
+		strings.TrimSpace(defaultInfo.Interface) != "" &&
+		strings.TrimSpace(interfaceName) != strings.TrimSpace(defaultInfo.Interface)
+
+	return map[string]any{
+		"worker_config_interface": interfaceName,
+		"default_route_interface": defaultInfo.Interface,
+		"default_route_gateway":   defaultInfo.Gateway,
+		"primary_interface":       primaryInterface,
+		"primary_interface_ip":    primaryIP,
+		"interface_mismatch":      interfaceMismatch,
+		"local_ips":               localIPs,
+		"public_ip":               "not_checked",
+		"ip_route":                defaultRoute,
+		"listening_summary":       summarizeListeningPorts(ssOutput, 30),
+	}
+}
+
+type defaultRouteInfo struct {
+	Interface string
+	Gateway   string
+}
+
+func parseDefaultRoute(output string) defaultRouteInfo {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 || fields[0] != "default" {
+			continue
+		}
+		info := defaultRouteInfo{}
+		for idx := 0; idx < len(fields)-1; idx++ {
+			switch fields[idx] {
+			case "dev":
+				info.Interface = fields[idx+1]
+			case "via":
+				info.Gateway = fields[idx+1]
+			}
+		}
+		return info
+	}
+	return defaultRouteInfo{}
+}
+
+func localIPv4ForInterface(localIPs []map[string]string, interfaceName string) string {
+	if strings.TrimSpace(interfaceName) == "" {
+		return ""
+	}
+	for _, item := range localIPs {
+		if item["interface"] != interfaceName {
+			continue
+		}
+		ip := net.ParseIP(item["ip"])
+		if ip != nil && ip.To4() != nil {
+			return item["ip"]
+		}
+	}
+	return ""
 }
 
 func localIPList() []map[string]string {
@@ -746,28 +825,16 @@ func localIPList() []map[string]string {
 }
 
 func summarizeListeningPorts(ssOutput string, limit int) []map[string]any {
-	rows := []map[string]any{}
-	for _, line := range strings.Split(ssOutput, "\n") {
-		cleaned := strings.TrimSpace(line)
-		if cleaned == "" || strings.HasPrefix(cleaned, "Netid") || strings.HasPrefix(cleaned, "State") {
-			continue
-		}
-		address, port := listenAddressAndPort(cleaned)
-		rows = append(rows, map[string]any{
-			"protocol":       "tcp",
-			"listen_address": address,
-			"port":           port,
-			"process":        processSummary(cleaned),
-		})
-		if len(rows) >= limit {
-			break
-		}
+	rows, _ := listeningPortRows(ssOutput)
+	if limit > 0 && len(rows) > limit {
+		return rows[:limit]
 	}
 	return rows
 }
 
 func landingPortSummary(ssOutput string) map[string]any {
-	checks := portChecks(ssOutput, []int{22, 80, 443, 8443, 18443})
+	rows, skipped := listeningPortRows(ssOutput)
+	checks := portChecksFromRows(rows, []int{22, 80, 443, 8443, 18443})
 	importantPorts := map[string]any{}
 	for _, check := range checks {
 		port := fmt.Sprintf("%v", check["port"])
@@ -779,29 +846,25 @@ func landingPortSummary(ssOutput string) map[string]any {
 		importantPorts[port] = check
 	}
 	return map[string]any{
-		"listening_count":   len(summarizeListeningPorts(ssOutput, 1000)),
-		"listening_summary": summarizeListeningPorts(ssOutput, 30),
-		"important_ports":   importantPorts,
+		"listening_count":     len(rows),
+		"listening_summary":   summarizeListeningPorts(ssOutput, 30),
+		"important_ports":     importantPorts,
+		"debug_skipped_count": skipped,
 	}
 }
 
-func portChecks(ssOutput string, ports []int) []map[string]any {
+func portChecksFromRows(rows []map[string]any, ports []int) []map[string]any {
 	result := []map[string]any{}
-	lines := strings.Split(ssOutput, "\n")
 	for _, port := range ports {
 		listeners := []map[string]any{}
-		for _, line := range lines {
-			cleaned := strings.TrimSpace(line)
-			if cleaned == "" || !lineContainsPort(cleaned, port) {
-				continue
-			}
-			address, parsedPort := listenAddressAndPort(cleaned)
-			if parsedPort != port {
+		for _, row := range rows {
+			parsedPort, ok := row["port"].(int)
+			if !ok || parsedPort != port {
 				continue
 			}
 			listeners = append(listeners, map[string]any{
-				"listen_address": address,
-				"process":        processSummary(cleaned),
+				"listen_address": row["listen_address"],
+				"process":        row["process"],
 			})
 		}
 		result = append(result, map[string]any{
@@ -814,31 +877,88 @@ func portChecks(ssOutput string, ports []int) []map[string]any {
 	return result
 }
 
-func lineContainsPort(line string, port int) bool {
-	portText := strconv.Itoa(port)
-	return strings.Contains(line, ":"+portText+" ") ||
-		strings.HasSuffix(line, ":"+portText) ||
-		strings.Contains(line, ":"+portText+"\t")
+func listeningPortRows(ssOutput string) ([]map[string]any, int) {
+	rows := []map[string]any{}
+	skipped := 0
+	for _, line := range strings.Split(ssOutput, "\n") {
+		cleaned := strings.TrimSpace(line)
+		if cleaned == "" || strings.HasPrefix(cleaned, "Netid") || strings.HasPrefix(cleaned, "State") {
+			continue
+		}
+		fields := strings.Fields(cleaned)
+		if !isTCPListenLine(fields) {
+			continue
+		}
+		localField := localAddressField(fields)
+		address, port, ok := parseListenAddressAndPort(localField)
+		if !ok || address == "" || port <= 0 {
+			skipped++
+			continue
+		}
+		rows = append(rows, map[string]any{
+			"protocol":       "tcp",
+			"listen_address": address,
+			"port":           port,
+			"process":        processSummary(cleaned),
+		})
+	}
+	return rows, skipped
 }
 
-func listenAddressAndPort(line string) (string, int) {
-	fields := strings.Fields(line)
-	for _, field := range fields {
-		if !strings.Contains(field, ":") {
-			continue
-		}
-		address, portText, ok := strings.Cut(field, ":")
-		if !ok || portText == "" {
-			continue
-		}
-		portText = strings.Trim(portText, "[]")
-		port, err := strconv.Atoi(portText)
-		if err != nil {
-			continue
-		}
-		return address, port
+func isTCPListenLine(fields []string) bool {
+	if len(fields) < 4 {
+		return false
 	}
-	return "", 0
+	if strings.HasPrefix(fields[0], "tcp") {
+		return len(fields) >= 5 && strings.EqualFold(fields[1], "LISTEN")
+	}
+	return strings.EqualFold(fields[0], "LISTEN")
+}
+
+func localAddressField(fields []string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	if strings.HasPrefix(fields[0], "tcp") {
+		if len(fields) >= 5 {
+			return fields[4]
+		}
+		return ""
+	}
+	if len(fields) >= 4 {
+		return fields[3]
+	}
+	return ""
+}
+
+func parseListenAddressAndPort(field string) (string, int, bool) {
+	cleaned := strings.TrimSpace(field)
+	if cleaned == "" {
+		return "", 0, false
+	}
+	var address string
+	var portText string
+	if strings.HasPrefix(cleaned, "[") {
+		end := strings.LastIndex(cleaned, "]:")
+		if end < 0 {
+			return "", 0, false
+		}
+		address = strings.Trim(cleaned[:end+1], "[]")
+		portText = cleaned[end+2:]
+	} else {
+		idx := strings.LastIndex(cleaned, ":")
+		if idx < 0 {
+			return "", 0, false
+		}
+		address = cleaned[:idx]
+		portText = cleaned[idx+1:]
+	}
+	portText = strings.Trim(portText, "[]")
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return "", 0, false
+	}
+	return strings.TrimSpace(address), port, true
 }
 
 func processSummary(line string) string {
