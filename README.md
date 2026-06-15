@@ -707,6 +707,24 @@ not execute SSH or remote commands, does not create nodes or transit routes,
 does not add listening ports, does not modify `node.share_link`, and does not
 perform formal cutover.
 
+## Stage 3.3.26 Deployment missing credentials fix scope
+
+Stage 3.3.26 restores `backend/app/services/credentials.py` to version control
+so public backend deployments can import `app.services.credentials`. The module
+provides the Redis temporary credential helpers used by VPS, node, transit
+resource, transit route, and worker job flows: `store_temp_credential`,
+`pop_temp_credential`, `TempCredentialExpired`, and
+`TempCredentialDecryptFailed`.
+
+The fix keeps the existing encrypted Redis temporary credential boundary:
+private SSH material is encrypted before being stored under
+`temp_credential:<id>`, receives a TTL, and is deleted when the Worker pops it.
+It does not store SSH private keys in normal database fields, logs, task
+results, README, or docs. This stage does not modify `node.share_link`, does
+not add database migrations, does not add listening ports, does not execute SSH
+or remote commands, does not create nodes or transit routes, and does not
+perform formal cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1891,6 +1909,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.23 Worker bootstrap UI integration | Landing/transit add-server UI now generates one-time Worker bootstrap commands |
 | Stage 3.3.24 Minimal LiveLine Worker binary | Minimal Go Worker binary and real install script implemented; no real VPS install |
 | Stage 3.3.25 Worker public install URL fix | Worker install commands require a configured public console URL; localhost fallback removed |
+| Stage 3.3.26 Deployment missing credentials fix | Redis temporary credential service restored to version control for deployment imports |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
