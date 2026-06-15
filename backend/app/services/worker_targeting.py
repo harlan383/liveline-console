@@ -10,6 +10,8 @@ from app.services.worker_binding import worker_runtime_status
 
 MIN_COMMAND_CHANNEL_VERSION = "0.1.1-stage-3.3.28"
 MIN_COMMAND_CHANNEL_VERSION_KEY = (0, 1, 1, 3, 3, 28)
+MIN_LANDING_PREFLIGHT_VERSION = "0.1.2-stage-3.3.30"
+MIN_LANDING_PREFLIGHT_VERSION_KEY = (0, 1, 2, 3, 3, 30)
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+))?$")
 
 
@@ -47,13 +49,29 @@ def parse_worker_version(version: str | None) -> tuple[int, int, int, int, int, 
     )
 
 
-def worker_supports_command_channel(worker: Worker | None) -> bool:
+def worker_supports_min_version(worker: Worker | None, min_version_key: tuple[int, int, int, int, int, int]) -> bool:
     if not worker:
         return False
     parsed = parse_worker_version(worker.worker_version)
     if not parsed:
         return False
-    return parsed >= MIN_COMMAND_CHANNEL_VERSION_KEY
+    return parsed >= min_version_key
+
+
+def minimum_worker_version_for_command(command_type: str | None) -> str:
+    if command_type == "landing_preflight":
+        return MIN_LANDING_PREFLIGHT_VERSION
+    return MIN_COMMAND_CHANNEL_VERSION
+
+
+def minimum_worker_version_key_for_command(command_type: str | None) -> tuple[int, int, int, int, int, int]:
+    if command_type == "landing_preflight":
+        return MIN_LANDING_PREFLIGHT_VERSION_KEY
+    return MIN_COMMAND_CHANNEL_VERSION_KEY
+
+
+def worker_supports_command_channel(worker: Worker | None, command_type: str | None = None) -> bool:
+    return worker_supports_min_version(worker, minimum_worker_version_key_for_command(command_type))
 
 
 def worker_sort_key(worker: Worker) -> tuple[datetime, datetime, datetime]:
@@ -72,6 +90,7 @@ def resolve_command_target_worker(
     server_id: str | None,
     role: str | None = None,
     requested_worker_id: str | None = None,
+    command_type: str | None = None,
 ) -> WorkerTargetResolution:
     target_role = (role or server_type or "").strip()
     if target_role not in {"landing", "transit"}:
@@ -96,7 +115,7 @@ def resolve_command_target_worker(
         raise WorkerTargetError("WORKER_OFFLINE", "当前没有在线 Worker，不能创建检查命令。")
 
     command_capable_workers = [
-        worker for worker in online_workers if worker_supports_command_channel(worker)
+        worker for worker in online_workers if worker_supports_command_channel(worker, command_type)
     ]
     if not command_capable_workers:
         raise WorkerTargetError(

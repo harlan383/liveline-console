@@ -170,6 +170,22 @@ def result_summary(command: WorkerCommand) -> str | None:
         services = result.get("services")
         if isinstance(services, dict):
             return ", ".join(f"{key}={value}" for key, value in list(services.items())[:6])
+    if command.command_type == "landing_preflight":
+        warnings = result.get("warnings")
+        warning_count = len(warnings) if isinstance(warnings, list) else 0
+        ports = result.get("ports")
+        listening_count = "-"
+        important_ports = "-"
+        if isinstance(ports, dict):
+            listening_count = str(ports.get("listening_count", "-"))
+            checks = ports.get("important_ports")
+            if isinstance(checks, dict):
+                important_ports = ",".join(
+                    f"{port}:{check.get('status', '-')}"
+                    for port, check in checks.items()
+                    if isinstance(check, dict)
+                )
+        return f"landing_preflight listening_count={listening_count} important_ports={important_ports} warnings={warning_count}"
     return "命令已返回脱敏结果。"
 
 
