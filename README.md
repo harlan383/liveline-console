@@ -689,6 +689,24 @@ nodes, does not create transit routes, does not modify Xray, does not modify
 This stage does not install the Worker onto any real VPS and does not execute
 SSH or remote commands from the console.
 
+## Stage 3.3.25 Worker public install URL fix scope
+
+Stage 3.3.25 fixes Worker bootstrap command generation so commands copied to a
+remote VPS no longer use `localhost`. The backend now requires
+`PUBLIC_CONSOLE_URL` or `WORKER_PUBLIC_BASE_URL` before generating
+`curl -s <public-console-url>/worker_setup_script/<token> | bash -s eth0 ...`.
+If the public console URL is missing, local, or invalid, the API refuses to
+create an install command instead of falling back to the request host.
+
+The Worker setup script also uses the same public console URL for the Worker
+registration endpoint and binary download URL. Landing and transit add-server
+modals warn that remote VPS hosts cannot access a localhost script URL and ask
+the operator to confirm the VPS can reach the configured console address before
+running the command. This stage does not install Worker onto any real VPS, does
+not execute SSH or remote commands, does not create nodes or transit routes,
+does not add listening ports, does not modify `node.share_link`, and does not
+perform formal cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1872,6 +1890,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.22 Worker token/register/heartbeat foundation | Worker token, register, heartbeat, and query APIs added; no real Worker execution |
 | Stage 3.3.23 Worker bootstrap UI integration | Landing/transit add-server UI now generates one-time Worker bootstrap commands |
 | Stage 3.3.24 Minimal LiveLine Worker binary | Minimal Go Worker binary and real install script implemented; no real VPS install |
+| Stage 3.3.25 Worker public install URL fix | Worker install commands require a configured public console URL; localhost fallback removed |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

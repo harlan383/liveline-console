@@ -43,6 +43,8 @@ class Settings(BaseSettings):
         default="http://localhost:3000",
         alias="FRONTEND_ORIGIN",
     )
+    public_console_url: str = Field(default="", alias="PUBLIC_CONSOLE_URL")
+    worker_public_base_url: str = Field(default="", alias="WORKER_PUBLIC_BASE_URL")
 
     model_config = SettingsConfigDict(case_sensitive=False, hide_input_in_errors=True)
 
