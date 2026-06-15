@@ -622,6 +622,24 @@ keeps target port and forwarding method in separate aligned columns, and pins
 the action column on the right. The route creation dialog remains a local
 planning surface only; real remote execution stays in a future Worker/API stage.
 
+## Stage 3.3.21 Lightweight Worker bootstrap design scope
+
+Stage 3.3.21 documents the lightweight Worker bootstrap direction before any
+implementation. The intended default onboarding path is a visible
+`curl | bash` install command that installs a small systemd-managed
+`liveline-worker` binary on landing or transit servers. SSH onboarding source
+code remains preserved but hidden from the default frontend path until the
+Worker flow is stable.
+
+The first Worker version is designed only for registration, heartbeat, and
+basic status reporting. It does not create nodes, create transit routes, delete
+nodes, perform remote cleanup, modify Xray, modify `socat` / `gost`, change
+`node.share_link`, add listening ports, or perform formal cutover. `socat` and
+`gost` remain the current transit methods; HAProxy TCP is deferred to a
+separate future stage. The design also records one-time install-token
+requirements, future Worker APIs, remote-cleanup rules, and the security
+boundary for future implementation.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1801,6 +1819,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.18 Node menu consolidation | Nodes left-nav entry removed; nav renamed to Transit Servers / Landing Servers; node actions consolidated under landing-server child rows |
 | Stage 3.3.19 Transit server UI table alignment | Transit Servers page aligned to management-table UI; Worker/remote execution remains future-stage |
 | Stage 3.3.20 Transit server / route split | Transit Servers and Transit Links separated; remote execution remains No-Go |
+| Stage 3.3.21 Lightweight Worker bootstrap design | Lightweight Worker bootstrap design documented; implementation remains No-Go |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
