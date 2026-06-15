@@ -788,6 +788,37 @@ execute SSH or arbitrary remote commands from Codex, does not create nodes or
 transit routes, does not add listening ports, does not modify firewall rules,
 does not modify `node.share_link`, and does not perform formal cutover.
 
+## Stage 3.3.32 Landing node create plan scope
+
+Stage 3.3.32 adds a local dry-run landing-node creation plan. The backend exposes
+`POST /api/vps/{server_id}/landing-node-plan`, which reads the latest successful
+`landing_preflight` result and the currently bound landing Worker record, then
+returns a Go / No-Go planning response for a future direct VLESS Reality node.
+The endpoint does not enqueue tasks, does not execute Worker commands, and does
+not write node, task, or route records.
+
+The plan checks worker availability/version, preflight presence, interface
+mismatch, planned port validity, existing listening state, existing Xray config
+metadata, cloud security group / cloud firewall / server firewall confirmation,
+and whether share-link generation has been explicitly approved for a later
+execution stage. The current accepted preflight shows Worker
+`53e6535d-7b80-4121-9093-2c55b3f09953` on landing server
+`968519b3-9017-4b27-a9a0-d5731033f84f`, with Worker version
+`0.1.2-stage-3.3.30`, Debian 12, x86_64, root runtime user, only SSH 22
+listening, and no Xray / x-ui / 3x-ui / nginx / caddy / socat / gost installed.
+It also records the known interface mismatch: Worker config uses `eth0`, while
+the detected default public interface is `ens17`; this remains a blocker before
+any formal node creation approval.
+
+The landing-server UI replaces the real "add node" action with `创建节点计划`.
+The modal only generates the dry-run plan, shows blocked reasons and warnings,
+and reminds the operator that future listener ports require cloud security group,
+cloud firewall, and server firewall review. Stage 3.3.32 does not install Xray,
+does not write Xray config, does not create nodes, does not generate full node
+links, does not modify `node.share_link`, does not add listening ports, does not
+modify firewall rules, does not execute SSH or remote commands, and does not
+perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1977,6 +2008,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.28 Worker command channel foundation | Read-only Worker command queue, polling, result reporting, and UI check entry added |
 | Stage 3.3.29 Worker command target selection fix | Worker checks now target the latest online command-capable Worker |
 | Stage 3.3.30 Worker landing readonly preflight | Landing Worker read-only preflight command added; no remote SSH or cutover |
+| Stage 3.3.32 Landing node create plan | Dry-run landing node creation plan added; no node creation, no SSH, no cutover |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

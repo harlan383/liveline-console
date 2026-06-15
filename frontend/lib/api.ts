@@ -255,6 +255,49 @@ export type ReadonlyPreflightPlanResponse = {
   redacted_summary: string;
 };
 
+export type LandingNodePlanRequest = {
+  listen_port: number;
+  protocol: string;
+  security: string;
+  flow: string;
+  server_name: string;
+  dest: string;
+  remark?: string | null;
+  allow_install_xray: boolean;
+  allow_modify_firewall: boolean;
+  allow_generate_share_link: boolean;
+  allow_overwrite_existing_config: boolean;
+  cloud_security_group_confirmed: boolean;
+  cloud_firewall_confirmed: boolean;
+  server_firewall_confirmed: boolean;
+  require_manual_cloud_firewall_confirmation: boolean;
+  require_preflight_success: boolean;
+};
+
+export type LandingNodePlanResponse = {
+  plan_id: string;
+  server_id: string;
+  mode: string;
+  ready: boolean;
+  will_install_xray: boolean;
+  will_create_config: boolean;
+  will_open_local_firewall: boolean;
+  will_modify_cloud_security_group: boolean;
+  listen_port: number;
+  protocol: string;
+  security: string;
+  flow: string;
+  server_name: string;
+  dest: string;
+  key_generation_strategy: Record<string, string>;
+  required_user_confirmations: string[];
+  preflight_summary: Record<string, unknown>;
+  warnings: string[];
+  blocked_reasons: string[];
+  next_stage_required: string;
+  safety_boundary: string[];
+};
+
 export type VpsActionResult = {
   task_id: string;
   vps_id: string;
@@ -471,6 +514,18 @@ export async function createVpsWorkerBootstrap(
   csrfToken: string,
 ): Promise<ApiResponse<VpsWorkerBootstrapResult>> {
   return apiFetch<VpsWorkerBootstrapResult>("/api/vps/worker-bootstrap", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createLandingNodePlan(
+  serverId: string,
+  payload: LandingNodePlanRequest,
+  csrfToken: string,
+): Promise<ApiResponse<LandingNodePlanResponse>> {
+  return apiFetch<LandingNodePlanResponse>(`/api/vps/${serverId}/landing-node-plan`, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),

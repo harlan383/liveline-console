@@ -10,15 +10,18 @@ from app.db.session import get_db
 from app.models.task import Task
 from app.models.vps_server import VpsServer
 from app.schemas.common import error_response, success_response
+from app.schemas.landing_node_plan import LandingNodePlanRequest
 from app.schemas.read_node import ConfirmHostKeyRequest
 from app.services.auth_service import record_audit
 from app.services.credentials import store_temp_credential
+from app.services.landing_node_plan import build_landing_node_plan
 from app.services.task_logging import add_task_log
 from app.services.worker_binding import (
     WORKER_PENDING_STATUS,
     WorkerPublicUrlError,
     connection_mode_for_vps,
     create_bound_worker_token,
+    latest_worker_for_server,
     latest_workers_by_server,
     serialize_worker_token_bootstrap,
     vps_display_status,
@@ -447,6 +450,29 @@ def create_vps_worker_bootstrap(
         },
         "落地服务器记录已创建，Worker 安装命令已生成。",
     )
+
+
+@router.post("/{vps_id}/landing-node-plan")
+def create_landing_node_plan(
+    vps_id: str,
+    payload: LandingNodePlanRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    vps = db.get(VpsServer, vps_id)
+    if not vps or vps.status == "deleted":
+        return error_response(404, "VPS_NOT_FOUND", "落地服务器记录不存在。")
+
+    worker = latest_worker_for_server(db, role="landing", server_id=vps.id)
+    plan = build_landing_node_plan(db=db, vps=vps, worker=worker, payload=payload)
+
+    return success_response(plan, "落地节点创建 dry-run 计划已生成；未执行任何远程操作。")
 
 
 @router.post("/{vps_id}/recheck")
