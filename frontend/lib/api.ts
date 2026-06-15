@@ -351,6 +351,17 @@ export type WorkerListResult = {
   workers: WorkerData[];
 };
 
+export async function createWorkerToken(
+  payload: WorkerTokenCreateRequest,
+  csrfToken: string,
+): Promise<ApiResponse<WorkerTokenCreateResult>> {
+  return apiFetch<WorkerTokenCreateResult>("/api/worker-tokens", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
 export type CsrfResult = {
   csrf_token: string;
 };
