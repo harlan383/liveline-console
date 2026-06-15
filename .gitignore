@@ -20,6 +20,7 @@ private_key
 private_key.*
 server_password*
 credentials*
+!backend/app/services/credentials.py
 secrets*
 
 # python
