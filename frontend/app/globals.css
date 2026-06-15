@@ -738,6 +738,49 @@ textarea {
   width: min(860px, 100%);
 }
 
+.transit-server-management-panel {
+  align-content: start;
+}
+
+.transit-server-row {
+  background:
+    linear-gradient(90deg, rgba(24, 182, 164, 0.08), rgba(7, 16, 34, 0)),
+    var(--panel);
+}
+
+.transit-route-child-row {
+  background:
+    linear-gradient(90deg, rgba(100, 116, 139, 0.12), rgba(12, 23, 34, 0)),
+    #0c1722;
+}
+
+.transit-server-modal {
+  width: min(820px, 100%);
+}
+
+.transit-route-detail-modal {
+  width: min(900px, 100%);
+}
+
+.transit-legacy-workbench {
+  background: rgba(7, 16, 34, 0.56);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: block;
+  margin-top: 4px;
+}
+
+.transit-legacy-workbench > .collapsible-summary {
+  color: var(--accent);
+}
+
+.transit-legacy-body {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
 .server-row-error,
 .server-node-empty,
 .server-table-empty {
