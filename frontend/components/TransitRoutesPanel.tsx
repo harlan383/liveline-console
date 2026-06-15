@@ -643,7 +643,7 @@ export function TransitServersPanel() {
         return;
       }
       setWorkerTokenResult(result.data);
-      setMessage("Worker 安装命令已生成。明文 token 仅包含在本次安装命令中。");
+      setMessage("Worker 安装命令已生成。请在 VPS 上先确认能访问主控地址。明文 token 仅包含在本次安装命令中。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
     } finally {
@@ -715,6 +715,7 @@ export function TransitServersPanel() {
           <strong>Worker 第一版安装说明</strong>
           <span>当前安装命令会安装真实 liveline-worker，并写入 systemd 服务。</span>
           <span>Worker 第一版只做注册、心跳和基础状态上报，不创建中转链路、不修改 socat/gost、不新增监听端口。</span>
+          <span>生成命令必须先配置 PUBLIC_CONSOLE_URL；主控公网地址未配置时，远程 VPS 无法通过 localhost 访问安装脚本。</span>
           <span>安装完成后可使用 journalctl -u liveline-worker -f 查看日志。</span>
           <span>如果服务器网卡不是 eth0，请根据实际网卡名修改，例如 ens3、ens5、enp1s0。</span>
         </div>
@@ -744,7 +745,7 @@ export function TransitServersPanel() {
               </button>
             </div>
             <p className="message">
-              明文 token 只出现在这条一次性安装命令中。不要把命令写入 README、阶段文档、终端日志或 Git。
+              请在 VPS 上先确认能访问主控地址。明文 token 只出现在这条一次性安装命令中。不要把命令写入 README、阶段文档、终端日志或 Git。
             </p>
           </div>
         ) : (

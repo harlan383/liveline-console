@@ -2,6 +2,7 @@ import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -9,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import auth_error, csrf_error, csrf_valid, require_admin_session
+from app.core.config import get_settings
 from app.core.security import hash_token, new_token, token_matches
 from app.db.session import get_db
 from app.models.worker import Worker, WorkerToken
@@ -37,6 +39,7 @@ SENSITIVE_METADATA_MARKERS = (
     "cookie",
     "share_link",
 )
+LOCAL_WORKER_INSTALL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 
 
 def now_utc() -> datetime:
@@ -141,6 +144,42 @@ def worker_binary_path() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def worker_public_base_url() -> str:
+    settings = get_settings()
+    raw_value = (settings.worker_public_base_url or settings.public_console_url or "").strip().rstrip("/")
+    if not raw_value:
+        raise ValueError("WORKER_PUBLIC_URL_MISSING")
+
+    parsed = urlparse(raw_value)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("WORKER_PUBLIC_URL_INVALID")
+    if hostname in LOCAL_WORKER_INSTALL_HOSTS or hostname.startswith("127."):
+        raise ValueError("WORKER_PUBLIC_URL_LOCALHOST")
+    return raw_value
+
+
+def worker_public_url_error(exc: ValueError):
+    code = str(exc)
+    if code == "WORKER_PUBLIC_URL_MISSING":
+        return error_response(
+            400,
+            "WORKER_PUBLIC_CONSOLE_URL_REQUIRED",
+            "主控公网地址未配置，远程 VPS 无法通过 localhost 访问安装脚本。",
+        )
+    if code == "WORKER_PUBLIC_URL_LOCALHOST":
+        return error_response(
+            400,
+            "WORKER_PUBLIC_CONSOLE_URL_LOCALHOST_FORBIDDEN",
+            "PUBLIC_CONSOLE_URL / WORKER_PUBLIC_BASE_URL 不能使用 localhost、127.0.0.1 或 0.0.0.0。",
+        )
+    return error_response(
+        400,
+        "WORKER_PUBLIC_CONSOLE_URL_INVALID",
+        "PUBLIC_CONSOLE_URL / WORKER_PUBLIC_BASE_URL 必须是可从远程 VPS 访问的 http(s) URL。",
+    )
 
 
 def bash_quote(value: str) -> str:
@@ -259,6 +298,11 @@ def create_worker_token(
     if not csrf_valid(request, session):
         return csrf_error()
 
+    try:
+        base_url = worker_public_base_url()
+    except ValueError as exc:
+        return worker_public_url_error(exc)
+
     raw_token = new_token()
     expires_at = now_utc() + timedelta(minutes=payload.expires_in_minutes)
     token = WorkerToken(
@@ -284,7 +328,6 @@ def create_worker_token(
     db.commit()
     db.refresh(token)
 
-    base_url = str(request.base_url).rstrip("/")
     setup_url = base_url + f"/worker_setup_script/{raw_token}"
     install_command = f"curl -s {setup_url} | bash -s eth0 {token.role}"
     return success_response(
@@ -314,7 +357,11 @@ def worker_setup_script(token: str, request: Request, db: Session = Depends(get_
     if token_is_expired(token_record):
         return error_response(400, "WORKER_TOKEN_EXPIRED", "Worker token 已过期。")
 
-    base_url = str(request.base_url).rstrip("/")
+    try:
+        base_url = worker_public_base_url()
+    except ValueError as exc:
+        return worker_public_url_error(exc)
+
     binary_url = base_url + "/worker_binary/liveline-worker-linux-amd64"
     return PlainTextResponse(
         install_script_for_role(
