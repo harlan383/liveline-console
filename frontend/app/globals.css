@@ -734,6 +734,14 @@ textarea {
   margin-top: 4px;
 }
 
+.table-ellipsis {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .node-detail-modal {
   width: min(860px, 100%);
 }
@@ -752,6 +760,89 @@ textarea {
   background:
     linear-gradient(90deg, rgba(100, 116, 139, 0.12), rgba(12, 23, 34, 0)),
     #0c1722;
+}
+
+.transit-link-management-panel {
+  align-content: start;
+}
+
+.transit-link-table-scroll {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+}
+
+.transit-link-table-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+
+.transit-link-table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.55);
+  border-radius: 999px;
+}
+
+.transit-link-table-scroll::-webkit-scrollbar-track {
+  background: rgba(7, 16, 34, 0.62);
+}
+
+.transit-link-table {
+  border: 0;
+  border-radius: 0;
+  min-width: 1420px;
+  overflow: visible;
+}
+
+.transit-link-table .server-table-row {
+  grid-template-columns:
+    minmax(150px, 1.1fr)
+    minmax(140px, 1fr)
+    minmax(90px, 0.62fr)
+    minmax(132px, 0.92fr)
+    minmax(132px, 0.92fr)
+    minmax(84px, 0.56fr)
+    minmax(86px, 0.56fr)
+    minmax(94px, 0.62fr)
+    minmax(150px, 0.9fr)
+    minmax(224px, 1fr);
+}
+
+.transit-link-table .server-actions {
+  flex-wrap: nowrap;
+  min-width: max-content;
+}
+
+.transit-link-table .transit-link-actions-head,
+.transit-link-table .transit-link-actions-cell {
+  align-items: center;
+  align-self: stretch;
+  background: #071022;
+  box-shadow: -14px 0 18px rgba(2, 6, 23, 0.72);
+  display: flex;
+  margin-bottom: -11px;
+  margin-right: -12px;
+  margin-top: -11px;
+  padding: 11px 12px;
+  position: sticky;
+  right: 0;
+  z-index: 3;
+}
+
+.transit-link-table .transit-link-actions-head {
+  background: #0a1520;
+  min-height: 42px;
+  z-index: 4;
+}
+
+.transit-link-table .transit-link-actions-cell {
+  min-height: 54px;
+}
+
+.transit-link-row {
+  background:
+    linear-gradient(90deg, rgba(59, 130, 246, 0.08), rgba(7, 16, 34, 0)),
+    var(--panel);
 }
 
 .transit-server-modal {

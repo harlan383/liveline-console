@@ -7,7 +7,7 @@ import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 import { ServerManagementPanel } from "@/components/ServerManagementPanel";
 import { SystemStatus } from "@/components/SystemStatus";
 import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
-import { TransitRoutesPanel } from "@/components/TransitRoutesPanel";
+import { TransitRoutesPanel, TransitServersPanel } from "@/components/TransitRoutesPanel";
 import { TransitTopologyPreviewPanel } from "@/components/TransitTopologyPreviewPanel";
 import {
   AUTH_EXPIRED_EVENT,
@@ -20,7 +20,7 @@ import {
   type TransitRouteListResult,
 } from "@/lib/api";
 
-type PanelId = "dashboard" | "servers" | "transitRoutes" | "tasks" | "diagnostics" | "settings";
+type PanelId = "dashboard" | "transitRoutes" | "servers" | "transitLinks" | "tasks" | "diagnostics" | "settings";
 
 const panels: Array<{
   id: PanelId;
@@ -40,8 +40,8 @@ const panels: Array<{
     id: "transitRoutes",
     label: "中转服务器",
     title: "中转服务器",
-    eyebrow: "链路规划与安全",
-    description: "管理中转服务器及其转发链路；正式切换必须单独审批。",
+    eyebrow: "中转资源",
+    description: "管理中转 VPS 资源；资源记录不等于真实线路，转发关系请到“中转链路”页面配置。",
   },
   {
     id: "servers",
@@ -49,6 +49,13 @@ const panels: Array<{
     title: "落地服务器",
     eyebrow: "VPS 与节点",
     description: "管理落地服务器记录和下级节点；节点链接只按需查看或复制。",
+  },
+  {
+    id: "transitLinks",
+    label: "中转链路",
+    title: "中转链路",
+    eyebrow: "转发关系",
+    description: "配置中转服务器到落地节点的转发关系；本地规划不等于远程执行或正式 cutover。",
   },
   {
     id: "tasks",
@@ -209,7 +216,8 @@ export function AppShell() {
         <div className="grid">
           {activePanel === "dashboard" ? <DashboardPanel /> : null}
           {activePanel === "servers" ? <ServerManagementPanel /> : null}
-          {activePanel === "transitRoutes" ? <TransitRoutesPanel /> : null}
+          {activePanel === "transitRoutes" ? <TransitServersPanel /> : null}
+          {activePanel === "transitLinks" ? <TransitRoutesPanel /> : null}
           {activePanel === "tasks" ? <TaskHistoryPanel /> : null}
           {activePanel === "diagnostics" ? (
             <>

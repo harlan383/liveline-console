@@ -64,6 +64,7 @@ type TransitRouteDraftState = {
   routeName: string;
   forwardingMethod: ForwardingMethod;
   listenPort: string;
+  landingVpsId: string;
   targetNodeId: string;
   targetPort: string;
   notes: string;
@@ -82,6 +83,7 @@ const emptyTransitRouteDraft: TransitRouteDraftState = {
   routeName: "",
   forwardingMethod: "socat",
   listenPort: "",
+  landingVpsId: "",
   targetNodeId: "",
   targetPort: "443",
   notes: "",
@@ -417,6 +419,61 @@ function formFromTransitResource(resource: TransitResourceData): TransitServerFo
   };
 }
 
+function buildTransitResourcePayloadFromForm(
+  form: TransitServerFormState,
+  selectedResource: TransitResourceData | null,
+): { payload: TransitResourcePayload | null; error: string | null } {
+  const name = form.name.trim();
+  const entryHost = form.entryHost.trim();
+  const sshUsername = form.sshUsername.trim();
+  const sshPort = parseListenPortInput(form.sshPort);
+
+  if (!name) {
+    return { payload: null, error: "请填写中转服务器名称。" };
+  }
+  if (!entryHost) {
+    return { payload: null, error: "请填写中转服务器公网 IP。" };
+  }
+  if (sshPort === null) {
+    return { payload: null, error: "SSH 端口必须是 1-65535 之间的整数。" };
+  }
+  if (!sshUsername) {
+    return { payload: null, error: "请填写 SSH 用户名。" };
+  }
+
+  return {
+    error: null,
+    payload: {
+      name,
+      resource_type: "server",
+      provider: form.provider.trim() || null,
+      entry_host: entryHost,
+      entry_port: null,
+      entry_region: null,
+      exit_region: null,
+      bandwidth_mbps: null,
+      traffic_limit_gb: null,
+      traffic_used_gb: null,
+      protocol_hint: "tcp",
+      has_ssh: true,
+      ssh_host: entryHost,
+      ssh_port: sshPort,
+      ssh_username: sshUsername,
+      status: selectedResource?.status ?? "active",
+      expires_at: null,
+      notes: form.notes.trim() || null,
+    },
+  };
+}
+
+function landingNodeKey(node: NodeData) {
+  return node.vps_id || node.vps_ip || node.id;
+}
+
+function landingNodeLabel(node: NodeData) {
+  return node.vps_ip || node.vps_id || "未知落地服务器";
+}
+
 function taskStatusLabel(status: string) {
   const labels: Record<string, string> = {
     pending: "等待中",
@@ -441,6 +498,274 @@ function diagnosticOutcome(task: TaskData) {
     return "诊断发现问题：请按失败项的下一步建议排查。";
   }
   return "诊断任务仍在进行或尚未返回完整结果。";
+}
+
+export function TransitServersPanel() {
+  const [resources, setResources] = useState<TransitResourceData[]>([]);
+  const [loadingResources, setLoadingResources] = useState(true);
+  const [message, setMessage] = useState("中转服务器只代表本地资源记录；真实转发关系请到“中转链路”页面配置。");
+  const [modalMode, setModalMode] = useState<"add" | "edit" | null>(null);
+  const [selectedTransitResource, setSelectedTransitResource] = useState<TransitResourceData | null>(null);
+  const [transitServerForm, setTransitServerForm] = useState<TransitServerFormState>(emptyTransitServerForm);
+  const [submittingTransitResource, setSubmittingTransitResource] = useState(false);
+
+  async function ensureCsrfToken() {
+    const csrf = await apiFetch<CsrfResult>("/api/auth/csrf");
+    if (!csrf.success) {
+      throw new Error(csrf.message);
+    }
+    return csrf.data.csrf_token;
+  }
+
+  async function loadTransitServers() {
+    setLoadingResources(true);
+    const resourceResult = await apiFetch<TransitResourceListResult>("/api/transit-resources?resource_type=server");
+    if (!resourceResult.success) {
+      setMessage(resourceResult.message);
+      setLoadingResources(false);
+      return;
+    }
+    setResources(resourceResult.data.resources.filter((resource) => resource.resource_type === "server"));
+    setLoadingResources(false);
+  }
+
+  useEffect(() => {
+    void loadTransitServers();
+  }, []);
+
+  function updateTransitServerForm<K extends keyof TransitServerFormState>(
+    key: K,
+    value: TransitServerFormState[K],
+  ) {
+    setTransitServerForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function closeTransitServerModal() {
+    setModalMode(null);
+    setSelectedTransitResource(null);
+    setTransitServerForm(emptyTransitServerForm);
+  }
+
+  function openAddTransitServer() {
+    setSelectedTransitResource(null);
+    setTransitServerForm(emptyTransitServerForm);
+    setModalMode("add");
+  }
+
+  function openEditTransitServer(resource: TransitResourceData) {
+    setSelectedTransitResource(resource);
+    setTransitServerForm(formFromTransitResource(resource));
+    setModalMode("edit");
+  }
+
+  async function submitTransitServer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const { payload, error } = buildTransitResourcePayloadFromForm(transitServerForm, selectedTransitResource);
+    if (!payload) {
+      setMessage(error ?? "请检查中转服务器表单。");
+      return;
+    }
+    try {
+      setSubmittingTransitResource(true);
+      const csrfToken = await ensureCsrfToken();
+      const isEdit = modalMode === "edit" && selectedTransitResource;
+      const result = await apiFetch<TransitResourceData>(
+        isEdit ? `/api/transit-resources/${selectedTransitResource.id}` : "/api/transit-resources",
+        {
+          body: JSON.stringify(payload),
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+          },
+          method: isEdit ? "PATCH" : "POST",
+        },
+      );
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setMessage(isEdit ? "中转服务器记录已更新。" : "中转服务器记录已添加。");
+      closeTransitServerModal();
+      await loadTransitServers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "保存中转服务器记录失败。");
+    } finally {
+      setSubmittingTransitResource(false);
+    }
+  }
+
+  function renderTransitServerModal() {
+    if (!modalMode) {
+      return null;
+    }
+    const title = modalMode === "edit" ? "编辑中转服务器" : "添加中转服务器";
+    return (
+      <div className="modal-backdrop" role="presentation" onClick={closeTransitServerModal}>
+        <div className="modal-card transit-server-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+          <div className="status-row">
+            <div>
+              <h3>{title}</h3>
+              <p className="message">只保存本地资源记录；不会安装 Worker、不会生成 token、不会执行 SSH 或远程命令。</p>
+            </div>
+            <button className="secondary compact" type="button" onClick={closeTransitServerModal}>
+              关闭
+            </button>
+          </div>
+          <form className="form transit-server-form" onSubmit={(event) => void submitTransitServer(event)}>
+            <label>
+              名称
+              <input
+                value={transitServerForm.name}
+                onChange={(event) => updateTransitServerForm("name", event.target.value)}
+                placeholder="例如：香港中转服务器"
+              />
+            </label>
+            <label>
+              IP 地址
+              <input
+                value={transitServerForm.entryHost}
+                onChange={(event) => updateTransitServerForm("entryHost", event.target.value)}
+                placeholder="仅填写主机地址，不写密码或密钥"
+              />
+            </label>
+            <label>
+              SSH 端口
+              <input
+                value={transitServerForm.sshPort}
+                onChange={(event) => updateTransitServerForm("sshPort", event.target.value)}
+                placeholder="22"
+              />
+            </label>
+            <label>
+              SSH 用户名
+              <input
+                value={transitServerForm.sshUsername}
+                onChange={(event) => updateTransitServerForm("sshUsername", event.target.value)}
+                placeholder="root"
+              />
+            </label>
+            <label>
+              服务商 / 区域
+              <input
+                value={transitServerForm.provider}
+                onChange={(event) => updateTransitServerForm("provider", event.target.value)}
+                placeholder="可选"
+              />
+            </label>
+            <label className="wide-field">
+              备注
+              <textarea
+                value={transitServerForm.notes}
+                onChange={(event) => updateTransitServerForm("notes", event.target.value)}
+                placeholder="不要填写真实密码、SSH Key、token 或完整节点链接。"
+              />
+            </label>
+            <div className="warning-box wide-field">
+              <strong>Worker 接入后续实现</strong>
+              <span>curl | bash Worker 接入、token 生成、远程检测和远程清理将在后续 Worker / API 阶段单独审批。</span>
+              <span>本阶段只维护本地中转服务器资源记录。</span>
+            </div>
+            <div className="modal-actions wide-field">
+              <button className="secondary" type="button" onClick={closeTransitServerModal}>
+                取消
+              </button>
+              <button type="submit" disabled={submittingTransitResource}>
+                {submittingTransitResource ? "保存中" : "保存记录"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <section className="panel wide server-management-panel transit-server-management-panel">
+      <div className="server-panel-header">
+        <div>
+          <h2>中转服务器</h2>
+          <p>管理中转服务器资源。资源记录不等于真实线路，转发关系请到“中转链路”页面配置。</p>
+        </div>
+        <button type="button" onClick={openAddTransitServer}>
+          添加中转服务器
+        </button>
+      </div>
+
+      <CollapsibleWarning title="查看中转服务器安全说明" wide>
+        <span>中转服务器只代表可用于转发的服务器资源记录，不等于已经创建真实可用线路。</span>
+        <span>本页面不安装 Worker，不生成 Worker token，不执行 SSH / 远程命令，不新增监听端口。</span>
+        <span>真实转发关系请在“中转链路”页面规划；真正远程创建必须进入后续 Worker / 授权阶段。</span>
+        <span>新增或变更监听端口后，仍必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙是否放行对应 TCP 端口。</span>
+      </CollapsibleWarning>
+
+      <div className="server-table">
+        <div className="server-table-row server-table-head">
+          <span>名称</span>
+          <span>IP 地址</span>
+          <span>端口</span>
+          <span>状态</span>
+          <span>操作</span>
+        </div>
+        {loadingResources ? (
+          <div className="server-table-empty">正在加载中转服务器记录...</div>
+        ) : resources.length === 0 ? (
+          <div className="server-table-empty">
+            暂无中转服务器记录。点击“添加中转服务器”可先创建本地资源记录；这不会安装 Worker，也不会执行 SSH。
+          </div>
+        ) : (
+          resources.map((resource) => (
+            <div className="server-table-group" key={resource.id}>
+              <div className="server-table-row transit-server-row">
+                <div>
+                  <strong>{resource.name}</strong>
+                  <span className="node-meta-line">资源类型：{resource.resource_type}</span>
+                </div>
+                <span>{transitHostLabel(resource)}</span>
+                <span>{transitSshPortLabel(resource)}</span>
+                <div>
+                  <span className={`pill ${transitResourceStatusClass(resource)}`}>
+                    {transitResourceStatusLabel(resource)}
+                  </span>
+                  <span className="node-meta-line">状态来源：本地资源状态 / 未做 SSH 检测</span>
+                </div>
+                <div className="server-actions">
+                  <button
+                    className="secondary compact"
+                    type="button"
+                    onClick={() => setMessage("重新检测需要后续 Worker / API 阶段开放；本阶段不执行 SSH 或远程命令。")}
+                  >
+                    重新检测
+                  </button>
+                  <button className="secondary compact" type="button" onClick={() => openEditTransitServer(resource)}>
+                    编辑
+                  </button>
+                  <button
+                    className="danger compact"
+                    type="button"
+                    onClick={() =>
+                      setMessage(
+                        "删除中转服务器需要后续 Worker 先完成远程 socat / gost 清理；本阶段不删除系统记录，也不执行远程清理。",
+                      )
+                    }
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="server-panel-footer">
+        <button className="secondary" type="button" onClick={() => void loadTransitServers()}>
+          刷新中转服务器
+        </button>
+        <span>{message}</span>
+      </div>
+      {renderTransitServerModal()}
+    </section>
+  );
 }
 
 export function TransitRoutesPanel() {
@@ -748,12 +1073,17 @@ export function TransitRoutesPanel() {
     setTransitModalMode("editServer");
   }
 
-  function openAddTransitRoute(resource: TransitResourceData) {
-    setSelectedTransitResource(resource);
+  function openAddTransitRoute(resource?: TransitResourceData) {
+    const defaultResource =
+      resource ?? resources.find((candidate) => candidate.status === "active") ?? resources[0] ?? null;
+    const defaultNode = nodes[0] ?? null;
+    setSelectedTransitResource(defaultResource);
     setTransitRouteDraft({
       ...emptyTransitRouteDraft,
-      routeName: `${resource.name || "中转服务器"}-new-route`,
-      targetNodeId: nodes[0]?.id ?? "",
+      routeName: `${defaultResource?.name || "中转服务器"}-new-route`,
+      landingVpsId: defaultNode ? landingNodeKey(defaultNode) : "",
+      targetNodeId: defaultNode?.id ?? "",
+      targetPort: defaultNode?.port ? String(defaultNode.port) : "443",
     });
     setTransitModalMode("addRoute");
   }
@@ -1260,110 +1590,90 @@ export function TransitRoutesPanel() {
     "敏感信息：完整节点链接、SSH Key、密码、token、SESSION_SECRET 均不写入摘要。",
   ].join("\n");
 
-  function renderTransitServerTable() {
+  function renderTransitLinkTable() {
     if (loadingResources) {
-      return <div className="server-table-empty">正在加载中转服务器记录...</div>;
+      return <div className="server-table-empty">正在加载中转链路记录...</div>;
     }
 
-    if (resources.length === 0) {
+    if (routes.length === 0) {
       return (
         <div className="server-table-empty">
-          暂无中转服务器记录。点击“添加中转服务器”可先创建本地资源记录；这不会安装 Worker，也不会执行 SSH。
+          暂无中转链路记录。点击“添加中转链路”只能打开本地规划弹窗；不会创建真实线路或新增监听端口。
         </div>
       );
     }
 
-    return resources.map((resource) => {
-      const resourceRoutes = routesByResourceId[resource.id] ?? [];
-      const canPlanRoute = resource.status === "active";
+    return routes.map((route) => {
+      const resource = resources.find((item) => item.id === route.transit_resource_id) ?? null;
+      const node = nodes.find((item) => item.id === route.node_id) ?? null;
+      const landingServer = route.landing_vps_ip ?? node?.vps_ip ?? route.target_host;
+      const transitServerName = resource?.name ?? route.transit_resource_name ?? "-";
+      const transitServerHost = resource ? transitHostLabel(resource) : "-";
+      const landingServerId = route.landing_vps_id ?? "落地服务器";
+      const targetNodeName = route.node_name ?? node?.node_name ?? "-";
+      const roleLabel = routeBadge(route);
       return (
-        <div className="server-table-group" key={resource.id}>
-          <div className="server-table-row transit-server-row">
+        <div className="server-table-group" key={route.id}>
+          <div className="server-table-row transit-link-row">
             <div>
-              <strong>{resource.name}</strong>
-              <span className="node-meta-line">资源类型：{resource.resource_type}</span>
-            </div>
-            <span>{transitHostLabel(resource)}</span>
-            <span>{transitSshPortLabel(resource)}</span>
-            <div>
-              <span className={`pill ${transitResourceStatusClass(resource)}`}>
-                {transitResourceStatusLabel(resource)}
+              <strong className="table-ellipsis" title={route.name}>
+                {route.name}
+              </strong>
+              <span className="node-meta-line table-ellipsis" title={route.id}>
+                {route.id.slice(0, 8)}
               </span>
-              <span className="node-meta-line">状态来源：本地资源状态 / 未做 SSH 检测</span>
             </div>
-            <div className="server-actions">
-              <button
-                className="secondary compact"
-                disabled={!canPlanRoute}
-                type="button"
-                onClick={() => openAddTransitRoute(resource)}
-              >
-                添加转发链路
+            <div>
+              <strong className="table-ellipsis" title={transitServerName}>
+                {transitServerName}
+              </strong>
+              <span className="node-meta-line table-ellipsis" title={transitServerHost}>
+                {transitServerHost}
+              </span>
+            </div>
+            <span>监听 {route.listen_port}</span>
+            <div>
+              <strong className="table-ellipsis" title={landingServer}>
+                {landingServer}
+              </strong>
+              <span className="node-meta-line table-ellipsis" title={landingServerId}>
+                {landingServerId}
+              </span>
+            </div>
+            <div>
+              <strong className="table-ellipsis" title={targetNodeName}>
+                {targetNodeName}
+              </strong>
+              <span className="node-meta-line">目标端口 {route.target_port}</span>
+            </div>
+            <span>{route.target_port}</span>
+            <span>{route.forwarding_method}</span>
+            <div>
+              <span className={`pill ${routeStatusClass(route.status)}`}>{routeStatusLabel(route.status)}</span>
+              <span className="node-meta-line">本地记录 / 远程状态需单独诊断</span>
+            </div>
+            <span className="table-ellipsis" title={roleLabel}>
+              {roleLabel}
+            </span>
+            <div className="server-actions transit-link-actions-cell">
+              <button className="secondary compact" type="button" onClick={() => openTransitRouteDetail(route)}>
+                查看
               </button>
               <button
                 className="secondary compact"
                 type="button"
-                onClick={() => setMessage("重新检测需要后续 Worker / API 阶段开放；本阶段不执行 SSH 或远程命令。")}
+                onClick={() => setMessage("诊断需要后续远程只读预检 / Worker 授权阶段；本阶段不执行远程命令。")}
               >
-                重新检测
-              </button>
-              <button className="secondary compact" type="button" onClick={() => openEditTransitServer(resource)}>
-                编辑
+                诊断
               </button>
               <button
                 className="danger compact"
                 type="button"
-                onClick={() =>
-                  setMessage(
-                    "删除中转服务器需要后续 Worker 先完成远程 socat / gost 清理；本阶段不删除系统记录，也不执行远程清理。",
-                  )
-                }
+                onClick={() => setMessage("删除转发链路需要远程清理成功后再删除系统记录；本阶段不执行删除。")}
               >
                 删除
               </button>
             </div>
-          </div>
-          <div className="server-node-rows">
-            {resourceRoutes.length === 0 ? (
-              <div className="server-node-empty">暂无下级转发链路记录。</div>
-            ) : (
-              resourceRoutes.map((route) => (
-                <div className="server-table-row node-child-row transit-route-child-row" key={route.id}>
-                  <div>
-                    <strong>↳ {route.name}</strong>
-                    <span className="node-meta-line">转发方式：{route.forwarding_method}</span>
-                  </div>
-                  <span>{route.target_host}</span>
-                  <div>
-                    <strong>监听 {route.listen_port}</strong>
-                    <span className="node-meta-line">目标端口：{route.target_port}</span>
-                  </div>
-                  <div>
-                    <span className={`pill ${routeStatusClass(route.status)}`}>{routeStatusLabel(route.status)}</span>
-                    <span className="node-meta-line">{routeBadge(route)}</span>
-                  </div>
-                  <div className="server-actions">
-                    <button className="secondary compact" type="button" onClick={() => openTransitRouteDetail(route)}>
-                      查看
-                    </button>
-                    <button
-                      className="secondary compact"
-                      type="button"
-                      onClick={() => setMessage("诊断需要后续远程只读预检 / Worker 授权阶段；本阶段不执行远程命令。")}
-                    >
-                      诊断
-                    </button>
-                    <button
-                      className="danger compact"
-                      type="button"
-                      onClick={() => setMessage("删除转发链路需要远程清理成功后再删除系统记录；本阶段不执行删除。")}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
           </div>
         </div>
       );
@@ -1457,6 +1767,20 @@ export function TransitRoutesPanel() {
     const draftTargetPortError =
       parseListenPortInput(transitRouteDraft.targetPort) === null ? "目标端口必须是 1-65535 之间的整数。" : null;
     const draftNode = nodes.find((node) => node.id === transitRouteDraft.targetNodeId) ?? null;
+    const landingServers = Array.from(
+      new Map(
+        nodes.map((node) => [
+          landingNodeKey(node),
+          {
+            id: landingNodeKey(node),
+            label: landingNodeLabel(node),
+          },
+        ]),
+      ).values(),
+    );
+    const filteredNodes = transitRouteDraft.landingVpsId
+      ? nodes.filter((node) => landingNodeKey(node) === transitRouteDraft.landingVpsId)
+      : nodes;
     return (
       <div className="modal-backdrop" role="presentation">
         <div aria-modal="true" className="modal-card transit-server-modal" role="dialog">
@@ -1470,6 +1794,27 @@ export function TransitRoutesPanel() {
             </button>
           </div>
           <div className="form server-modal-form">
+            <label>
+              中转服务器
+              <select
+                value={selectedTransitResource?.id ?? ""}
+                onChange={(event) => {
+                  const nextResource = resources.find((resource) => resource.id === event.target.value) ?? null;
+                  setSelectedTransitResource(nextResource);
+                  setTransitRouteDraft((current) => ({
+                    ...current,
+                    routeName: current.routeName || `${nextResource?.name || "中转服务器"}-new-route`,
+                  }));
+                }}
+              >
+                {activeServerResources.length === 0 ? <option value="">暂无 active 中转服务器</option> : null}
+                {activeServerResources.map((resource) => (
+                  <option key={resource.id} value={resource.id}>
+                    {resource.name} / {transitHostLabel(resource)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label>
               链路名称
               <input
@@ -1500,13 +1845,43 @@ export function TransitRoutesPanel() {
               </span>
             </label>
             <label>
-              目标落地服务器 / 节点
+              目标落地服务器
+              <select
+                value={transitRouteDraft.landingVpsId}
+                onChange={(event) => {
+                  const nextLandingVpsId = event.target.value;
+                  const firstNode = nodes.find((node) => landingNodeKey(node) === nextLandingVpsId) ?? null;
+                  setTransitRouteDraft((current) => ({
+                    ...current,
+                    landingVpsId: nextLandingVpsId,
+                    targetNodeId: firstNode?.id ?? "",
+                    targetPort: firstNode?.port ? String(firstNode.port) : current.targetPort,
+                  }));
+                }}
+              >
+                {landingServers.length === 0 ? <option value="">暂无落地服务器节点</option> : null}
+                {landingServers.map((server) => (
+                  <option key={server.id} value={server.id}>
+                    {server.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              目标节点
               <select
                 value={transitRouteDraft.targetNodeId}
-                onChange={(event) => updateTransitRouteDraft("targetNodeId", event.target.value)}
+                onChange={(event) => {
+                  const nextNode = nodes.find((node) => node.id === event.target.value) ?? null;
+                  setTransitRouteDraft((current) => ({
+                    ...current,
+                    targetNodeId: event.target.value,
+                    targetPort: nextNode?.port ? String(nextNode.port) : current.targetPort,
+                  }));
+                }}
               >
-                {nodes.length === 0 ? <option value="">暂无已启用节点</option> : null}
-                {nodes.map((node) => (
+                {filteredNodes.length === 0 ? <option value="">暂无已启用节点</option> : null}
+                {filteredNodes.map((node) => (
                   <option key={node.id} value={node.id}>
                     {node.node_name} / {displayValue(node.vps_ip)}:{displayValue(node.port)}
                   </option>
@@ -1612,27 +1987,26 @@ export function TransitRoutesPanel() {
   }
 
   return (
-    <section className="panel wide server-management-panel transit-server-management-panel">
+    <section className="panel wide server-management-panel transit-link-management-panel">
       <div className="server-management-header">
         <div>
-          <h2>中转服务器</h2>
-          <p className="message">管理中转服务器及其转发链路；资源记录不等于真实线路。</p>
+          <h2>中转链路</h2>
+          <p className="message">管理中转服务器到落地节点的转发关系；本地规划不等于远程执行或正式 cutover。</p>
         </div>
-        <button type="button" onClick={openAddTransitServer}>
-          添加中转服务器
+        <button type="button" onClick={() => openAddTransitRoute()}>
+          添加中转链路
         </button>
       </div>
 
       <div className="server-management-note">
-        当前页面对齐“落地服务器”的管理表格体验。中转服务器主行展示资源记录，下级行展示现有转发链路；
-        Worker 接入、远程重检、远程删除和真实创建转发将在后续阶段开放。
+        当前页面只展示和规划转发关系。中转服务器资源本身请到“中转服务器”页面管理；真实创建、远程诊断和删除清理将在后续 Worker / API 阶段开放。
       </div>
 
       <details className="route-safety-guardrail">
         <summary className="route-safety-summary">
           <div className="route-safety-heading">
-            <span>TRANSIT SERVER SAFETY</span>
-            <strong>查看中转服务器安全说明</strong>
+            <span>TRANSIT ROUTE SAFETY</span>
+            <strong>查看中转链路安全说明</strong>
           </div>
           <span className="notice-toggle-text">
             <span className="when-closed">查看说明</span>
@@ -1641,24 +2015,31 @@ export function TransitRoutesPanel() {
         </summary>
         <div className="route-safety-body">
           <ul className="route-safety-list">
-            <li>中转服务器用于创建和管理转发链路；资源记录不等于真实线路。</li>
-            <li>socat / gost 是当前保留的转发方式；本阶段不新增 HAProxy。</li>
-            <li>本阶段不安装 Worker，不生成 Worker token，不执行 SSH / 远程命令。</li>
-            <li>本阶段默认不创建真实中转链路，不新增监听端口，不修改 node.share_link，不做正式 cutover。</li>
+            <li>中转链路用于描述“中转服务器监听端口 → 落地节点目标端口”的转发关系。</li>
+            <li>添加中转链路弹窗只做本地规划，不创建真实线路，不新增监听端口。</li>
+            <li>socat / gost 是当前保留的转发方式；本阶段不新增 HAProxy，不安装 Worker，不生成 Worker token。</li>
+            <li>本阶段不执行 SSH / 远程命令，不修改 node.share_link，不做正式 cutover。</li>
             <li>新增或变更监听端口后，必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙是否放行对应 TCP 端口。</li>
           </ul>
         </div>
       </details>
 
-      <div className="server-table">
-        <div className="server-table-row server-table-head">
-          <span>名称</span>
-          <span>IP 地址</span>
-          <span>端口</span>
-          <span>状态</span>
-          <span>操作</span>
+      <div className="transit-link-table-scroll">
+        <div className="server-table transit-link-table">
+          <div className="server-table-row server-table-head">
+            <span>链路名称</span>
+            <span>中转服务器</span>
+            <span>监听端口</span>
+            <span>落地服务器</span>
+            <span>目标节点</span>
+            <span>目标端口</span>
+            <span>转发方式</span>
+            <span>状态</span>
+            <span>角色标识</span>
+            <span className="transit-link-actions-head">操作</span>
+          </div>
+          {renderTransitLinkTable()}
         </div>
-        {renderTransitServerTable()}
       </div>
 
       <div className="server-management-footer">

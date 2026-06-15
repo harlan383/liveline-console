@@ -602,6 +602,26 @@ SSH or remote commands, does not create real transit routes by default, does
 not add HAProxy, does not add database migrations, does not add listening
 ports, does not modify `node.share_link`, and does not perform formal cutover.
 
+## Stage 3.3.20 Transit server / route split scope
+
+Stage 3.3.20 splits the previous combined Transit Servers page into two local
+frontend responsibilities. The Transit Servers page now manages only transit
+VPS resource records, while the new Transit Links page manages forwarding
+relationships from a transit server listen port to a landing-server node target
+port. The left navigation order is Dashboard, Transit Servers, Landing Servers,
+Transit Links, Tasks, Diagnostics, and Settings.
+
+Stage 3.3.20 keeps transit resources, transit route records, `socat`, and
+`gost` capabilities intact, but it does not implement Worker, does not generate
+Worker tokens, does not execute SSH or remote commands, does not create real
+transit routes, does not add HAProxy, does not add database migrations, does
+not add listening ports, does not modify `node.share_link`, and does not
+perform formal cutover. The Transit Links table uses a dedicated horizontal
+scroll area and minimum width so the role and action columns remain readable,
+keeps target port and forwarding method in separate aligned columns, and pins
+the action column on the right. The route creation dialog remains a local
+planning surface only; real remote execution stays in a future Worker/API stage.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1780,6 +1800,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.17 Server management UI table | Servers page changed to server-management table backed by VPS APIs |
 | Stage 3.3.18 Node menu consolidation | Nodes left-nav entry removed; nav renamed to Transit Servers / Landing Servers; node actions consolidated under landing-server child rows |
 | Stage 3.3.19 Transit server UI table alignment | Transit Servers page aligned to management-table UI; Worker/remote execution remains future-stage |
+| Stage 3.3.20 Transit server / route split | Transit Servers and Transit Links separated; remote execution remains No-Go |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
