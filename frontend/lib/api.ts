@@ -302,6 +302,55 @@ export type VpsServerDeleteResult = {
   message: string;
 };
 
+export type WorkerRole = "landing" | "transit";
+
+export type WorkerTokenCreateRequest = {
+  role: WorkerRole;
+  name?: string | null;
+  expires_in_minutes?: number;
+};
+
+export type WorkerTokenCreateResult = {
+  token_id: string;
+  role: WorkerRole;
+  expires_at: string;
+  install_command: string;
+  masked_token: string;
+  status: string;
+};
+
+export type WorkerMetadataSummary = {
+  received_at?: string | null;
+  uptime_seconds?: number | null;
+  os?: string | null;
+  kernel?: string | null;
+  cpu?: unknown;
+  memory?: unknown;
+  disk?: unknown;
+  services?: Record<string, unknown> | null;
+};
+
+export type WorkerData = {
+  id: string;
+  server_id: string | null;
+  role: WorkerRole;
+  name: string | null;
+  public_ip: string | null;
+  hostname: string | null;
+  interface_name: string | null;
+  worker_version: string | null;
+  status: "online" | "offline" | "unknown";
+  last_heartbeat_at: string | null;
+  registered_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  metadata_summary: WorkerMetadataSummary;
+};
+
+export type WorkerListResult = {
+  workers: WorkerData[];
+};
+
 export type CsrfResult = {
   csrf_token: string;
 };

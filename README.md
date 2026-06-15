@@ -640,6 +640,23 @@ separate future stage. The design also records one-time install-token
 requirements, future Worker APIs, remote-cleanup rules, and the security
 boundary for future implementation.
 
+## Stage 3.3.22 Worker token/register/heartbeat foundation scope
+
+Stage 3.3.22 implements the local backend foundation for lightweight Worker
+onboarding. It adds `worker_tokens` and `workers`, an Alembic migration, and
+minimal APIs for one-time install token generation, placeholder setup-script
+download, Worker registration, Worker heartbeat, and Worker status queries.
+Tokens and Worker secrets are stored only as hashes; plaintext values are
+returned only once at token creation or registration.
+
+Stage 3.3.22 does not implement a real Worker binary, does not install Worker,
+does not execute SSH or remote commands, does not create real nodes, does not
+create transit routes, does not modify Xray, does not modify `socat` / `gost`,
+does not clean remote services, does not add listening ports, does not modify
+`node.share_link`, does not add HAProxy, and does not perform formal cutover.
+Worker v1 remains limited to registration, heartbeat, and latest status
+reporting; full server binding and task execution stay in later stages.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1820,6 +1837,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.19 Transit server UI table alignment | Transit Servers page aligned to management-table UI; Worker/remote execution remains future-stage |
 | Stage 3.3.20 Transit server / route split | Transit Servers and Transit Links separated; remote execution remains No-Go |
 | Stage 3.3.21 Lightweight Worker bootstrap design | Lightweight Worker bootstrap design documented; implementation remains No-Go |
+| Stage 3.3.22 Worker token/register/heartbeat foundation | Worker token, register, heartbeat, and query APIs added; no real Worker execution |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
