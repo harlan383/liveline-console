@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, auth, health, nodes, tasks, transit_resources, transit_routes, vps
+from app.api.routes import admin, auth, health, nodes, tasks, transit_resources, transit_routes, vps, workers
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -32,3 +32,5 @@ app.include_router(
     tags=["transit-routes"],
 )
 app.include_router(vps.router, prefix="/api/vps", tags=["vps"])
+app.include_router(workers.router, prefix="/api", tags=["workers"])
+app.include_router(workers.setup_router, tags=["worker-setup"])
