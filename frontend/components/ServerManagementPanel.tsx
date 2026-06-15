@@ -545,12 +545,28 @@ export function ServerManagementPanel() {
     const warnings = Array.isArray(resultJson.warnings) ? resultJson.warnings.length : 0;
     const listenCount = typeof ports.listening_count === "number" ? ports.listening_count : 0;
     const importantPorts = ports.important_ports && typeof ports.important_ports === "object" ? (ports.important_ports as Record<string, unknown>) : {};
+    const workerConfigInterface = network.worker_config_interface || system.worker_config_interface || system.interface_name;
+    const defaultRouteInterface = network.default_route_interface || network.primary_interface;
+    const defaultRouteGateway = network.default_route_gateway;
+    const primaryInterfaceIp = network.primary_interface_ip;
+    const interfaceMismatch = network.interface_mismatch === true;
+    const listeningSummary = Array.isArray(ports.listening_summary) ? ports.listening_summary : [];
+    const validListeningPorts = listeningSummary
+      .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>).port : undefined))
+      .filter((port) => typeof port === "number" && port > 0)
+      .map((port) => String(port));
 
     return (
       <div className="worker-preflight-summary" aria-label="落地服务器只读预检摘要">
         <span title={stringValue(system.hostname)}>主机：{stringValue(system.hostname)}</span>
+        <span>Worker 配置网卡：{stringValue(workerConfigInterface)}</span>
+        <span>系统默认公网网卡：{stringValue(defaultRouteInterface)}</span>
+        <span>默认公网网关：{stringValue(defaultRouteGateway)}</span>
+        <span>默认公网网卡 IP：{stringValue(primaryInterfaceIp)}</span>
+        <span>是否不一致：{interfaceMismatch ? "是" : "否"}</span>
         <span title={stringValue(network.ip_route)}>默认路由：{stringValue(network.ip_route)}</span>
         <span>监听端口：{String(listenCount)}</span>
+        <span title={validListeningPorts.join(", ")}>有效监听：{validListeningPorts.length ? validListeningPorts.join(", ") : "无"}</span>
         <span>443：{stringValue((importantPorts["443"] as Record<string, unknown> | undefined)?.status)}</span>
         <span>Xray：{stringValue(xrayService.active)}</span>
         <span>防火墙：ufw {firewall.ufw_status ? "已返回摘要" : "未返回"}</span>
@@ -1218,6 +1234,8 @@ export function ServerManagementPanel() {
       return null;
     }
     const summary = nodePlanResult.preflight_summary ?? {};
+    const workerInterface = summary.worker_config_interface ?? summary.configured_interface;
+    const defaultInterface = summary.default_route_interface ?? summary.detected_default_interface;
     return (
       <div className="landing-plan-result wide-field">
         <div className={`plan-status-card ${nodePlanResult.ready ? "ready" : "blocked"}`}>
@@ -1232,11 +1250,15 @@ export function ServerManagementPanel() {
           <span>预检状态</span>
           <strong>{planValue(summary.preflight_status)}</strong>
           <span>配置网卡</span>
-          <strong>{planValue(summary.configured_interface)}</strong>
+          <strong>{planValue(workerInterface)}</strong>
           <span>默认公网网卡</span>
-          <strong>{planValue(summary.detected_default_interface)}</strong>
+          <strong>{planValue(defaultInterface)}</strong>
+          <span>默认公网网关</span>
+          <strong>{planValue(summary.default_route_gateway)}</strong>
           <span>公网网卡 IP</span>
           <strong>{planValue(summary.primary_interface_ip)}</strong>
+          <span>网卡是否不一致</span>
+          <strong>{planValue(summary.interface_mismatch)}</strong>
           <span>监听端口数量</span>
           <strong>{planValue(summary.listening_count)}</strong>
           <span>Xray 是否已安装</span>

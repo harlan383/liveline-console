@@ -39,6 +39,38 @@ def default_route_interface(ip_route: str | None) -> str | None:
     return match.group(1) if match else None
 
 
+def text_or_none(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def first_text(*values: Any) -> str | None:
+    for value in values:
+        text = text_or_none(value)
+        if text:
+            return text
+    return None
+
+
+def bool_or_none(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def local_ip_for_interface(local_ips: Any, interface_name: str | None) -> str | None:
+    if not interface_name or not isinstance(local_ips, list):
+        return None
+    for item in local_ips:
+        if not isinstance(item, dict):
+            continue
+        if item.get("interface") != interface_name:
+            continue
+        ip = text_or_none(item.get("ip"))
+        if ip and ":" not in ip:
+            return ip
+    return None
+
+
 def important_port_status(preflight: dict[str, Any], listen_port: int) -> str | None:
     ports = preflight.get("ports")
     if not isinstance(ports, dict):
@@ -93,9 +125,23 @@ def preflight_summary(
     system = result.get("system") if isinstance(result.get("system"), dict) else {}
     network = result.get("network") if isinstance(result.get("network"), dict) else {}
     ports = result.get("ports") if isinstance(result.get("ports"), dict) else {}
-    ip_route = network.get("ip_route") if isinstance(network, dict) else None
-    detected_interface = default_route_interface(ip_route if isinstance(ip_route, str) else None)
-    configured_interface = worker.interface_name if worker else None
+    ip_route = text_or_none(network.get("ip_route")) if isinstance(network, dict) else None
+    network_worker_interface = text_or_none(network.get("worker_config_interface")) if isinstance(network, dict) else None
+    system_worker_interface = first_text(system.get("worker_config_interface"), system.get("interface_name")) if isinstance(system, dict) else None
+    worker_bound_interface = worker.interface_name if worker else None
+    configured_interface = first_text(network_worker_interface, system_worker_interface, worker_bound_interface)
+    default_interface = first_text(
+        network.get("default_route_interface") if isinstance(network, dict) else None,
+        default_route_interface(ip_route),
+    )
+    primary_interface = first_text(network.get("primary_interface") if isinstance(network, dict) else None, default_interface)
+    primary_interface_ip = first_text(
+        network.get("primary_interface_ip") if isinstance(network, dict) else None,
+        local_ip_for_interface(network.get("local_ips") if isinstance(network, dict) else None, primary_interface),
+    )
+    mismatch = bool_or_none(network.get("interface_mismatch") if isinstance(network, dict) else None)
+    if mismatch is None:
+        mismatch = bool(configured_interface and default_interface and configured_interface != default_interface)
 
     return {
         "server_name": vps.name or vps.ip,
@@ -110,8 +156,14 @@ def preflight_summary(
         "architecture": system.get("architecture") if isinstance(system, dict) else None,
         "worker_running_user": system.get("worker_running_user") if isinstance(system, dict) else None,
         "configured_interface": configured_interface,
-        "detected_default_interface": detected_interface,
-        "primary_interface_ip": network.get("primary_interface_ip") if isinstance(network, dict) else None,
+        "worker_config_interface": configured_interface,
+        "detected_default_interface": default_interface,
+        "default_route_interface": default_interface,
+        "default_route_gateway": network.get("default_route_gateway") if isinstance(network, dict) else None,
+        "primary_interface": primary_interface,
+        "primary_interface_ip": primary_interface_ip,
+        "interface_mismatch": mismatch,
+        "listening_summary": ports.get("listening_summary") if isinstance(ports, dict) else None,
         "listening_count": ports.get("listening_count") if isinstance(ports, dict) else None,
         "important_ports": ports.get("important_ports") if isinstance(ports, dict) else None,
         "xray_installed": service_installed(result, "xray"),
@@ -146,10 +198,10 @@ def build_landing_node_plan(
     configured_interface = summary.get("configured_interface")
     detected_interface = summary.get("detected_default_interface")
     primary_interface_ip = summary.get("primary_interface_ip")
-    if configured_interface and detected_interface and configured_interface != detected_interface:
+    if summary.get("interface_mismatch"):
         blocked_reasons.append("interface_mismatch")
         warnings.append(
-            f"检测到 Worker 配置网卡 {configured_interface} 与系统默认公网网卡 {detected_interface} 不一致。正式创建节点前需修复网卡识别或重新安装 Worker 时选择正确网卡。"
+            f"检测到 Worker 配置网卡 {configured_interface or '未知'} 与系统默认公网网卡 {detected_interface or '未知'} 不一致。正式创建节点前需修复网卡识别或重新安装 Worker 时选择正确网卡。"
         )
     elif configured_interface and not primary_interface_ip:
         warnings.append("Worker 未返回 primary_interface_ip，正式创建前需确认公网网卡识别正确。")
