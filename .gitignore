@@ -49,6 +49,7 @@ frontend/build/
 logs/
 backend/logs/
 worker.log
+worker/bin/
 
 # database / runtime data
 *.sqlite

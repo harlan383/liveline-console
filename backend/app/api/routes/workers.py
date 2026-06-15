@@ -1,8 +1,10 @@
+import shlex
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -126,43 +128,122 @@ def find_token(db: Session, raw_token: str) -> WorkerToken | None:
     return db.scalar(select(WorkerToken).where(WorkerToken.token_hash == hash_token(raw_token)))
 
 
-def install_script_for_role(role: str) -> str:
+def worker_binary_candidates() -> list[Path]:
+    return [
+        Path("/app/worker-binaries/liveline-worker-linux-amd64"),
+        Path(__file__).resolve().parents[3] / "worker-binaries" / "liveline-worker-linux-amd64",
+        Path(__file__).resolve().parents[4] / "worker" / "bin" / "liveline-worker-linux-amd64",
+    ]
+
+
+def worker_binary_path() -> Path | None:
+    for candidate in worker_binary_candidates():
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def bash_quote(value: str) -> str:
+    return shlex.quote(value)
+
+
+def install_script_for_role(role: str, raw_token: str, console_url: str, binary_url: str) -> str:
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 INTERFACE_NAME="${{1:-}}"
 ROLE="${{2:-}}"
-EXPECTED_ROLE="{role}"
+EXPECTED_ROLE={bash_quote(role)}
+CONSOLE_URL={bash_quote(console_url)}
+BINARY_URL={bash_quote(binary_url)}
+TOKEN={bash_quote(raw_token)}
+CONFIG_DIR="/etc/liveline-worker"
+CONFIG_FILE="$CONFIG_DIR/config.yaml"
+SERVICE_FILE="/etc/systemd/system/liveline-worker.service"
+BINARY_PATH="/usr/local/bin/liveline-worker"
 
 if [[ -z "$INTERFACE_NAME" ]]; then
-  echo "LiveLine Worker bootstrap preview: missing interface_name, for example eth0, ens3, ens5, or enp1s0." >&2
+  echo "LiveLine Worker install: missing interface_name, for example eth0, ens3, ens5, or enp1s0." >&2
   exit 1
 fi
 
 if [[ "$ROLE" != "$EXPECTED_ROLE" ]]; then
-  echo "LiveLine Worker bootstrap preview: role must be $EXPECTED_ROLE for this token." >&2
+  echo "LiveLine Worker install: role must be $EXPECTED_ROLE for this token." >&2
   exit 1
 fi
 
 if ! [[ "$INTERFACE_NAME" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
-  echo "LiveLine Worker bootstrap preview: interface_name contains unsupported characters." >&2
+  echo "LiveLine Worker install: interface_name contains unsupported characters." >&2
   exit 1
 fi
 
-cat <<'LIVELINE_WORKER_BOOTSTRAP_PREVIEW'
-LiveLine Worker bootstrap preview / placeholder.
+if [[ "$(id -u)" != "0" ]]; then
+  echo "LiveLine Worker install: please run as root because /usr/local/bin, /etc, and systemd are required." >&2
+  exit 1
+fi
 
-This Stage 3.3.22 script does not download or install liveline-worker.
-It does not write systemd units.
-It does not modify remote configuration.
-It does not install Xray, socat, or gost.
-It does not create nodes or transit routes.
-It does not add listening ports.
-It does not modify node.share_link.
-It does not perform cutover.
+if ! command -v curl >/dev/null 2>&1; then
+  echo "LiveLine Worker install: curl is required." >&2
+  exit 1
+fi
 
-The real Worker install script will be implemented in a later approved stage.
-LIVELINE_WORKER_BOOTSTRAP_PREVIEW
+if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+  echo "LiveLine Worker install: systemd is required." >&2
+  exit 1
+fi
+
+echo "LiveLine Worker install: installing liveline-worker for role=$ROLE interface=$INTERFACE_NAME"
+echo "LiveLine Worker install: this installs only the worker binary and systemd service."
+echo "LiveLine Worker install: it does not install Xray, socat, or gost; does not open ports; does not modify firewall rules."
+
+install -d -m 700 "$CONFIG_DIR"
+TMP_BINARY="$(mktemp)"
+cleanup() {{
+  rm -f "$TMP_BINARY"
+}}
+trap cleanup EXIT
+
+curl -fsSL "$BINARY_URL" -o "$TMP_BINARY"
+install -m 755 "$TMP_BINARY" "$BINARY_PATH"
+
+"$BINARY_PATH" register \\
+  --config "$CONFIG_FILE" \\
+  --console-url "$CONSOLE_URL" \\
+  --token "$TOKEN" \\
+  --role "$ROLE" \\
+  --interface "$INTERFACE_NAME"
+
+chmod 600 "$CONFIG_FILE"
+
+cat > "$SERVICE_FILE" <<'LIVELINE_WORKER_SYSTEMD'
+[Unit]
+Description=LiveLine Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/liveline-worker run --config /etc/liveline-worker/config.yaml
+Restart=always
+RestartSec=10
+User=root
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+LIVELINE_WORKER_SYSTEMD
+
+chmod 644 "$SERVICE_FILE"
+systemctl daemon-reload
+systemctl enable liveline-worker
+systemctl restart liveline-worker
+
+echo "LiveLine Worker install: completed."
+echo "LiveLine Worker install: config file is $CONFIG_FILE with mode 600."
+echo "LiveLine Worker install: view logs with: journalctl -u liveline-worker -f"
 """
 
 
@@ -203,7 +284,8 @@ def create_worker_token(
     db.commit()
     db.refresh(token)
 
-    setup_url = str(request.base_url).rstrip("/") + f"/worker_setup_script/{raw_token}"
+    base_url = str(request.base_url).rstrip("/")
+    setup_url = base_url + f"/worker_setup_script/{raw_token}"
     install_command = f"curl -s {setup_url} | bash -s eth0 {token.role}"
     return success_response(
         {
@@ -219,7 +301,7 @@ def create_worker_token(
 
 
 @setup_router.get("/worker_setup_script/{token}")
-def worker_setup_script(token: str, db: Session = Depends(get_db)):
+def worker_setup_script(token: str, request: Request, db: Session = Depends(get_db)):
     raw_token = clean_token(token)
     if not raw_token:
         return error_response(404, "WORKER_TOKEN_NOT_FOUND", "Worker token 不存在。")
@@ -232,7 +314,33 @@ def worker_setup_script(token: str, db: Session = Depends(get_db)):
     if token_is_expired(token_record):
         return error_response(400, "WORKER_TOKEN_EXPIRED", "Worker token 已过期。")
 
-    return PlainTextResponse(install_script_for_role(token_record.role), media_type="text/x-shellscript")
+    base_url = str(request.base_url).rstrip("/")
+    binary_url = base_url + "/worker_binary/liveline-worker-linux-amd64"
+    return PlainTextResponse(
+        install_script_for_role(
+            token_record.role,
+            raw_token,
+            base_url,
+            binary_url,
+        ),
+        media_type="text/x-shellscript",
+    )
+
+
+@setup_router.get("/worker_binary/liveline-worker-linux-amd64")
+def download_worker_binary():
+    binary_path = worker_binary_path()
+    if not binary_path:
+        return error_response(
+            404,
+            "WORKER_BINARY_NOT_FOUND",
+            "liveline-worker binary is not available in this console build.",
+        )
+    return FileResponse(
+        binary_path,
+        media_type="application/octet-stream",
+        filename="liveline-worker-linux-amd64",
+    )
 
 
 @router.post("/workers/register")

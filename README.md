@@ -671,6 +671,24 @@ ports, does not modify `node.share_link`, and does not perform formal cutover.
 Existing SSH source paths and APIs remain in the codebase but are no longer the
 default add-server UI.
 
+## Stage 3.3.24 Minimal LiveLine Worker binary scope
+
+Stage 3.3.24 implements the first minimal `liveline-worker` binary and upgrades
+`GET /worker_setup_script/{token}` from a placeholder to a real install script.
+The backend image now packages a locally built Linux amd64 Worker binary and
+serves it through `/worker_binary/liveline-worker-linux-amd64`; the install
+script downloads it to `/usr/local/bin/liveline-worker`, registers with the
+console, writes `/etc/liveline-worker/config.yaml`, and installs
+`liveline-worker.service`.
+
+Worker v1 is intentionally limited to registration, heartbeat, and read-only
+system status reporting for `landing` and `transit` roles. It does not create
+nodes, does not create transit routes, does not modify Xray, does not modify
+`socat` / `gost`, does not add listening ports, does not modify
+`node.share_link`, does not add HAProxy, and does not perform formal cutover.
+This stage does not install the Worker onto any real VPS and does not execute
+SSH or remote commands from the console.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1853,6 +1871,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.21 Lightweight Worker bootstrap design | Lightweight Worker bootstrap design documented; implementation remains No-Go |
 | Stage 3.3.22 Worker token/register/heartbeat foundation | Worker token, register, heartbeat, and query APIs added; no real Worker execution |
 | Stage 3.3.23 Worker bootstrap UI integration | Landing/transit add-server UI now generates one-time Worker bootstrap commands |
+| Stage 3.3.24 Minimal LiveLine Worker binary | Minimal Go Worker binary and real install script implemented; no real VPS install |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

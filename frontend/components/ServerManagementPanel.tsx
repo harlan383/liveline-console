@@ -700,9 +700,10 @@ export function ServerManagementPanel() {
         </label>
 
         <div className="warning-box wide-field">
-          <strong>安全占位脚本说明</strong>
-          <span>当前 Worker 安装脚本为安全占位脚本，用于验证 token 和接入流程。</span>
-          <span>它不会安装真实 Worker，不会修改远程服务器，不会执行 SSH，也不会新增监听端口。</span>
+          <strong>Worker 第一版安装说明</strong>
+          <span>当前安装命令会安装真实 liveline-worker，并写入 systemd 服务。</span>
+          <span>Worker 第一版只做注册、心跳和基础状态上报，不创建节点、不修改 Xray、不新增监听端口。</span>
+          <span>安装完成后可使用 journalctl -u liveline-worker -f 查看日志。</span>
           <span>如果服务器网卡不是 eth0，请根据实际网卡名修改，例如 ens3、ens5、enp1s0。</span>
         </div>
 
