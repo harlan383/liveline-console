@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,8 +19,10 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.1-stage-3.3.28"
+const workerVersion = "0.1.2-stage-3.3.30"
 const commandPollIntervalSeconds = 20
+const readonlyCommandTimeout = 5 * time.Second
+const readonlyOutputLimit = 12000
 
 type config struct {
 	ConsoleURL               string
@@ -396,6 +399,13 @@ func executeWorkerCommand(cfg config, command workerCommand) (map[string]any, er
 			"services":       serviceSummary(cfg.Role),
 			"timestamp":      now,
 		}, nil
+	case "landing_preflight":
+		if cfg.Role != "landing" {
+			return nil, fmt.Errorf("landing_preflight requires landing worker role")
+		}
+		result := collectLandingPreflight(cfg, hostname)
+		result["timestamp"] = now
+		return result, nil
 	default:
 		return nil, fmt.Errorf("unsupported command_type %q", command.CommandType)
 	}
@@ -660,6 +670,287 @@ func serviceSummary(role string) map[string]any {
 	return services
 }
 
+func collectLandingPreflight(cfg config, hostname string) map[string]any {
+	warnings := []string{}
+	errors := []string{}
+	ssOutput, ssErr := readonlyCommandOutput("ss", "-lntup")
+	if ssErr != "" {
+		warnings = append(warnings, "ss -lntup unavailable: "+ssErr)
+	}
+	firewall, firewallWarnings := firewallReadonlySummary()
+	warnings = append(warnings, firewallWarnings...)
+	return map[string]any{
+		"preflight_version": "0.1",
+		"worker_version":    workerVersion,
+		"system":            landingSystemSummary(cfg, hostname),
+		"network":           landingNetworkSummary(cfg.InterfaceName, ssOutput),
+		"ports":             landingPortSummary(ssOutput),
+		"services":          landingServiceChecks(),
+		"binaries":          binaryChecks([]string{"xray", "x-ui", "3x-ui", "nginx", "caddy", "socat", "gost", "docker", "iptables", "ufw", "firewall-cmd"}),
+		"firewall":          firewall,
+		"xray_discovery":    xrayDiscoverySummary(),
+		"warnings":          warnings,
+		"errors":            errors,
+	}
+}
+
+func landingSystemSummary(cfg config, hostname string) map[string]any {
+	return map[string]any{
+		"hostname":            hostname,
+		"uname":               readonlyCommandValue("uname", "-a"),
+		"os_release":          osReleaseSummary(),
+		"uptime_seconds":      uptimeSeconds(),
+		"current_user":        readonlyCommandValue("whoami"),
+		"worker_running_user": readonlyCommandValue("whoami"),
+		"uid":                 os.Getuid(),
+		"architecture":        readonlyCommandValue("uname", "-m"),
+		"role":                cfg.Role,
+		"interface_name":      cfg.InterfaceName,
+	}
+}
+
+func landingNetworkSummary(interfaceName string, ssOutput string) map[string]any {
+	return map[string]any{
+		"primary_interface":    interfaceName,
+		"primary_interface_ip": interfaceAddress(interfaceName),
+		"local_ips":            localIPList(),
+		"public_ip":            "not_checked",
+		"ip_route":             readonlyCommandValue("ip", "route"),
+		"listening_summary":    summarizeListeningPorts(ssOutput, 30),
+	}
+}
+
+func localIPList() []map[string]string {
+	result := []map[string]string{}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return result
+	}
+	for _, iface := range interfaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err != nil || ip == nil {
+				continue
+			}
+			result = append(result, map[string]string{
+				"interface": iface.Name,
+				"ip":        ip.String(),
+			})
+		}
+	}
+	return result
+}
+
+func summarizeListeningPorts(ssOutput string, limit int) []map[string]any {
+	rows := []map[string]any{}
+	for _, line := range strings.Split(ssOutput, "\n") {
+		cleaned := strings.TrimSpace(line)
+		if cleaned == "" || strings.HasPrefix(cleaned, "Netid") || strings.HasPrefix(cleaned, "State") {
+			continue
+		}
+		address, port := listenAddressAndPort(cleaned)
+		rows = append(rows, map[string]any{
+			"protocol":       "tcp",
+			"listen_address": address,
+			"port":           port,
+			"process":        processSummary(cleaned),
+		})
+		if len(rows) >= limit {
+			break
+		}
+	}
+	return rows
+}
+
+func landingPortSummary(ssOutput string) map[string]any {
+	checks := portChecks(ssOutput, []int{22, 80, 443, 8443, 18443})
+	importantPorts := map[string]any{}
+	for _, check := range checks {
+		port := fmt.Sprintf("%v", check["port"])
+		if listening, ok := check["listening"].(bool); ok && listening {
+			check["status"] = "listening"
+		} else {
+			check["status"] = "not_listening"
+		}
+		importantPorts[port] = check
+	}
+	return map[string]any{
+		"listening_count":   len(summarizeListeningPorts(ssOutput, 1000)),
+		"listening_summary": summarizeListeningPorts(ssOutput, 30),
+		"important_ports":   importantPorts,
+	}
+}
+
+func portChecks(ssOutput string, ports []int) []map[string]any {
+	result := []map[string]any{}
+	lines := strings.Split(ssOutput, "\n")
+	for _, port := range ports {
+		listeners := []map[string]any{}
+		for _, line := range lines {
+			cleaned := strings.TrimSpace(line)
+			if cleaned == "" || !lineContainsPort(cleaned, port) {
+				continue
+			}
+			address, parsedPort := listenAddressAndPort(cleaned)
+			if parsedPort != port {
+				continue
+			}
+			listeners = append(listeners, map[string]any{
+				"listen_address": address,
+				"process":        processSummary(cleaned),
+			})
+		}
+		result = append(result, map[string]any{
+			"port":      port,
+			"protocol":  "tcp",
+			"listening": len(listeners) > 0,
+			"listeners": listeners,
+		})
+	}
+	return result
+}
+
+func lineContainsPort(line string, port int) bool {
+	portText := strconv.Itoa(port)
+	return strings.Contains(line, ":"+portText+" ") ||
+		strings.HasSuffix(line, ":"+portText) ||
+		strings.Contains(line, ":"+portText+"\t")
+}
+
+func listenAddressAndPort(line string) (string, int) {
+	fields := strings.Fields(line)
+	for _, field := range fields {
+		if !strings.Contains(field, ":") {
+			continue
+		}
+		address, portText, ok := strings.Cut(field, ":")
+		if !ok || portText == "" {
+			continue
+		}
+		portText = strings.Trim(portText, "[]")
+		port, err := strconv.Atoi(portText)
+		if err != nil {
+			continue
+		}
+		return address, port
+	}
+	return "", 0
+}
+
+func processSummary(line string) string {
+	marker := "users:("
+	idx := strings.Index(line, marker)
+	if idx < 0 {
+		return ""
+	}
+	return truncateReadonlyOutput(line[idx:], 500)
+}
+
+func landingServiceChecks() []map[string]any {
+	services := []string{"xray", "x-ui", "3x-ui", "nginx", "caddy", "socat", "gost", "docker", "liveline-worker"}
+	result := []map[string]any{}
+	for _, service := range services {
+		result = append(result, serviceCheck(service))
+	}
+	return result
+}
+
+func serviceCheck(serviceName string) map[string]any {
+	exists := false
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		_, statusErr := readonlyCommandOutput("systemctl", "status", serviceName, "--no-pager", "--lines=0")
+		exists = statusErr == ""
+	}
+	return map[string]any{
+		"name":    serviceName,
+		"exists":  exists,
+		"active":  readonlyCommandValue("systemctl", "is-active", serviceName),
+		"enabled": readonlyCommandValue("systemctl", "is-enabled", serviceName),
+		"status_summary": truncateReadonlyOutput(
+			readonlyCommandValue("systemctl", "status", serviceName, "--no-pager", "--lines=5"),
+			1000,
+		),
+	}
+}
+
+func binaryChecks(names []string) []map[string]any {
+	result := []map[string]any{}
+	for _, name := range names {
+		path, err := exec.LookPath(name)
+		result = append(result, map[string]any{
+			"name":    name,
+			"present": err == nil,
+			"path":    path,
+		})
+	}
+	return result
+}
+
+func firewallReadonlySummary() (map[string]any, []string) {
+	warnings := []string{}
+	result := map[string]any{}
+	if _, err := exec.LookPath("ufw"); err == nil {
+		output, cmdErr := readonlyCommandOutput("ufw", "status")
+		result["ufw_status"] = output
+		if cmdErr != "" {
+			warnings = append(warnings, "ufw status unavailable: "+cmdErr)
+		}
+	} else {
+		result["ufw_status"] = "not_installed"
+	}
+	if _, err := exec.LookPath("firewall-cmd"); err == nil {
+		output, cmdErr := readonlyCommandOutput("firewall-cmd", "--state")
+		result["firewalld_state"] = output
+		if cmdErr != "" {
+			warnings = append(warnings, "firewall-cmd --state unavailable: "+cmdErr)
+		}
+	} else {
+		result["firewalld_state"] = "not_installed"
+	}
+	if _, err := exec.LookPath("iptables"); err == nil {
+		output, cmdErr := readonlyCommandOutput("iptables", "-S")
+		result["iptables_rules_summary"] = output
+		if cmdErr != "" {
+			warnings = append(warnings, "iptables -S unavailable: "+cmdErr)
+		}
+	} else {
+		result["iptables_rules_summary"] = "not_installed"
+	}
+	return result, warnings
+}
+
+func xrayDiscoverySummary() map[string]any {
+	paths := []string{
+		"/usr/local/etc/xray/config.json",
+		"/etc/xray/config.json",
+		"/usr/local/x-ui",
+		"/etc/x-ui",
+		"/etc/systemd/system/xray.service",
+		"/etc/systemd/system/x-ui.service",
+		"/etc/systemd/system/3x-ui.service",
+	}
+	items := []map[string]any{}
+	for _, path := range paths {
+		info := map[string]any{
+			"path":   path,
+			"exists": false,
+		}
+		stat, err := os.Stat(path)
+		if err == nil {
+			info["exists"] = true
+			info["is_dir"] = stat.IsDir()
+			info["size_bytes"] = stat.Size()
+			info["mtime"] = stat.ModTime().UTC().Format(time.RFC3339)
+		}
+		items = append(items, info)
+	}
+	return map[string]any{"paths": items}
+}
+
 func serviceState(serviceName string, binaryName string) map[string]any {
 	exists := false
 	if _, err := exec.LookPath(binaryName); err == nil {
@@ -673,6 +964,42 @@ func serviceState(serviceName string, binaryName string) map[string]any {
 		}
 	}
 	return map[string]any{"binary_present": exists, "systemd_active": active}
+}
+
+func readonlyCommandValue(name string, args ...string) string {
+	output, errText := readonlyCommandOutput(name, args...)
+	if errText != "" && output == "" {
+		return "unavailable: " + errText
+	}
+	return output
+}
+
+func readonlyCommandOutput(name string, args ...string) (string, string) {
+	if _, err := exec.LookPath(name); err != nil {
+		return "", "command_not_found"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readonlyCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	output, err := cmd.CombinedOutput()
+	trimmed := truncateReadonlyOutput(strings.TrimSpace(string(output)), readonlyOutputLimit)
+	if ctx.Err() == context.DeadlineExceeded {
+		return trimmed, "timeout"
+	}
+	if err != nil {
+		if trimmed != "" {
+			return trimmed, err.Error()
+		}
+		return "", err.Error()
+	}
+	return trimmed, ""
+}
+
+func truncateReadonlyOutput(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...[truncated]"
 }
 
 func commandOutput(name string, args ...string) string {

@@ -898,6 +898,26 @@ textarea {
   white-space: nowrap;
 }
 
+.worker-preflight-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  white-space: normal;
+}
+
+.worker-preflight-summary span {
+  background: rgba(40, 229, 197, 0.08);
+  border: 1px solid rgba(40, 229, 197, 0.2);
+  border-radius: 999px;
+  color: #d7fff8;
+  max-width: 260px;
+  overflow: hidden;
+  padding: 4px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .server-row-error {
   color: var(--danger);
 }

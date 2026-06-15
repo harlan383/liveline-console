@@ -41,8 +41,8 @@ from app.services.worker_commands import (
     serialize_worker_command_for_worker,
 )
 from app.services.worker_targeting import (
-    MIN_COMMAND_CHANNEL_VERSION,
     WorkerTargetError,
+    minimum_worker_version_for_command,
     resolve_command_target_worker,
 )
 
@@ -645,7 +645,7 @@ def create_admin_worker_command(
     if not worker:
         return error_response(404, "WORKER_NOT_FOUND", "Worker 不存在。")
     if not command_type_allowed(payload.command_type):
-        return error_response(400, "WORKER_COMMAND_NOT_ALLOWED", "只允许 ping、collect_status、service_status。")
+        return error_response(400, "WORKER_COMMAND_NOT_ALLOWED", "只允许 ping、collect_status、service_status、landing_preflight。")
 
     server_id = payload.server_id or worker.server_id
     server_type = payload.server_type or worker.role
@@ -656,6 +656,7 @@ def create_admin_worker_command(
             server_id=server_id,
             role=server_type,
             requested_worker_id=worker.id,
+            command_type=payload.command_type,
         )
     except WorkerTargetError as exc:
         return error_response(400, exc.code, exc.message)
@@ -683,7 +684,7 @@ def create_admin_worker_command(
             "target_worker_id": target_worker.id,
             "target_worker_version": target_worker.worker_version,
             "target_worker_changed": target.changed,
-            "minimum_supported_worker_version": MIN_COMMAND_CHANNEL_VERSION,
+            "minimum_supported_worker_version": minimum_worker_version_for_command(payload.command_type),
         },
         message,
     )

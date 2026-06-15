@@ -139,6 +139,7 @@ function workerCommandTypeLabel(commandType: string) {
     ping: "Ping",
     collect_status: "状态采集",
     service_status: "服务状态",
+    landing_preflight: "只读预检",
   };
   return labels[commandType] ?? commandType;
 }
@@ -161,6 +162,22 @@ function maskShareLink(shareLink: string) {
     return `${shareLink.slice(0, 12)}...`;
   }
   return `${shareLink.slice(0, 24)}...${shareLink.slice(-12)}`;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : "未返回";
+}
+
+function numericValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "0";
+}
+
+function serviceByName(value: unknown, name: string) {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+  const found = value.find((item) => item && typeof item === "object" && (item as Record<string, unknown>).name === name);
+  return found && typeof found === "object" ? (found as Record<string, unknown>) : {};
 }
 
 async function copyTextWithFallback(text: string, textArea: HTMLTextAreaElement | null) {
@@ -464,8 +481,69 @@ export function ServerManagementPanel() {
     }
   }
 
+  async function runLandingPreflight(server: VpsServerData) {
+    if (!server.worker_id || !server.worker_online) {
+      setMessage("Worker 未在线，不能创建落地服务器只读预检命令。");
+      return;
+    }
+    setWorkerCommandLoadingId(server.worker_id);
+    setMessage("正在创建落地服务器只读预检命令。该命令只由已注册 Worker 执行固定只读检查，不会 SSH 或创建节点。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await createWorkerCommand(
+        server.worker_id,
+        { command_type: "landing_preflight", payload: null, server_id: server.id, server_type: "landing" },
+        csrfToken,
+      );
+      if (!result.success) {
+        const upgradeHint =
+          result.error_code === "WORKER_COMMAND_UNSUPPORTED"
+            ? " 请重新生成安装命令并升级该服务器上的 liveline-worker 后再试。"
+            : "";
+        setMessage(`${result.error_code}: ${result.message}${upgradeHint}`);
+        return;
+      }
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [server.id]: result.data.command }));
+      const targetVersion = result.data.target_worker_version || "未知版本";
+      const targetNote = result.data.target_worker_changed ? "已自动切换到最新支持只读预检的 Worker。" : "";
+      setMessage(
+        `只读预检命令已创建：${result.data.command.id}；目标 Worker：${result.data.target_worker_id} / ${targetVersion}。${targetNote}`,
+      );
+      await loadWorkerCommands(result.data.target_worker_id, server.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建落地服务器只读预检命令失败。");
+    } finally {
+      setWorkerCommandLoadingId(null);
+    }
+  }
+
   function latestWorkerCommandForServer(server: VpsServerData) {
     return latestWorkerCommandByServerId[server.id] ?? (server.worker_id ? workerCommandsByWorkerId[server.worker_id]?.[0] : undefined);
+  }
+
+  function renderLandingPreflightSummary(resultJson: Record<string, unknown>) {
+    const system = resultJson.system && typeof resultJson.system === "object" ? (resultJson.system as Record<string, unknown>) : {};
+    const network = resultJson.network && typeof resultJson.network === "object" ? (resultJson.network as Record<string, unknown>) : {};
+    const ports = resultJson.ports && typeof resultJson.ports === "object" ? (resultJson.ports as Record<string, unknown>) : {};
+    const xrayService = serviceByName(resultJson.services, "xray");
+    const firewall = resultJson.firewall && typeof resultJson.firewall === "object" ? (resultJson.firewall as Record<string, unknown>) : {};
+    const xray = resultJson.xray_discovery && typeof resultJson.xray_discovery === "object" ? (resultJson.xray_discovery as Record<string, unknown>) : {};
+    const warnings = Array.isArray(resultJson.warnings) ? resultJson.warnings.length : 0;
+    const listenCount = typeof ports.listening_count === "number" ? ports.listening_count : 0;
+    const importantPorts = ports.important_ports && typeof ports.important_ports === "object" ? (ports.important_ports as Record<string, unknown>) : {};
+
+    return (
+      <div className="worker-preflight-summary" aria-label="落地服务器只读预检摘要">
+        <span title={stringValue(system.hostname)}>主机：{stringValue(system.hostname)}</span>
+        <span title={stringValue(network.ip_route)}>默认路由：{stringValue(network.ip_route)}</span>
+        <span>监听端口：{String(listenCount)}</span>
+        <span>443：{stringValue((importantPorts["443"] as Record<string, unknown> | undefined)?.status)}</span>
+        <span>Xray：{stringValue(xrayService.active)}</span>
+        <span>防火墙：ufw {firewall.ufw_status ? "已返回摘要" : "未返回"}</span>
+        <span>配置发现：{Array.isArray(xray.paths) ? "已返回元数据" : "未返回"}</span>
+        <span>警告：{numericValue(warnings)}</span>
+      </div>
+    );
   }
 
   function renderRecentWorkerCommand(command: WorkerCommandData | undefined) {
@@ -473,13 +551,18 @@ export function ServerManagementPanel() {
       return null;
     }
     return (
-      <span className="worker-command-status">
-        最近命令：
-        {workerCommandTypeLabel(command.command_type)} / {workerCommandStatusLabel(command.status)}
-        {command.target_worker_version ? ` / Worker ${command.target_worker_version}` : ""}
-        {command.result_summary ? ` / ${command.result_summary}` : ""}
-        {command.error_message ? ` / ${command.error_message}` : ""}
-      </span>
+      <div className="worker-command-status">
+        <span>
+          最近命令：
+          {workerCommandTypeLabel(command.command_type)} / {workerCommandStatusLabel(command.status)}
+          {command.target_worker_version ? ` / Worker ${command.target_worker_version}` : ""}
+          {command.result_summary ? ` / ${command.result_summary}` : ""}
+          {command.error_message ? ` / ${command.error_message}` : ""}
+        </span>
+        {command.command_type === "landing_preflight" && command.status === "succeeded"
+          ? renderLandingPreflightSummary(command.result_json)
+          : null}
+      </div>
     );
   }
 
@@ -760,15 +843,26 @@ export function ServerManagementPanel() {
                       编辑
                     </button>
                     {server.worker_id ? (
-                      <button
-                        className="secondary"
-                        disabled={!server.worker_online || workerCommandLoadingId === server.worker_id}
-                        title={!server.worker_online ? "Worker 未在线，不能创建检查命令" : "创建只读 Worker 检查命令"}
-                        type="button"
-                        onClick={() => void runWorkerCheck(server)}
-                      >
-                        Worker 检查
-                      </button>
+                      <>
+                        <button
+                          className="secondary"
+                          disabled={!server.worker_online || workerCommandLoadingId === server.worker_id}
+                          title={!server.worker_online ? "Worker 未在线，不能创建检查命令" : "创建只读 Worker 检查命令"}
+                          type="button"
+                          onClick={() => void runWorkerCheck(server)}
+                        >
+                          Worker 检查
+                        </button>
+                        <button
+                          className="secondary"
+                          disabled={!server.worker_online || workerCommandLoadingId === server.worker_id}
+                          title={!server.worker_online ? "Worker 未在线，不能创建只读预检命令" : "创建落地服务器只读预检命令"}
+                          type="button"
+                          onClick={() => void runLandingPreflight(server)}
+                        >
+                          只读预检
+                        </button>
+                      </>
                     ) : null}
                     <button className="danger" type="button" onClick={() => openDelete(server)}>
                       删除

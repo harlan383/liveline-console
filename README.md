@@ -768,6 +768,26 @@ add a database migration, does not execute SSH or remote commands, does not
 create nodes or transit routes, does not add listening ports, does not modify
 `node.share_link`, and does not perform formal cutover.
 
+## Stage 3.3.30 Worker landing readonly preflight scope
+
+Stage 3.3.30 adds a landing-server read-only preflight Worker command type:
+`landing_preflight`. The command is available only to landing Workers at
+version `0.1.2-stage-3.3.30` or newer, so existing older Workers are rejected
+with `WORKER_COMMAND_UNSUPPORTED` instead of receiving an unknown command.
+
+The Go Worker performs only fixed local read-only checks: system identity,
+network route/IP summary, listening-port summary, Xray/service status,
+binary presence, firewall status summaries, and metadata-only Xray file
+discovery. The command result is stored in `worker_commands.result_json`; no
+database migration is added. The frontend adds a `只读预检` action on online
+landing Workers and displays a compact sanitized summary.
+
+Stage 3.3.30 does not read full Xray config, does not return node links, UUIDs,
+Reality private keys, Worker tokens, cookies, or session secrets, does not
+execute SSH or arbitrary remote commands from Codex, does not create nodes or
+transit routes, does not add listening ports, does not modify firewall rules,
+does not modify `node.share_link`, and does not perform formal cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1956,6 +1976,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.27 Worker server binding UI | Add-server flow creates landing/transit records before bound Worker install commands |
 | Stage 3.3.28 Worker command channel foundation | Read-only Worker command queue, polling, result reporting, and UI check entry added |
 | Stage 3.3.29 Worker command target selection fix | Worker checks now target the latest online command-capable Worker |
+| Stage 3.3.30 Worker landing readonly preflight | Landing Worker read-only preflight command added; no remote SSH or cutover |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

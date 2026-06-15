@@ -399,7 +399,7 @@ export type WorkerListResult = {
   workers: WorkerData[];
 };
 
-export type WorkerCommandType = "ping" | "collect_status" | "service_status";
+export type WorkerCommandType = "ping" | "collect_status" | "service_status" | "landing_preflight";
 
 export type WorkerCommandData = {
   id: string;
