@@ -20,6 +20,7 @@
   --warning: #fdb022;
   --warning-soft: rgba(253, 176, 34, 0.16);
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 * {
@@ -958,6 +959,48 @@ textarea {
 
 .wide-field {
   grid-column: 1 / -1;
+}
+
+.worker-bootstrap-form {
+  align-items: stretch;
+}
+
+.worker-bootstrap-intro,
+.worker-command-panel {
+  background: rgba(19, 31, 45, 0.86);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.worker-bootstrap-intro span,
+.worker-command-panel .message {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.worker-command-meta {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.worker-command-meta span {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px;
+}
+
+.worker-install-command {
+  font-family: var(--font-mono);
+  min-height: 96px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .task-card {

@@ -657,6 +657,20 @@ does not clean remote services, does not add listening ports, does not modify
 Worker v1 remains limited to registration, heartbeat, and latest status
 reporting; full server binding and task execution stay in later stages.
 
+## Stage 3.3.23 Worker bootstrap UI integration scope
+
+Stage 3.3.23 wires the Worker token foundation into the local console UI. The
+default add landing server and add transit server modals now generate one-time
+Worker bootstrap commands through `POST /api/worker-tokens`; landing servers
+use `role=landing`, and transit servers use `role=transit`.
+
+The displayed command remains a Stage 3.3.22 safe placeholder flow. This stage
+does not implement or install a real Worker, does not execute SSH or remote
+commands, does not create nodes or transit routes, does not add listening
+ports, does not modify `node.share_link`, and does not perform formal cutover.
+Existing SSH source paths and APIs remain in the codebase but are no longer the
+default add-server UI.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1838,6 +1852,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.20 Transit server / route split | Transit Servers and Transit Links separated; remote execution remains No-Go |
 | Stage 3.3.21 Lightweight Worker bootstrap design | Lightweight Worker bootstrap design documented; implementation remains No-Go |
 | Stage 3.3.22 Worker token/register/heartbeat foundation | Worker token, register, heartbeat, and query APIs added; no real Worker execution |
+| Stage 3.3.23 Worker bootstrap UI integration | Landing/transit add-server UI now generates one-time Worker bootstrap commands |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

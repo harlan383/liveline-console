@@ -6,6 +6,7 @@ import QRCode from "react-qr-code";
 import {
   apiFetch,
   apiFormFetch,
+  createWorkerToken,
   type CsrfResult,
   type NodeData,
   type ReadNodeResult,
@@ -14,6 +15,8 @@ import {
   type VpsServerListResult,
   type VpsServerTaskResult,
   type VpsServerUpdateResult,
+  type WorkerRole,
+  type WorkerTokenCreateResult,
 } from "@/lib/api";
 
 type ModalMode = "add" | "recheck" | "edit" | "delete" | "node" | null;
@@ -37,6 +40,11 @@ type NodeFormState = {
   passphrase: string;
 };
 
+type WorkerBootstrapFormState = {
+  name: string;
+  expiresInMinutes: string;
+};
+
 type ServerNodeSummary = VpsServerData["nodes"][number];
 
 const emptyServerForm: ServerFormState = {
@@ -56,6 +64,11 @@ const emptyNodeForm: NodeFormState = {
   protocol: "VLESS Reality",
   privateKeyText: "",
   passphrase: "",
+};
+
+const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
+  name: "",
+  expiresInMinutes: "60",
 };
 
 function sshStatusLabel(status: string) {
@@ -120,6 +133,8 @@ export function ServerManagementPanel() {
   const [selectedServer, setSelectedServer] = useState<VpsServerData | null>(null);
   const [serverForm, setServerForm] = useState<ServerFormState>(emptyServerForm);
   const [nodeForm, setNodeForm] = useState<NodeFormState>(emptyNodeForm);
+  const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
+  const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
   const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
   const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
   const [showFullShareLink, setShowFullShareLink] = useState(false);
@@ -161,6 +176,8 @@ export function ServerManagementPanel() {
     setSelectedServer(null);
     setServerForm(emptyServerForm);
     setNodeForm(emptyNodeForm);
+    setWorkerBootstrapForm(emptyWorkerBootstrapForm);
+    setWorkerTokenResult(null);
     clearFileInput();
   }
 
@@ -172,6 +189,8 @@ export function ServerManagementPanel() {
 
   function openAddServer() {
     setServerForm(emptyServerForm);
+    setWorkerBootstrapForm(emptyWorkerBootstrapForm);
+    setWorkerTokenResult(null);
     setSelectedServer(null);
     setModalMode("add");
   }
@@ -245,6 +264,47 @@ export function ServerManagementPanel() {
     } finally {
       setNodeDetailLoading(false);
     }
+  }
+
+  async function generateWorkerInstallCommand(role: WorkerRole) {
+    const expiresInMinutes = Number(workerBootstrapForm.expiresInMinutes);
+    if (!Number.isInteger(expiresInMinutes) || expiresInMinutes < 1 || expiresInMinutes > 10080) {
+      setMessage("过期时间必须是 1 到 10080 分钟之间的整数。");
+      return;
+    }
+    setSubmitting(true);
+    setWorkerTokenResult(null);
+    setMessage("正在生成一次性 Worker 安装命令。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await createWorkerToken(
+        {
+          role,
+          name: workerBootstrapForm.name.trim() || null,
+          expires_in_minutes: expiresInMinutes,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setWorkerTokenResult(result.data);
+      setMessage("Worker 安装命令已生成。明文 token 仅包含在本次安装命令中。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function copyInstallCommand() {
+    if (!workerTokenResult?.install_command) {
+      setMessage("请先生成安装命令。");
+      return;
+    }
+    await navigator.clipboard.writeText(workerTokenResult.install_command);
+    setMessage("Worker 安装命令已复制。请勿把该命令写入文档、日志或 Git。");
   }
 
   async function openNodeDetail(node: ServerNodeSummary, showQr = false) {
@@ -602,12 +662,83 @@ export function ServerManagementPanel() {
               取消
             </button>
           </div>
-          {mode === "add" ? renderServerForm(submitAddServer, true) : null}
+          {mode === "add" ? renderWorkerBootstrapForm("landing") : null}
           {mode === "recheck" ? renderServerForm(submitRecheck, true, true) : null}
           {mode === "edit" ? renderServerForm(submitEdit, false) : null}
           {mode === "delete" ? renderDeleteConfirm() : null}
           {mode === "node" ? renderNodeForm() : null}
         </div>
+      </div>
+    );
+  }
+
+  function renderWorkerBootstrapForm(role: WorkerRole) {
+    return (
+      <div className="form server-modal-form worker-bootstrap-form">
+        <div className="worker-bootstrap-intro wide-field">
+          <strong>接入方式：Worker 安装命令</strong>
+          <span>落地服务器使用 role = landing。前端默认不再显示 SSH 添加表单，SSH 源码和现有 API 仍保留。</span>
+        </div>
+
+        <label>
+          服务器名称，可选
+          <input
+            value={workerBootstrapForm.name}
+            onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, name: event.target.value })}
+            placeholder="例如：美国落地服务器"
+          />
+        </label>
+
+        <label>
+          过期时间，分钟
+          <input
+            inputMode="numeric"
+            value={workerBootstrapForm.expiresInMinutes}
+            onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, expiresInMinutes: event.target.value })}
+            placeholder="60"
+          />
+        </label>
+
+        <div className="warning-box wide-field">
+          <strong>安全占位脚本说明</strong>
+          <span>当前 Worker 安装脚本为安全占位脚本，用于验证 token 和接入流程。</span>
+          <span>它不会安装真实 Worker，不会修改远程服务器，不会执行 SSH，也不会新增监听端口。</span>
+          <span>如果服务器网卡不是 eth0，请根据实际网卡名修改，例如 ens3、ens5、enp1s0。</span>
+        </div>
+
+        <div className="modal-actions wide-field">
+          <button disabled={submitting} type="button" onClick={() => void generateWorkerInstallCommand(role)}>
+            {submitting ? "生成中..." : "生成安装命令"}
+          </button>
+          <button className="secondary" type="button" onClick={closeModal}>
+            取消
+          </button>
+        </div>
+
+        {workerTokenResult ? (
+          <div className="worker-command-panel wide-field">
+            <div className="worker-command-meta">
+              <span>role：{workerTokenResult.role}</span>
+              <span>masked token：{workerTokenResult.masked_token}</span>
+              <span>过期时间：{formatTime(workerTokenResult.expires_at)}</span>
+              <span>状态：{workerTokenResult.status}</span>
+            </div>
+            <label>
+              安装命令
+              <textarea className="worker-install-command" readOnly value={workerTokenResult.install_command} />
+            </label>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => void copyInstallCommand()}>
+                复制命令
+              </button>
+            </div>
+            <p className="message">
+              明文 token 只出现在这条一次性安装命令中。不要把命令写入 README、阶段文档、终端日志或 Git。
+            </p>
+          </div>
+        ) : (
+          <p className="message wide-field">点击“生成安装命令”后，这里会显示一次性 curl | bash 命令和 token 过期时间。</p>
+        )}
       </div>
     );
   }

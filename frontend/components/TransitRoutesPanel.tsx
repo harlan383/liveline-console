@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import {
   apiFetch,
   apiFormFetch,
+  createWorkerToken,
   type CsrfResult,
   type NodeData,
   type NodeListResult,
@@ -21,6 +22,8 @@ import {
   type TransitRouteDiagnoseResult,
   type TransitRouteListResult,
   type TransitRouteRestartSocatResult,
+  type WorkerRole,
+  type WorkerTokenCreateResult,
   requestReadonlyPreflightPlan,
 } from "@/lib/api";
 import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
@@ -60,6 +63,10 @@ type TransitServerFormState = {
   provider: string;
   notes: string;
 };
+type WorkerBootstrapFormState = {
+  name: string;
+  expiresInMinutes: string;
+};
 type TransitRouteDraftState = {
   routeName: string;
   forwardingMethod: ForwardingMethod;
@@ -77,6 +84,11 @@ const emptyTransitServerForm: TransitServerFormState = {
   sshUsername: "root",
   provider: "",
   notes: "",
+};
+
+const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
+  name: "",
+  expiresInMinutes: "60",
 };
 
 const emptyTransitRouteDraft: TransitRouteDraftState = {
@@ -167,6 +179,13 @@ const readonlyPreflightItemSpecs: ReadonlyPreflightItemSpec[] = [
 
 function displayValue(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "-" : String(value);
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) {
+    return "暂无";
+  }
+  return new Date(value).toLocaleString();
 }
 
 function objectValue(value: unknown) {
@@ -507,6 +526,8 @@ export function TransitServersPanel() {
   const [modalMode, setModalMode] = useState<"add" | "edit" | null>(null);
   const [selectedTransitResource, setSelectedTransitResource] = useState<TransitResourceData | null>(null);
   const [transitServerForm, setTransitServerForm] = useState<TransitServerFormState>(emptyTransitServerForm);
+  const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
+  const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
   const [submittingTransitResource, setSubmittingTransitResource] = useState(false);
 
   async function ensureCsrfToken() {
@@ -544,11 +565,15 @@ export function TransitServersPanel() {
     setModalMode(null);
     setSelectedTransitResource(null);
     setTransitServerForm(emptyTransitServerForm);
+    setWorkerBootstrapForm(emptyWorkerBootstrapForm);
+    setWorkerTokenResult(null);
   }
 
   function openAddTransitServer() {
     setSelectedTransitResource(null);
     setTransitServerForm(emptyTransitServerForm);
+    setWorkerBootstrapForm(emptyWorkerBootstrapForm);
+    setWorkerTokenResult(null);
     setModalMode("add");
   }
 
@@ -594,6 +619,47 @@ export function TransitServersPanel() {
     }
   }
 
+  async function generateWorkerInstallCommand(role: WorkerRole) {
+    const expiresInMinutes = Number(workerBootstrapForm.expiresInMinutes);
+    if (!Number.isInteger(expiresInMinutes) || expiresInMinutes < 1 || expiresInMinutes > 10080) {
+      setMessage("过期时间必须是 1 到 10080 分钟之间的整数。");
+      return;
+    }
+    try {
+      setSubmittingTransitResource(true);
+      setWorkerTokenResult(null);
+      setMessage("正在生成一次性 Worker 安装命令。");
+      const csrfToken = await ensureCsrfToken();
+      const result = await createWorkerToken(
+        {
+          role,
+          name: workerBootstrapForm.name.trim() || null,
+          expires_in_minutes: expiresInMinutes,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setWorkerTokenResult(result.data);
+      setMessage("Worker 安装命令已生成。明文 token 仅包含在本次安装命令中。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
+    } finally {
+      setSubmittingTransitResource(false);
+    }
+  }
+
+  async function copyInstallCommand() {
+    if (!workerTokenResult?.install_command) {
+      setMessage("请先生成安装命令。");
+      return;
+    }
+    await navigator.clipboard.writeText(workerTokenResult.install_command);
+    setMessage("Worker 安装命令已复制。请勿把该命令写入文档、日志或 Git。");
+  }
+
   function renderTransitServerModal() {
     if (!modalMode) {
       return null;
@@ -605,13 +671,91 @@ export function TransitServersPanel() {
           <div className="status-row">
             <div>
               <h3>{title}</h3>
-              <p className="message">只保存本地资源记录；不会安装 Worker、不会生成 token、不会执行 SSH 或远程命令。</p>
+              <p className="message">
+                {modalMode === "add"
+                  ? "默认使用 Worker 安装命令接入；仅在点击生成按钮时创建一次性 token，不安装真实 Worker。"
+                  : "只保存本地资源记录；不会安装 Worker、不会生成 token、不会执行 SSH 或远程命令。"}
+              </p>
             </div>
             <button className="secondary compact" type="button" onClick={closeTransitServerModal}>
               关闭
             </button>
           </div>
-          <form className="form transit-server-form" onSubmit={(event) => void submitTransitServer(event)}>
+          {modalMode === "add" ? renderWorkerBootstrapForm("transit") : renderTransitResourceForm()}
+        </div>
+      </div>
+    );
+  }
+
+  function renderWorkerBootstrapForm(role: WorkerRole) {
+    return (
+      <div className="form transit-server-form worker-bootstrap-form">
+        <div className="worker-bootstrap-intro wide-field">
+          <strong>接入方式：Worker 安装命令</strong>
+          <span>中转服务器使用 role = transit。前端默认不再显示 SSH 添加表单，SSH 源码和现有 API 仍保留。</span>
+        </div>
+        <label>
+          服务器名称，可选
+          <input
+            value={workerBootstrapForm.name}
+            onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, name: event.target.value })}
+            placeholder="例如：香港中转服务器"
+          />
+        </label>
+        <label>
+          过期时间，分钟
+          <input
+            inputMode="numeric"
+            value={workerBootstrapForm.expiresInMinutes}
+            onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, expiresInMinutes: event.target.value })}
+            placeholder="60"
+          />
+        </label>
+        <div className="warning-box wide-field">
+          <strong>安全占位脚本说明</strong>
+          <span>当前 Worker 安装脚本为安全占位脚本，用于验证 token 和接入流程。</span>
+          <span>它不会安装真实 Worker，不会修改远程服务器，不会执行 SSH，也不会新增监听端口。</span>
+          <span>如果服务器网卡不是 eth0，请根据实际网卡名修改，例如 ens3、ens5、enp1s0。</span>
+        </div>
+        <div className="modal-actions wide-field">
+          <button disabled={submittingTransitResource} type="button" onClick={() => void generateWorkerInstallCommand(role)}>
+            {submittingTransitResource ? "生成中..." : "生成安装命令"}
+          </button>
+          <button className="secondary" type="button" onClick={closeTransitServerModal}>
+            取消
+          </button>
+        </div>
+        {workerTokenResult ? (
+          <div className="worker-command-panel wide-field">
+            <div className="worker-command-meta">
+              <span>role：{workerTokenResult.role}</span>
+              <span>masked token：{workerTokenResult.masked_token}</span>
+              <span>过期时间：{formatTime(workerTokenResult.expires_at)}</span>
+              <span>状态：{workerTokenResult.status}</span>
+            </div>
+            <label>
+              安装命令
+              <textarea className="worker-install-command" readOnly value={workerTokenResult.install_command} />
+            </label>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => void copyInstallCommand()}>
+                复制命令
+              </button>
+            </div>
+            <p className="message">
+              明文 token 只出现在这条一次性安装命令中。不要把命令写入 README、阶段文档、终端日志或 Git。
+            </p>
+          </div>
+        ) : (
+          <p className="message wide-field">点击“生成安装命令”后，这里会显示一次性 curl | bash 命令和 token 过期时间。</p>
+        )}
+      </div>
+    );
+  }
+
+  function renderTransitResourceForm() {
+    return (
+      <form className="form transit-server-form" onSubmit={(event) => void submitTransitServer(event)}>
             <label>
               名称
               <input
@@ -674,8 +818,6 @@ export function TransitServersPanel() {
               </button>
             </div>
           </form>
-        </div>
-      </div>
     );
   }
 
@@ -693,7 +835,8 @@ export function TransitServersPanel() {
 
       <CollapsibleWarning title="查看中转服务器安全说明" wide>
         <span>中转服务器只代表可用于转发的服务器资源记录，不等于已经创建真实可用线路。</span>
-        <span>本页面不安装 Worker，不生成 Worker token，不执行 SSH / 远程命令，不新增监听端口。</span>
+        <span>本页面不会自动生成 Worker token；只有点击“生成安装命令”才会创建一次性 token。</span>
+        <span>本页面不安装真实 Worker，不执行 SSH / 远程命令，不新增监听端口。</span>
         <span>真实转发关系请在“中转链路”页面规划；真正远程创建必须进入后续 Worker / 授权阶段。</span>
         <span>新增或变更监听端口后，仍必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙是否放行对应 TCP 端口。</span>
       </CollapsibleWarning>
