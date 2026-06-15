@@ -72,6 +72,7 @@ class WorkerRegisterRequest(BaseModel):
 
 class WorkerHeartbeatRequest(BaseModel):
     worker_version: str | None = Field(default=None, max_length=80)
+    role: str | None = Field(default=None, max_length=16)
     interface_name: str | None = Field(default=None, max_length=80)
     public_ip: str | None = Field(default=None, max_length=45)
     hostname: str | None = Field(default=None, max_length=255)
@@ -87,3 +88,15 @@ class WorkerHeartbeatRequest(BaseModel):
     @classmethod
     def clean_text(cls, value: str | None) -> str | None:
         return clean_optional(value)
+
+    @field_validator("role")
+    @classmethod
+    def clean_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip().lower()
+        if not cleaned:
+            return None
+        if cleaned not in WORKER_ROLES:
+            raise ValueError("role must be landing or transit")
+        return cleaned
