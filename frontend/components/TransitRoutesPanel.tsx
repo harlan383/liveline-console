@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import {
   apiFetch,
   apiFormFetch,
-  createWorkerToken,
+  createTransitWorkerBootstrap,
   type CsrfResult,
   type NodeData,
   type NodeListResult,
@@ -65,6 +65,7 @@ type TransitServerFormState = {
 };
 type WorkerBootstrapFormState = {
   name: string;
+  ip: string;
   expiresInMinutes: string;
 };
 type TransitRouteDraftState = {
@@ -88,6 +89,7 @@ const emptyTransitServerForm: TransitServerFormState = {
 
 const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
   name: "",
+  ip: "",
   expiresInMinutes: "60",
 };
 
@@ -215,6 +217,29 @@ function maskLink(value: string | null | undefined) {
     return value;
   }
   return `${value.slice(0, 24)}...${value.slice(-12)}`;
+}
+
+async function copyTextWithFallback(text: string, textArea: HTMLTextAreaElement | null) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall back to selecting the command textarea below.
+  }
+
+  try {
+    if (!textArea) {
+      return false;
+    }
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, text.length);
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  }
 }
 
 function parseListenPortInput(value: string) {
@@ -409,6 +434,18 @@ function routeStatusClass(status: string) {
 }
 
 function transitResourceStatusLabel(resource: TransitResourceData) {
+  const displayStatus = resource.display_status || resource.status;
+  const labels: Record<string, string> = {
+    pending_worker: "待接入",
+    online: "在线",
+    offline: "离线",
+    unchecked: "未检测",
+    disabled: "已停用",
+    active: "未检测",
+  };
+  if (labels[displayStatus]) {
+    return labels[displayStatus];
+  }
   if (resource.status === "disabled") {
     return "已停用";
   }
@@ -416,6 +453,13 @@ function transitResourceStatusLabel(resource: TransitResourceData) {
 }
 
 function transitResourceStatusClass(resource: TransitResourceData) {
+  const displayStatus = resource.display_status || resource.status;
+  if (displayStatus === "online" || displayStatus === "worker_online") {
+    return "ok";
+  }
+  if (displayStatus === "offline" || displayStatus === "worker_offline") {
+    return "bad";
+  }
   return resource.status === "disabled" ? "muted" : "warn";
 }
 
@@ -424,7 +468,8 @@ function transitHostLabel(resource: TransitResourceData) {
 }
 
 function transitSshPortLabel(resource: TransitResourceData) {
-  return resource.ssh_port ? `SSH ${resource.ssh_port}` : "-";
+  const port = resource.ssh_port ?? resource.entry_port;
+  return port ? `SSH ${port}` : "-";
 }
 
 function formFromTransitResource(resource: TransitResourceData): TransitServerFormState {
@@ -520,6 +565,7 @@ function diagnosticOutcome(task: TaskData) {
 }
 
 export function TransitServersPanel() {
+  const workerInstallCommandRef = useRef<HTMLTextAreaElement | null>(null);
   const [resources, setResources] = useState<TransitResourceData[]>([]);
   const [loadingResources, setLoadingResources] = useState(true);
   const [message, setMessage] = useState("中转服务器只代表本地资源记录；真实转发关系请到“中转链路”页面配置。");
@@ -620,7 +666,17 @@ export function TransitServersPanel() {
   }
 
   async function generateWorkerInstallCommand(role: WorkerRole) {
+    const name = workerBootstrapForm.name.trim();
+    const ip = workerBootstrapForm.ip.trim();
     const expiresInMinutes = Number(workerBootstrapForm.expiresInMinutes);
+    if (!name) {
+      setMessage("请填写中转服务器名称。");
+      return;
+    }
+    if (!ip) {
+      setMessage("请填写中转服务器 IP。");
+      return;
+    }
     if (!Number.isInteger(expiresInMinutes) || expiresInMinutes < 1 || expiresInMinutes > 10080) {
       setMessage("过期时间必须是 1 到 10080 分钟之间的整数。");
       return;
@@ -628,12 +684,12 @@ export function TransitServersPanel() {
     try {
       setSubmittingTransitResource(true);
       setWorkerTokenResult(null);
-      setMessage("正在生成一次性 Worker 安装命令。");
+      setMessage("正在保存中转服务器并生成一次性 Worker 安装命令。");
       const csrfToken = await ensureCsrfToken();
-      const result = await createWorkerToken(
+      const result = await createTransitWorkerBootstrap(
         {
-          role,
-          name: workerBootstrapForm.name.trim() || null,
+          name,
+          ip,
           expires_in_minutes: expiresInMinutes,
         },
         csrfToken,
@@ -642,8 +698,9 @@ export function TransitServersPanel() {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setWorkerTokenResult(result.data);
-      setMessage("Worker 安装命令已生成。请在 VPS 上先确认能访问主控地址。明文 token 仅包含在本次安装命令中。");
+      setWorkerTokenResult(result.data.token);
+      setMessage("中转服务器已保存为待接入，Worker 安装命令已生成。请在 VPS 上先确认能访问主控地址。");
+      await loadTransitServers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
     } finally {
@@ -656,8 +713,12 @@ export function TransitServersPanel() {
       setMessage("请先生成安装命令。");
       return;
     }
-    await navigator.clipboard.writeText(workerTokenResult.install_command);
-    setMessage("Worker 安装命令已复制。请勿把该命令写入文档、日志或 Git。");
+    const copied = await copyTextWithFallback(workerTokenResult.install_command, workerInstallCommandRef.current);
+    if (!copied) {
+      setMessage("复制失败，请点击命令框后按 Ctrl+A / Ctrl+C，Mac 使用 Command+A / Command+C。");
+      return;
+    }
+    setMessage("已复制安装命令。请勿把该命令写入文档、日志或 Git。");
   }
 
   function renderTransitServerModal() {
@@ -692,14 +753,24 @@ export function TransitServersPanel() {
       <div className="form transit-server-form worker-bootstrap-form">
         <div className="worker-bootstrap-intro wide-field">
           <strong>接入方式：Worker 安装命令</strong>
-          <span>中转服务器使用 role = transit。前端默认不再显示 SSH 添加表单，SSH 源码和现有 API 仍保留。</span>
+          <span>
+            中转服务器使用 role = transit。点击生成后会先保存中转服务器记录，再生成绑定该记录的一次性安装命令。
+          </span>
         </div>
         <label>
-          服务器名称，可选
+          中转服务器名称
           <input
             value={workerBootstrapForm.name}
             onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, name: event.target.value })}
             placeholder="例如：香港中转服务器"
+          />
+        </label>
+        <label>
+          中转服务器 IP
+          <input
+            value={workerBootstrapForm.ip}
+            onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, ip: event.target.value })}
+            placeholder="公网 IPv4"
           />
         </label>
         <label>
@@ -721,7 +792,7 @@ export function TransitServersPanel() {
         </div>
         <div className="modal-actions wide-field">
           <button disabled={submittingTransitResource} type="button" onClick={() => void generateWorkerInstallCommand(role)}>
-            {submittingTransitResource ? "生成中..." : "生成安装命令"}
+            {submittingTransitResource ? "生成中..." : "保存中转服务器并生成安装命令"}
           </button>
           <button className="secondary" type="button" onClick={closeTransitServerModal}>
             取消
@@ -737,7 +808,12 @@ export function TransitServersPanel() {
             </div>
             <label>
               安装命令
-              <textarea className="worker-install-command" readOnly value={workerTokenResult.install_command} />
+              <textarea
+                ref={workerInstallCommandRef}
+                className="worker-install-command"
+                readOnly
+                value={workerTokenResult.install_command}
+              />
             </label>
             <div className="modal-actions">
               <button className="secondary" type="button" onClick={() => void copyInstallCommand()}>
@@ -871,7 +947,13 @@ export function TransitServersPanel() {
                   <span className={`pill ${transitResourceStatusClass(resource)}`}>
                     {transitResourceStatusLabel(resource)}
                   </span>
-                  <span className="node-meta-line">状态来源：本地资源状态 / 未做 SSH 检测</span>
+                  <span className="node-meta-line">
+                    {resource.connection_mode === "worker"
+                      ? `Worker：${resource.worker_status ? transitResourceStatusLabel(resource) : "未注册"} / 最后心跳 ${formatTime(
+                          resource.worker_last_heartbeat_at,
+                        )}`
+                      : "状态来源：本地资源状态 / 未做 SSH 检测"}
+                  </span>
                 </div>
                 <div className="server-actions">
                   <button

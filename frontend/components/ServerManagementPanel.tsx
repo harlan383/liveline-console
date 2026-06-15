@@ -6,6 +6,7 @@ import QRCode from "react-qr-code";
 import {
   apiFetch,
   apiFormFetch,
+  createVpsWorkerBootstrap,
   createWorkerToken,
   type CsrfResult,
   type NodeData,
@@ -19,7 +20,7 @@ import {
   type WorkerTokenCreateResult,
 } from "@/lib/api";
 
-type ModalMode = "add" | "recheck" | "edit" | "delete" | "node" | null;
+type ModalMode = "add" | "recheck" | "edit" | "delete" | "node" | "workerCommand" | null;
 
 type ServerFormState = {
   name: string;
@@ -42,6 +43,7 @@ type NodeFormState = {
 
 type WorkerBootstrapFormState = {
   name: string;
+  ip: string;
   expiresInMinutes: string;
 };
 
@@ -68,6 +70,7 @@ const emptyNodeForm: NodeFormState = {
 
 const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
   name: "",
+  ip: "",
   expiresInMinutes: "60",
 };
 
@@ -80,14 +83,25 @@ function sshStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+function displayStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending_worker: "待接入",
+    online: "在线",
+    offline: "离线",
+    unchecked: "未检测",
+    disabled: "已停用",
+  };
+  return labels[status] ?? sshStatusLabel(status);
+}
+
 function statusClass(status: string) {
-  if (status === "online" || status === "active" || status === "success") {
+  if (status === "online" || status === "active" || status === "success" || status === "worker_online") {
     return "ok";
   }
-  if (status === "offline" || status === "deleted" || status === "failed") {
+  if (status === "offline" || status === "deleted" || status === "failed" || status === "worker_offline") {
     return "bad";
   }
-  if (status === "unchecked" || status === "pending") {
+  if (status === "unchecked" || status === "pending" || status === "pending_worker") {
     return "warn";
   }
   return "muted";
@@ -124,8 +138,32 @@ function maskShareLink(shareLink: string) {
   return `${shareLink.slice(0, 24)}...${shareLink.slice(-12)}`;
 }
 
+async function copyTextWithFallback(text: string, textArea: HTMLTextAreaElement | null) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the textarea selection fallback.
+  }
+
+  try {
+    if (!textArea) {
+      return false;
+    }
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, text.length);
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  }
+}
+
 export function ServerManagementPanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const workerInstallCommandRef = useRef<HTMLTextAreaElement | null>(null);
   const [servers, setServers] = useState<VpsServerData[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("落地服务器管理只读取本地系统记录；不会在页面加载时执行 SSH。");
@@ -195,6 +233,17 @@ export function ServerManagementPanel() {
     setModalMode("add");
   }
 
+  function openWorkerCommand(server: VpsServerData) {
+    setSelectedServer(server);
+    setWorkerBootstrapForm({
+      name: server.name || server.ip,
+      ip: server.ip,
+      expiresInMinutes: "60",
+    });
+    setWorkerTokenResult(null);
+    setModalMode("workerCommand");
+  }
+
   function openRecheck(server: VpsServerData) {
     setSelectedServer(server);
     setServerForm({
@@ -227,8 +276,8 @@ export function ServerManagementPanel() {
   }
 
   function openAddNode(server: VpsServerData) {
-    if (server.last_ssh_status !== "online") {
-      setMessage("离线或未检测服务器不能添加节点。请先重新检测 SSH 状态。");
+    if (!server.worker_online) {
+      setMessage("Worker 未在线的落地服务器不能添加节点。请先完成 Worker 接入并等待心跳正常。");
       return;
     }
     setSelectedServer(server);
@@ -267,30 +316,57 @@ export function ServerManagementPanel() {
   }
 
   async function generateWorkerInstallCommand(role: WorkerRole) {
+    const name = workerBootstrapForm.name.trim();
+    const ip = workerBootstrapForm.ip.trim();
     const expiresInMinutes = Number(workerBootstrapForm.expiresInMinutes);
+    if (modalMode === "add" && !name) {
+      setMessage("请填写服务器名称。");
+      return;
+    }
+    if (modalMode === "add" && !ip) {
+      setMessage("请填写服务器 IP。");
+      return;
+    }
     if (!Number.isInteger(expiresInMinutes) || expiresInMinutes < 1 || expiresInMinutes > 10080) {
       setMessage("过期时间必须是 1 到 10080 分钟之间的整数。");
       return;
     }
     setSubmitting(true);
     setWorkerTokenResult(null);
-    setMessage("正在生成一次性 Worker 安装命令。");
+    setMessage(modalMode === "add" ? "正在保存落地服务器并生成一次性 Worker 安装命令。" : "正在重新生成一次性 Worker 安装命令。");
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await createWorkerToken(
-        {
-          role,
-          name: workerBootstrapForm.name.trim() || null,
-          expires_in_minutes: expiresInMinutes,
-        },
-        csrfToken,
-      );
+      const result =
+        modalMode === "workerCommand" && selectedServer
+          ? await createWorkerToken(
+              {
+                role,
+                name: name || selectedServer.name,
+                server_id: selectedServer.id,
+                expires_in_minutes: expiresInMinutes,
+              },
+              csrfToken,
+            )
+          : await createVpsWorkerBootstrap(
+              {
+                name,
+                ip,
+                expires_in_minutes: expiresInMinutes,
+              },
+              csrfToken,
+            );
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setWorkerTokenResult(result.data);
-      setMessage("Worker 安装命令已生成。请在 VPS 上先确认能访问主控地址。明文 token 仅包含在本次安装命令中。");
+      const tokenResult = "token" in result.data ? result.data.token : result.data;
+      setWorkerTokenResult(tokenResult);
+      setMessage(
+        modalMode === "add"
+          ? "落地服务器已保存为待接入，Worker 安装命令已生成。请在 VPS 上先确认能访问主控地址。"
+          : "Worker 安装命令已重新生成。请在 VPS 上先确认能访问主控地址。",
+      );
+      await loadServers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
     } finally {
@@ -303,8 +379,12 @@ export function ServerManagementPanel() {
       setMessage("请先生成安装命令。");
       return;
     }
-    await navigator.clipboard.writeText(workerTokenResult.install_command);
-    setMessage("Worker 安装命令已复制。请勿把该命令写入文档、日志或 Git。");
+    const copied = await copyTextWithFallback(workerTokenResult.install_command, workerInstallCommandRef.current);
+    if (!copied) {
+      setMessage("复制失败，请点击命令框后按 Ctrl+A / Ctrl+C，Mac 使用 Command+A / Command+C。");
+      return;
+    }
+    setMessage("已复制安装命令。请勿把该命令写入文档、日志或 Git。");
   }
 
   async function openNodeDetail(node: ServerNodeSummary, showQr = false) {
@@ -470,8 +550,8 @@ export function ServerManagementPanel() {
     if (!selectedServer) {
       return;
     }
-    if (selectedServer.last_ssh_status !== "online") {
-      setMessage("服务器不在线，不能添加节点。");
+    if (!selectedServer.worker_online) {
+      setMessage("Worker 未在线，不能添加节点。");
       return;
     }
     setSubmitting(true);
@@ -560,20 +640,26 @@ export function ServerManagementPanel() {
                   <strong>{server.name || server.ip}</strong>
                   <span>{server.ip}</span>
                   <span>SSH {server.ssh_port}</span>
-                  <span className={`pill ${statusClass(server.last_ssh_status)}`}>{sshStatusLabel(server.last_ssh_status)}</span>
+                  <span className={`pill ${statusClass(server.display_status)}`}>{displayStatusLabel(server.display_status)}</span>
                   <div className="server-actions">
                     <button
                       className="secondary"
-                      disabled={server.last_ssh_status !== "online"}
-                      title={server.last_ssh_status !== "online" ? "离线 / 未检测服务器禁止添加节点" : "添加节点"}
+                      disabled={!server.worker_online}
+                      title={!server.worker_online ? "Worker 未在线的服务器禁止添加节点" : "添加节点"}
                       type="button"
                       onClick={() => openAddNode(server)}
                     >
                       添加节点
                     </button>
-                    <button className="secondary" type="button" onClick={() => openRecheck(server)}>
-                      重新检测
-                    </button>
+                    {server.connection_mode === "worker" ? (
+                      <button className="secondary" type="button" onClick={() => openWorkerCommand(server)}>
+                        安装命令
+                      </button>
+                    ) : (
+                      <button className="secondary" type="button" onClick={() => openRecheck(server)}>
+                        重新检测
+                      </button>
+                    )}
                     <button className="secondary" type="button" onClick={() => openEdit(server)}>
                       编辑
                     </button>
@@ -582,6 +668,13 @@ export function ServerManagementPanel() {
                     </button>
                   </div>
                 </div>
+                {server.connection_mode === "worker" ? (
+                  <div className="server-row-worker">
+                    Worker：{server.worker_status ? displayStatusLabel(server.worker_status) : "未注册"}；主机名：
+                    {server.worker_hostname || "暂无"}；网卡：{server.worker_interface_name || "暂无"}；最后心跳：
+                    {formatTime(server.worker_last_heartbeat_at)}
+                  </div>
+                ) : null}
                 {server.last_ssh_error ? <div className="server-row-error">最近 SSH 失败原因：{server.last_ssh_error}</div> : null}
                 {server.nodes.length > 0 ? (
                   <div className="server-node-rows">
@@ -652,6 +745,7 @@ export function ServerManagementPanel() {
       edit: "编辑落地服务器",
       delete: "删除落地服务器",
       node: "添加节点",
+      workerCommand: "重新生成 Worker 安装命令",
     };
     return (
       <div className="modal-backdrop" role="presentation">
@@ -662,7 +756,7 @@ export function ServerManagementPanel() {
               取消
             </button>
           </div>
-          {mode === "add" ? renderWorkerBootstrapForm("landing") : null}
+          {mode === "add" || mode === "workerCommand" ? renderWorkerBootstrapForm("landing") : null}
           {mode === "recheck" ? renderServerForm(submitRecheck, true, true) : null}
           {mode === "edit" ? renderServerForm(submitEdit, false) : null}
           {mode === "delete" ? renderDeleteConfirm() : null}
@@ -677,15 +771,28 @@ export function ServerManagementPanel() {
       <div className="form server-modal-form worker-bootstrap-form">
         <div className="worker-bootstrap-intro wide-field">
           <strong>接入方式：Worker 安装命令</strong>
-          <span>落地服务器使用 role = landing。前端默认不再显示 SSH 添加表单，SSH 源码和现有 API 仍保留。</span>
+          <span>
+            落地服务器使用 role = landing。点击生成后会先保存落地服务器记录，再生成绑定该记录的一次性安装命令。
+          </span>
         </div>
 
         <label>
-          服务器名称，可选
+          服务器名称
           <input
             value={workerBootstrapForm.name}
             onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, name: event.target.value })}
             placeholder="例如：美国落地服务器"
+            readOnly={modalMode === "workerCommand"}
+          />
+        </label>
+
+        <label>
+          服务器 IP
+          <input
+            value={workerBootstrapForm.ip}
+            onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, ip: event.target.value })}
+            placeholder="公网 IPv4"
+            readOnly={modalMode === "workerCommand"}
           />
         </label>
 
@@ -710,7 +817,11 @@ export function ServerManagementPanel() {
 
         <div className="modal-actions wide-field">
           <button disabled={submitting} type="button" onClick={() => void generateWorkerInstallCommand(role)}>
-            {submitting ? "生成中..." : "生成安装命令"}
+            {submitting
+              ? "生成中..."
+              : modalMode === "add"
+                ? "保存服务器并生成安装命令"
+                : "重新生成安装命令"}
           </button>
           <button className="secondary" type="button" onClick={closeModal}>
             取消
@@ -727,7 +838,12 @@ export function ServerManagementPanel() {
             </div>
             <label>
               安装命令
-              <textarea className="worker-install-command" readOnly value={workerTokenResult.install_command} />
+              <textarea
+                ref={workerInstallCommandRef}
+                className="worker-install-command"
+                readOnly
+                value={workerTokenResult.install_command}
+              />
             </label>
             <div className="modal-actions">
               <button className="secondary" type="button" onClick={() => void copyInstallCommand()}>

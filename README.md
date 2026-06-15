@@ -1910,6 +1910,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.24 Minimal LiveLine Worker binary | Minimal Go Worker binary and real install script implemented; no real VPS install |
 | Stage 3.3.25 Worker public install URL fix | Worker install commands require a configured public console URL; localhost fallback removed |
 | Stage 3.3.26 Deployment missing credentials fix | Redis temporary credential service restored to version control for deployment imports |
+| Stage 3.3.27 Worker server binding UI | Add-server flow creates landing/transit records before bound Worker install commands |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

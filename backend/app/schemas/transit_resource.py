@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 RESOURCE_TYPES = {"server", "iepl", "iplc", "other"}
 PROTOCOL_HINTS = {"tcp", "udp", "tcp_udp", "unknown"}
-RESOURCE_STATUSES = {"active", "disabled"}
+RESOURCE_STATUSES = {"active", "disabled", "pending_worker", "worker_online", "worker_offline"}
 HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 SENSITIVE_NOTE_MARKERS = (
     "PRIVATE KEY",
