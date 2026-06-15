@@ -399,6 +399,34 @@ export type WorkerListResult = {
   workers: WorkerData[];
 };
 
+export type WorkerCommandType = "ping" | "collect_status" | "service_status";
+
+export type WorkerCommandData = {
+  id: string;
+  worker_id: string;
+  server_type: string | null;
+  server_id: string | null;
+  command_type: WorkerCommandType;
+  status: string;
+  lease_until: string | null;
+  claimed_at: string | null;
+  completed_at: string | null;
+  result_json: Record<string, unknown>;
+  result_summary: string | null;
+  error_message: string | null;
+  attempts: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type WorkerCommandCreateResult = {
+  command: WorkerCommandData;
+};
+
+export type WorkerCommandListResult = {
+  commands: WorkerCommandData[];
+};
+
 export async function createWorkerToken(
   payload: WorkerTokenCreateRequest,
   csrfToken: string,
@@ -408,6 +436,22 @@ export async function createWorkerToken(
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
   });
+}
+
+export async function createWorkerCommand(
+  workerId: string,
+  payload: { command_type: WorkerCommandType; payload?: Record<string, unknown> | null },
+  csrfToken: string,
+): Promise<ApiResponse<WorkerCommandCreateResult>> {
+  return apiFetch<WorkerCommandCreateResult>(`/api/workers/${workerId}/commands`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listWorkerCommands(workerId: string): Promise<ApiResponse<WorkerCommandListResult>> {
+  return apiFetch<WorkerCommandListResult>(`/api/workers/${workerId}/commands`);
 }
 
 export async function createVpsWorkerBootstrap(

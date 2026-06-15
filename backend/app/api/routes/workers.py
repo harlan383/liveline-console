@@ -14,7 +14,9 @@ from app.core.config import get_settings
 from app.core.security import hash_token, new_token, token_matches
 from app.db.session import get_db
 from app.models.worker import Worker, WorkerToken
+from app.models.worker_command import WorkerCommand
 from app.schemas.common import error_response, success_response
+from app.schemas.worker_commands import WorkerCommandCreate, WorkerCommandFailure, WorkerCommandResult
 from app.schemas.workers import (
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     OFFLINE_THRESHOLD_SECONDS,
@@ -27,6 +29,16 @@ from app.services.worker_binding import (
     sync_worker_bound_resource_status,
     try_bind_worker_by_public_ip,
     validate_worker_token_binding_target,
+)
+from app.services.worker_commands import (
+    DEFAULT_NEXT_POLL_SECONDS,
+    claim_next_worker_command,
+    command_type_allowed,
+    complete_worker_command,
+    create_worker_command,
+    fail_worker_command,
+    serialize_worker_command,
+    serialize_worker_command_for_worker,
 )
 
 router = APIRouter()
@@ -130,6 +142,22 @@ def serialize_worker(worker: Worker) -> dict:
         "updated_at": worker.updated_at.isoformat() if worker.updated_at else None,
         "metadata_summary": metadata_summary(worker),
     }
+
+
+def authenticate_worker(
+    db: Session,
+    x_worker_id: str | None,
+    x_worker_secret: str | None,
+):
+    worker_id = clean_token(x_worker_id)
+    worker_secret = clean_token(x_worker_secret)
+    if not worker_id or not worker_secret:
+        return None, error_response(401, "WORKER_AUTH_REQUIRED", "Worker 认证信息缺失。")
+
+    worker = db.get(Worker, worker_id)
+    if not worker or not token_matches(worker_secret, worker.worker_secret_hash):
+        return None, error_response(401, "WORKER_AUTH_INVALID", "Worker 认证失败。")
+    return worker, None
 
 
 def find_token(db: Session, raw_token: str) -> WorkerToken | None:
@@ -467,14 +495,10 @@ def worker_heartbeat(
     x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
     db: Session = Depends(get_db),
 ):
-    worker_id = clean_token(x_worker_id)
-    worker_secret = clean_token(x_worker_secret)
-    if not worker_id or not worker_secret:
-        return error_response(401, "WORKER_AUTH_REQUIRED", "Worker 认证信息缺失。")
-
-    worker = db.get(Worker, worker_id)
-    if not worker or not token_matches(worker_secret, worker.worker_secret_hash):
-        return error_response(401, "WORKER_AUTH_INVALID", "Worker 认证失败。")
+    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
+    if auth_response:
+        return auth_response
+    assert worker is not None
 
     current_time = now_utc()
     heartbeat_data = payload.model_dump(exclude_none=True)
@@ -508,6 +532,141 @@ def worker_heartbeat(
         },
         "ok",
     )
+
+
+@router.post("/workers/commands/next")
+def next_worker_command(
+    x_worker_id: str | None = Header(None, alias="X-Worker-Id"),
+    x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
+    db: Session = Depends(get_db),
+):
+    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
+    if auth_response:
+        return auth_response
+    assert worker is not None
+
+    command = claim_next_worker_command(db, worker)
+    db.commit()
+    if not command:
+        return success_response(
+            {
+                "ok": True,
+                "command": None,
+                "next_poll_seconds": DEFAULT_NEXT_POLL_SECONDS,
+            },
+            "ok",
+        )
+    db.refresh(command)
+    return success_response(
+        {
+            "ok": True,
+            "command": serialize_worker_command_for_worker(command),
+            "next_poll_seconds": DEFAULT_NEXT_POLL_SECONDS,
+        },
+        "ok",
+    )
+
+
+@router.post("/workers/commands/{command_id}/result")
+def worker_command_result(
+    command_id: str,
+    payload: WorkerCommandResult,
+    x_worker_id: str | None = Header(None, alias="X-Worker-Id"),
+    x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
+    db: Session = Depends(get_db),
+):
+    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
+    if auth_response:
+        return auth_response
+    assert worker is not None
+
+    command = db.get(WorkerCommand, command_id)
+    if not command or command.worker_id != worker.id:
+        return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在或不属于当前 Worker。")
+    if command.status in {"succeeded", "failed", "cancelled", "expired"}:
+        return error_response(409, "WORKER_COMMAND_ALREADY_FINISHED", "Worker 命令已结束。")
+
+    complete_worker_command(db, command, payload.result)
+    db.commit()
+    db.refresh(command)
+    return success_response({"command": serialize_worker_command(command)}, "Worker 命令结果已记录。")
+
+
+@router.post("/workers/commands/{command_id}/fail")
+def worker_command_fail(
+    command_id: str,
+    payload: WorkerCommandFailure,
+    x_worker_id: str | None = Header(None, alias="X-Worker-Id"),
+    x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
+    db: Session = Depends(get_db),
+):
+    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
+    if auth_response:
+        return auth_response
+    assert worker is not None
+
+    command = db.get(WorkerCommand, command_id)
+    if not command or command.worker_id != worker.id:
+        return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在或不属于当前 Worker。")
+    if command.status in {"succeeded", "failed", "cancelled", "expired"}:
+        return error_response(409, "WORKER_COMMAND_ALREADY_FINISHED", "Worker 命令已结束。")
+
+    fail_worker_command(db, command, payload.error_message, payload.result)
+    db.commit()
+    db.refresh(command)
+    return success_response({"command": serialize_worker_command(command)}, "Worker 命令失败结果已记录。")
+
+
+@router.post("/workers/{worker_id}/commands")
+def create_admin_worker_command(
+    worker_id: str,
+    payload: WorkerCommandCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    worker = db.get(Worker, worker_id)
+    if not worker:
+        return error_response(404, "WORKER_NOT_FOUND", "Worker 不存在。")
+    if not command_type_allowed(payload.command_type):
+        return error_response(400, "WORKER_COMMAND_NOT_ALLOWED", "只允许 ping、collect_status、service_status。")
+
+    command = create_worker_command(db, worker, payload.command_type, payload.payload)
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="create_worker_command",
+        result="success",
+        request=request,
+        resource_type="worker_command",
+        resource_id=command.id,
+    )
+    db.commit()
+    db.refresh(command)
+    return success_response({"command": serialize_worker_command(command, include_payload=True)}, "Worker 检查命令已创建。")
+
+
+@router.get("/workers/{worker_id}/commands")
+def list_admin_worker_commands(worker_id: str, request: Request, db: Session = Depends(get_db)):
+    if not require_admin_session(db, request):
+        return auth_error()
+
+    worker = db.get(Worker, worker_id)
+    if not worker:
+        return error_response(404, "WORKER_NOT_FOUND", "Worker 不存在。")
+
+    commands = db.scalars(
+        select(WorkerCommand)
+        .where(WorkerCommand.worker_id == worker.id)
+        .order_by(WorkerCommand.created_at.desc())
+        .limit(20)
+    ).all()
+    return success_response({"commands": [serialize_worker_command(command) for command in commands]}, "ok")
 
 
 @router.get("/workers")

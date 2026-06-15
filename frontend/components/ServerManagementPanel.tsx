@@ -6,8 +6,10 @@ import QRCode from "react-qr-code";
 import {
   apiFetch,
   apiFormFetch,
+  createWorkerCommand,
   createVpsWorkerBootstrap,
   createWorkerToken,
+  listWorkerCommands,
   type CsrfResult,
   type NodeData,
   type ReadNodeResult,
@@ -16,6 +18,7 @@ import {
   type VpsServerListResult,
   type VpsServerTaskResult,
   type VpsServerUpdateResult,
+  type WorkerCommandData,
   type WorkerRole,
   type WorkerTokenCreateResult,
 } from "@/lib/api";
@@ -131,6 +134,28 @@ function formatTime(value: string | null) {
   return new Date(value).toLocaleString();
 }
 
+function workerCommandTypeLabel(commandType: string) {
+  const labels: Record<string, string> = {
+    ping: "Ping",
+    collect_status: "状态采集",
+    service_status: "服务状态",
+  };
+  return labels[commandType] ?? commandType;
+}
+
+function workerCommandStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: "等待中",
+    claimed: "已领取",
+    running: "执行中",
+    succeeded: "成功",
+    failed: "失败",
+    expired: "已过期",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
+}
+
 function maskShareLink(shareLink: string) {
   if (shareLink.length <= 40) {
     return `${shareLink.slice(0, 12)}...`;
@@ -173,6 +198,8 @@ export function ServerManagementPanel() {
   const [nodeForm, setNodeForm] = useState<NodeFormState>(emptyNodeForm);
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
+  const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
+  const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
   const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
   const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
   const [showFullShareLink, setShowFullShareLink] = useState(false);
@@ -385,6 +412,42 @@ export function ServerManagementPanel() {
       return;
     }
     setMessage("已复制安装命令。请勿把该命令写入文档、日志或 Git。");
+  }
+
+  async function loadWorkerCommands(workerId: string) {
+    const result = await listWorkerCommands(workerId);
+    if (!result.success) {
+      setMessage(`${result.error_code}: ${result.message}`);
+      return;
+    }
+    setWorkerCommandsByWorkerId((current) => ({ ...current, [workerId]: result.data.commands }));
+  }
+
+  async function runWorkerCheck(server: VpsServerData) {
+    if (!server.worker_id || !server.worker_online) {
+      setMessage("Worker 未在线，不能创建 Worker 检查命令。");
+      return;
+    }
+    setWorkerCommandLoadingId(server.worker_id);
+    setMessage("正在创建 Worker 状态检查命令。该命令只会由 Worker 轮询执行，不会 SSH。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await createWorkerCommand(
+        server.worker_id,
+        { command_type: "collect_status", payload: null },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setMessage(`Worker 检查命令已创建：${result.data.command.id}。请稍后刷新命令状态。`);
+      await loadWorkerCommands(server.worker_id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建 Worker 检查命令失败。");
+    } finally {
+      setWorkerCommandLoadingId(null);
+    }
   }
 
   async function openNodeDetail(node: ServerNodeSummary, showQr = false) {
@@ -663,6 +726,17 @@ export function ServerManagementPanel() {
                     <button className="secondary" type="button" onClick={() => openEdit(server)}>
                       编辑
                     </button>
+                    {server.worker_id ? (
+                      <button
+                        className="secondary"
+                        disabled={!server.worker_online || workerCommandLoadingId === server.worker_id}
+                        title={!server.worker_online ? "Worker 未在线，不能创建检查命令" : "创建只读 Worker 检查命令"}
+                        type="button"
+                        onClick={() => void runWorkerCheck(server)}
+                      >
+                        Worker 检查
+                      </button>
+                    ) : null}
                     <button className="danger" type="button" onClick={() => openDelete(server)}>
                       删除
                     </button>
@@ -673,6 +747,19 @@ export function ServerManagementPanel() {
                     Worker：{server.worker_status ? displayStatusLabel(server.worker_status) : "未注册"}；主机名：
                     {server.worker_hostname || "暂无"}；网卡：{server.worker_interface_name || "暂无"}；最后心跳：
                     {formatTime(server.worker_last_heartbeat_at)}
+                    {server.worker_id && workerCommandsByWorkerId[server.worker_id]?.[0] ? (
+                      <span className="worker-command-status">
+                        最近命令：
+                        {workerCommandTypeLabel(workerCommandsByWorkerId[server.worker_id][0].command_type)} /{" "}
+                        {workerCommandStatusLabel(workerCommandsByWorkerId[server.worker_id][0].status)}
+                        {workerCommandsByWorkerId[server.worker_id][0].result_summary
+                          ? ` / ${workerCommandsByWorkerId[server.worker_id][0].result_summary}`
+                          : ""}
+                        {workerCommandsByWorkerId[server.worker_id][0].error_message
+                          ? ` / ${workerCommandsByWorkerId[server.worker_id][0].error_message}`
+                          : ""}
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
                 {server.last_ssh_error ? <div className="server-row-error">最近 SSH 失败原因：{server.last_ssh_error}</div> : null}

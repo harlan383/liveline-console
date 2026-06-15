@@ -725,6 +725,27 @@ not add database migrations, does not add listening ports, does not execute SSH
 or remote commands, does not create nodes or transit routes, and does not
 perform formal cutover.
 
+## Stage 3.3.28 Worker command channel foundation scope
+
+Stage 3.3.28 adds the first local Worker command channel foundation. The
+console can enqueue only read-only / no-op Worker commands, Workers can poll
+`/api/workers/commands/next`, and Workers can report success or failure through
+the command result APIs. The allowed command types are limited to `ping`,
+`collect_status`, and `service_status`.
+
+This stage adds the `worker_commands` table for command state, leases, attempts,
+sanitized results, and errors. It does not store raw Worker secrets, raw tokens,
+SSH keys, full node links, or remote sensitive configuration. The Go
+`liveline-worker` now keeps heartbeat behavior and adds a polling loop for the
+allowed no-op commands. Landing and transit server pages include a minimal
+`Worker 检查` button that creates a `collect_status` command for online Workers
+and shows the latest command status.
+
+Stage 3.3.28 does not execute SSH or remote commands, does not create nodes,
+does not create transit routes, does not install or upgrade real VPS Workers,
+does not modify Xray, socat, or gost, does not add listening ports, does not
+modify `node.share_link`, and does not perform formal cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1911,6 +1932,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.25 Worker public install URL fix | Worker install commands require a configured public console URL; localhost fallback removed |
 | Stage 3.3.26 Deployment missing credentials fix | Redis temporary credential service restored to version control for deployment imports |
 | Stage 3.3.27 Worker server binding UI | Add-server flow creates landing/transit records before bound Worker install commands |
+| Stage 3.3.28 Worker command channel foundation | Read-only Worker command queue, polling, result reporting, and UI check entry added |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
