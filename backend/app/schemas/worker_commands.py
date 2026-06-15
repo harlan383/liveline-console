@@ -17,6 +17,8 @@ WORKER_COMMAND_STATUSES = {
 class WorkerCommandCreate(BaseModel):
     command_type: str
     payload: dict[str, Any] | None = Field(default=None)
+    server_id: str | None = Field(default=None)
+    server_type: str | None = Field(default=None)
 
     @field_validator("command_type")
     @classmethod
@@ -24,6 +26,16 @@ class WorkerCommandCreate(BaseModel):
         cleaned = value.strip().lower()
         if cleaned not in WORKER_COMMAND_TYPES:
             raise ValueError("command_type must be ping, collect_status, or service_status")
+        return cleaned
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip().lower()
+        if cleaned not in {"landing", "transit"}:
+            raise ValueError("server_type must be landing or transit")
         return cleaned
 
 

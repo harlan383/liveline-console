@@ -173,10 +173,16 @@ def result_summary(command: WorkerCommand) -> str | None:
     return "命令已返回脱敏结果。"
 
 
-def serialize_worker_command(command: WorkerCommand, include_payload: bool = False) -> dict[str, Any]:
+def serialize_worker_command(
+    command: WorkerCommand,
+    include_payload: bool = False,
+    worker: Worker | None = None,
+) -> dict[str, Any]:
     data = {
         "id": command.id,
         "worker_id": command.worker_id,
+        "target_worker_id": command.worker_id,
+        "target_worker_version": worker.worker_version if worker else None,
         "server_type": command.server_type,
         "server_id": command.server_id,
         "command_type": command.command_type,
