@@ -5,7 +5,9 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import {
   apiFetch,
   apiFormFetch,
+  createWorkerCommand,
   createTransitWorkerBootstrap,
+  listWorkerCommands,
   type CsrfResult,
   type NodeData,
   type NodeListResult,
@@ -23,6 +25,7 @@ import {
   type TransitRouteListResult,
   type TransitRouteRestartSocatResult,
   type WorkerRole,
+  type WorkerCommandData,
   type WorkerTokenCreateResult,
   requestReadonlyPreflightPlan,
 } from "@/lib/api";
@@ -188,6 +191,28 @@ function formatTime(value: string | null | undefined) {
     return "暂无";
   }
   return new Date(value).toLocaleString();
+}
+
+function workerCommandTypeLabel(commandType: string) {
+  const labels: Record<string, string> = {
+    ping: "Ping",
+    collect_status: "状态采集",
+    service_status: "服务状态",
+  };
+  return labels[commandType] ?? commandType;
+}
+
+function workerCommandStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: "等待中",
+    claimed: "已领取",
+    running: "执行中",
+    succeeded: "成功",
+    failed: "失败",
+    expired: "已过期",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
 }
 
 function objectValue(value: unknown) {
@@ -574,6 +599,8 @@ export function TransitServersPanel() {
   const [transitServerForm, setTransitServerForm] = useState<TransitServerFormState>(emptyTransitServerForm);
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
+  const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
+  const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
   const [submittingTransitResource, setSubmittingTransitResource] = useState(false);
 
   async function ensureCsrfToken() {
@@ -719,6 +746,42 @@ export function TransitServersPanel() {
       return;
     }
     setMessage("已复制安装命令。请勿把该命令写入文档、日志或 Git。");
+  }
+
+  async function loadWorkerCommands(workerId: string) {
+    const result = await listWorkerCommands(workerId);
+    if (!result.success) {
+      setMessage(`${result.error_code}: ${result.message}`);
+      return;
+    }
+    setWorkerCommandsByWorkerId((current) => ({ ...current, [workerId]: result.data.commands }));
+  }
+
+  async function runWorkerCheck(resource: TransitResourceData) {
+    if (!resource.worker_id || !resource.worker_online) {
+      setMessage("Worker 未在线，不能创建 Worker 检查命令。");
+      return;
+    }
+    setWorkerCommandLoadingId(resource.worker_id);
+    setMessage("正在创建 Worker 状态检查命令。该命令只会由 Worker 轮询执行，不会 SSH。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await createWorkerCommand(
+        resource.worker_id,
+        { command_type: "collect_status", payload: null },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setMessage(`Worker 检查命令已创建：${result.data.command.id}。请稍后刷新命令状态。`);
+      await loadWorkerCommands(resource.worker_id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建 Worker 检查命令失败。");
+    } finally {
+      setWorkerCommandLoadingId(null);
+    }
   }
 
   function renderTransitServerModal() {
@@ -954,8 +1017,32 @@ export function TransitServersPanel() {
                         )}`
                       : "状态来源：本地资源状态 / 未做 SSH 检测"}
                   </span>
+                  {resource.worker_id && workerCommandsByWorkerId[resource.worker_id]?.[0] ? (
+                    <span className="worker-command-status">
+                      最近命令：
+                      {workerCommandTypeLabel(workerCommandsByWorkerId[resource.worker_id][0].command_type)} /{" "}
+                      {workerCommandStatusLabel(workerCommandsByWorkerId[resource.worker_id][0].status)}
+                      {workerCommandsByWorkerId[resource.worker_id][0].result_summary
+                        ? ` / ${workerCommandsByWorkerId[resource.worker_id][0].result_summary}`
+                        : ""}
+                      {workerCommandsByWorkerId[resource.worker_id][0].error_message
+                        ? ` / ${workerCommandsByWorkerId[resource.worker_id][0].error_message}`
+                        : ""}
+                    </span>
+                  ) : null}
                 </div>
                 <div className="server-actions">
+                  {resource.worker_id ? (
+                    <button
+                      className="secondary compact"
+                      disabled={!resource.worker_online || workerCommandLoadingId === resource.worker_id}
+                      title={!resource.worker_online ? "Worker 未在线，不能创建检查命令" : "创建只读 Worker 检查命令"}
+                      type="button"
+                      onClick={() => void runWorkerCheck(resource)}
+                    >
+                      Worker 检查
+                    </button>
+                  ) : null}
                   <button
                     className="secondary compact"
                     type="button"

@@ -18,7 +18,8 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.0-stage-3.3.24"
+const workerVersion = "0.1.1-stage-3.3.28"
+const commandPollIntervalSeconds = 20
 
 type config struct {
 	ConsoleURL               string
@@ -74,6 +75,27 @@ type heartbeatResult struct {
 	OK                   bool   `json:"ok"`
 	ServerTime           string `json:"server_time"`
 	NextHeartbeatSeconds int    `json:"next_heartbeat_seconds"`
+}
+
+type workerCommand struct {
+	ID          string         `json:"id"`
+	CommandType string         `json:"command_type"`
+	Payload     map[string]any `json:"payload"`
+}
+
+type commandNextResult struct {
+	OK              bool           `json:"ok"`
+	Command         *workerCommand `json:"command"`
+	NextPollSeconds int            `json:"next_poll_seconds"`
+}
+
+type commandResultPayload struct {
+	Result map[string]any `json:"result"`
+}
+
+type commandFailurePayload struct {
+	ErrorMessage string         `json:"error_message"`
+	Result       map[string]any `json:"result,omitempty"`
 }
 
 func main() {
@@ -213,17 +235,30 @@ func runWorker(args []string) error {
 	if interval < 10*time.Second {
 		interval = 60 * time.Second
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	heartbeatTicker := time.NewTicker(interval)
+	defer heartbeatTicker.Stop()
 
-	for range ticker.C {
-		if err := sendHeartbeat(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "liveline-worker heartbeat failed: %v\n", err)
-		} else {
-			fmt.Println("liveline-worker heartbeat sent")
+	commandTicker := time.NewTicker(time.Duration(commandPollIntervalSeconds) * time.Second)
+	defer commandTicker.Stop()
+
+	if err := pollWorkerCommand(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "liveline-worker command poll failed: %v\n", err)
+	}
+
+	for {
+		select {
+		case <-heartbeatTicker.C:
+			if err := sendHeartbeat(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "liveline-worker heartbeat failed: %v\n", err)
+			} else {
+				fmt.Println("liveline-worker heartbeat sent")
+			}
+		case <-commandTicker.C:
+			if err := pollWorkerCommand(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "liveline-worker command poll failed: %v\n", err)
+			}
 		}
 	}
-	return nil
 }
 
 func validateConfig(cfg config) error {
@@ -296,6 +331,104 @@ func sendHeartbeat(cfg config) error {
 	}
 	if !response.Success {
 		return fmt.Errorf("heartbeat rejected: %s", response.Message)
+	}
+	return nil
+}
+
+func pollWorkerCommand(cfg config) error {
+	headers := map[string]string{
+		"X-Worker-Id":     cfg.WorkerID,
+		"X-Worker-Secret": cfg.WorkerSecret,
+	}
+	var response apiResponse[commandNextResult]
+	if err := postJSON(joinURL(cfg.ConsoleURL, "/api/workers/commands/next"), headers, map[string]any{}, &response); err != nil {
+		return err
+	}
+	if !response.Success {
+		return fmt.Errorf("command poll rejected: %s", response.Message)
+	}
+	if response.Data.Command == nil {
+		return nil
+	}
+
+	command := *response.Data.Command
+	result, err := executeWorkerCommand(cfg, command)
+	if err != nil {
+		if reportErr := postWorkerCommandFailure(cfg, command.ID, err); reportErr != nil {
+			return fmt.Errorf("command %s failed: %v; failure report failed: %w", command.ID, err, reportErr)
+		}
+		return fmt.Errorf("command %s failed: %w", command.ID, err)
+	}
+	if err := postWorkerCommandResult(cfg, command.ID, result); err != nil {
+		return err
+	}
+	fmt.Printf("liveline-worker command %s completed type=%s\n", command.ID, command.CommandType)
+	return nil
+}
+
+func executeWorkerCommand(cfg config, command workerCommand) (map[string]any, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "unknown"
+	}
+	switch command.CommandType {
+	case "ping":
+		return map[string]any{
+			"pong":           true,
+			"worker_version": workerVersion,
+			"hostname":       hostname,
+			"role":           cfg.Role,
+			"interface_name": cfg.InterfaceName,
+			"timestamp":      now,
+		}, nil
+	case "collect_status":
+		result := collectSystemInfo(cfg.Role, cfg.InterfaceName)
+		result["hostname"] = hostname
+		result["timestamp"] = now
+		return result, nil
+	case "service_status":
+		return map[string]any{
+			"worker_version": workerVersion,
+			"hostname":       hostname,
+			"role":           cfg.Role,
+			"interface_name": cfg.InterfaceName,
+			"services":       serviceSummary(cfg.Role),
+			"timestamp":      now,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported command_type %q", command.CommandType)
+	}
+}
+
+func postWorkerCommandResult(cfg config, commandID string, result map[string]any) error {
+	headers := map[string]string{
+		"X-Worker-Id":     cfg.WorkerID,
+		"X-Worker-Secret": cfg.WorkerSecret,
+	}
+	var response apiResponse[map[string]any]
+	payload := commandResultPayload{Result: result}
+	if err := postJSON(joinURL(cfg.ConsoleURL, "/api/workers/commands/"+commandID+"/result"), headers, payload, &response); err != nil {
+		return err
+	}
+	if !response.Success {
+		return fmt.Errorf("command result rejected: %s", response.Message)
+	}
+	return nil
+}
+
+func postWorkerCommandFailure(cfg config, commandID string, commandErr error) error {
+	headers := map[string]string{
+		"X-Worker-Id":     cfg.WorkerID,
+		"X-Worker-Secret": cfg.WorkerSecret,
+	}
+	var response apiResponse[map[string]any]
+	payload := commandFailurePayload{ErrorMessage: commandErr.Error()}
+	if err := postJSON(joinURL(cfg.ConsoleURL, "/api/workers/commands/"+commandID+"/fail"), headers, payload, &response); err != nil {
+		return err
+	}
+	if !response.Success {
+		return fmt.Errorf("command failure rejected: %s", response.Message)
 	}
 	return nil
 }

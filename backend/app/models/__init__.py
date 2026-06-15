@@ -9,6 +9,7 @@ from app.models.transit_resource import TransitResource
 from app.models.vps_server import VpsServer
 from app.models.vps_task_lock import VpsTaskLock
 from app.models.worker import Worker, WorkerToken
+from app.models.worker_command import WorkerCommand
 
 __all__ = [
     "AdminSession",
@@ -22,5 +23,6 @@ __all__ = [
     "VpsServer",
     "VpsTaskLock",
     "Worker",
+    "WorkerCommand",
     "WorkerToken",
 ]
