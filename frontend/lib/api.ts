@@ -404,6 +404,8 @@ export type WorkerCommandType = "ping" | "collect_status" | "service_status";
 export type WorkerCommandData = {
   id: string;
   worker_id: string;
+  target_worker_id: string;
+  target_worker_version: string | null;
   server_type: string | null;
   server_id: string | null;
   command_type: WorkerCommandType;
@@ -421,6 +423,11 @@ export type WorkerCommandData = {
 
 export type WorkerCommandCreateResult = {
   command: WorkerCommandData;
+  requested_worker_id: string | null;
+  target_worker_id: string;
+  target_worker_version: string | null;
+  target_worker_changed: boolean;
+  minimum_supported_worker_version: string;
 };
 
 export type WorkerCommandListResult = {
@@ -440,7 +447,12 @@ export async function createWorkerToken(
 
 export async function createWorkerCommand(
   workerId: string,
-  payload: { command_type: WorkerCommandType; payload?: Record<string, unknown> | null },
+  payload: {
+    command_type: WorkerCommandType;
+    payload?: Record<string, unknown> | null;
+    server_id?: string | null;
+    server_type?: WorkerRole | null;
+  },
   csrfToken: string,
 ): Promise<ApiResponse<WorkerCommandCreateResult>> {
   return apiFetch<WorkerCommandCreateResult>(`/api/workers/${workerId}/commands`, {

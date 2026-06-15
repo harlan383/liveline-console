@@ -40,6 +40,11 @@ from app.services.worker_commands import (
     serialize_worker_command,
     serialize_worker_command_for_worker,
 )
+from app.services.worker_targeting import (
+    MIN_COMMAND_CHANNEL_VERSION,
+    WorkerTargetError,
+    resolve_command_target_worker,
+)
 
 router = APIRouter()
 setup_router = APIRouter()
@@ -589,7 +594,10 @@ def worker_command_result(
     complete_worker_command(db, command, payload.result)
     db.commit()
     db.refresh(command)
-    return success_response({"command": serialize_worker_command(command)}, "Worker 命令结果已记录。")
+    return success_response(
+        {"command": serialize_worker_command(command, worker=worker)},
+        "Worker 命令结果已记录。",
+    )
 
 
 @router.post("/workers/commands/{command_id}/fail")
@@ -614,7 +622,10 @@ def worker_command_fail(
     fail_worker_command(db, command, payload.error_message, payload.result)
     db.commit()
     db.refresh(command)
-    return success_response({"command": serialize_worker_command(command)}, "Worker 命令失败结果已记录。")
+    return success_response(
+        {"command": serialize_worker_command(command, worker=worker)},
+        "Worker 命令失败结果已记录。",
+    )
 
 
 @router.post("/workers/{worker_id}/commands")
@@ -636,7 +647,21 @@ def create_admin_worker_command(
     if not command_type_allowed(payload.command_type):
         return error_response(400, "WORKER_COMMAND_NOT_ALLOWED", "只允许 ping、collect_status、service_status。")
 
-    command = create_worker_command(db, worker, payload.command_type, payload.payload)
+    server_id = payload.server_id or worker.server_id
+    server_type = payload.server_type or worker.role
+    try:
+        target = resolve_command_target_worker(
+            db,
+            server_type=server_type,
+            server_id=server_id,
+            role=server_type,
+            requested_worker_id=worker.id,
+        )
+    except WorkerTargetError as exc:
+        return error_response(400, exc.code, exc.message)
+
+    target_worker = target.worker
+    command = create_worker_command(db, target_worker, payload.command_type, payload.payload)
     record_audit(
         db,
         admin_id=session.admin_id,
@@ -648,7 +673,20 @@ def create_admin_worker_command(
     )
     db.commit()
     db.refresh(command)
-    return success_response({"command": serialize_worker_command(command, include_payload=True)}, "Worker 检查命令已创建。")
+    message = "Worker 检查命令已创建。"
+    if target.changed:
+        message = "已自动选择最新支持命令的 Worker，Worker 检查命令已创建。"
+    return success_response(
+        {
+            "command": serialize_worker_command(command, include_payload=True, worker=target_worker),
+            "requested_worker_id": target.requested_worker_id,
+            "target_worker_id": target_worker.id,
+            "target_worker_version": target_worker.worker_version,
+            "target_worker_changed": target.changed,
+            "minimum_supported_worker_version": MIN_COMMAND_CHANNEL_VERSION,
+        },
+        message,
+    )
 
 
 @router.get("/workers/{worker_id}/commands")
@@ -666,7 +704,10 @@ def list_admin_worker_commands(worker_id: str, request: Request, db: Session = D
         .order_by(WorkerCommand.created_at.desc())
         .limit(20)
     ).all()
-    return success_response({"commands": [serialize_worker_command(command) for command in commands]}, "ok")
+    return success_response(
+        {"commands": [serialize_worker_command(command, worker=worker) for command in commands]},
+        "ok",
+    )
 
 
 @router.get("/workers")

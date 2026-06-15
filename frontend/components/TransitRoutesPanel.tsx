@@ -600,6 +600,7 @@ export function TransitServersPanel() {
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
+  const [latestWorkerCommandByResourceId, setLatestWorkerCommandByResourceId] = useState<Record<string, WorkerCommandData>>({});
   const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
   const [submittingTransitResource, setSubmittingTransitResource] = useState(false);
 
@@ -619,7 +620,13 @@ export function TransitServersPanel() {
       setLoadingResources(false);
       return;
     }
-    setResources(resourceResult.data.resources.filter((resource) => resource.resource_type === "server"));
+    const serverResources = resourceResult.data.resources.filter((resource) => resource.resource_type === "server");
+    setResources(serverResources);
+    await Promise.all(
+      serverResources
+        .filter((resource) => resource.worker_id)
+        .map((resource) => loadWorkerCommands(resource.worker_id as string, resource.id)),
+    );
     setLoadingResources(false);
   }
 
@@ -748,13 +755,16 @@ export function TransitServersPanel() {
     setMessage("已复制安装命令。请勿把该命令写入文档、日志或 Git。");
   }
 
-  async function loadWorkerCommands(workerId: string) {
+  async function loadWorkerCommands(workerId: string, resourceId?: string) {
     const result = await listWorkerCommands(workerId);
     if (!result.success) {
       setMessage(`${result.error_code}: ${result.message}`);
       return;
     }
     setWorkerCommandsByWorkerId((current) => ({ ...current, [workerId]: result.data.commands }));
+    if (resourceId && result.data.commands[0]) {
+      setLatestWorkerCommandByResourceId((current) => ({ ...current, [resourceId]: result.data.commands[0] }));
+    }
   }
 
   async function runWorkerCheck(resource: TransitResourceData) {
@@ -768,20 +778,44 @@ export function TransitServersPanel() {
       const csrfToken = await ensureCsrfToken();
       const result = await createWorkerCommand(
         resource.worker_id,
-        { command_type: "collect_status", payload: null },
+        { command_type: "collect_status", payload: null, server_id: resource.id, server_type: "transit" },
         csrfToken,
       );
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setMessage(`Worker 检查命令已创建：${result.data.command.id}。请稍后刷新命令状态。`);
-      await loadWorkerCommands(resource.worker_id);
+      setLatestWorkerCommandByResourceId((current) => ({ ...current, [resource.id]: result.data.command }));
+      const targetVersion = result.data.target_worker_version || "未知版本";
+      const targetNote = result.data.target_worker_changed ? "已自动切换到最新支持命令的 Worker。" : "";
+      setMessage(
+        `Worker 检查命令已创建：${result.data.command.id}；目标 Worker：${result.data.target_worker_id} / ${targetVersion}。${targetNote}`,
+      );
+      await loadWorkerCommands(result.data.target_worker_id, resource.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "创建 Worker 检查命令失败。");
     } finally {
       setWorkerCommandLoadingId(null);
     }
+  }
+
+  function latestWorkerCommandForResource(resource: TransitResourceData) {
+    return latestWorkerCommandByResourceId[resource.id] ?? (resource.worker_id ? workerCommandsByWorkerId[resource.worker_id]?.[0] : undefined);
+  }
+
+  function renderRecentWorkerCommand(command: WorkerCommandData | undefined) {
+    if (!command) {
+      return null;
+    }
+    return (
+      <span className="worker-command-status">
+        最近命令：
+        {workerCommandTypeLabel(command.command_type)} / {workerCommandStatusLabel(command.status)}
+        {command.target_worker_version ? ` / Worker ${command.target_worker_version}` : ""}
+        {command.result_summary ? ` / ${command.result_summary}` : ""}
+        {command.error_message ? ` / ${command.error_message}` : ""}
+      </span>
+    );
   }
 
   function renderTransitServerModal() {
@@ -1017,19 +1051,7 @@ export function TransitServersPanel() {
                         )}`
                       : "状态来源：本地资源状态 / 未做 SSH 检测"}
                   </span>
-                  {resource.worker_id && workerCommandsByWorkerId[resource.worker_id]?.[0] ? (
-                    <span className="worker-command-status">
-                      最近命令：
-                      {workerCommandTypeLabel(workerCommandsByWorkerId[resource.worker_id][0].command_type)} /{" "}
-                      {workerCommandStatusLabel(workerCommandsByWorkerId[resource.worker_id][0].status)}
-                      {workerCommandsByWorkerId[resource.worker_id][0].result_summary
-                        ? ` / ${workerCommandsByWorkerId[resource.worker_id][0].result_summary}`
-                        : ""}
-                      {workerCommandsByWorkerId[resource.worker_id][0].error_message
-                        ? ` / ${workerCommandsByWorkerId[resource.worker_id][0].error_message}`
-                        : ""}
-                    </span>
-                  ) : null}
+                  {renderRecentWorkerCommand(latestWorkerCommandForResource(resource))}
                 </div>
                 <div className="server-actions">
                   {resource.worker_id ? (

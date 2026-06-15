@@ -199,6 +199,7 @@ export function ServerManagementPanel() {
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
+  const [latestWorkerCommandByServerId, setLatestWorkerCommandByServerId] = useState<Record<string, WorkerCommandData>>({});
   const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
   const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
   const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
@@ -219,6 +220,11 @@ export function ServerManagementPanel() {
     const result = await apiFetch<VpsServerListResult>("/api/vps");
     if (result.success) {
       setServers(result.data.servers);
+      await Promise.all(
+        result.data.servers
+          .filter((server) => server.worker_id)
+          .map((server) => loadWorkerCommands(server.worker_id as string, server.id)),
+      );
       setMessage("服务器列表已刷新。");
     } else {
       setMessage(`${result.error_code}: ${result.message}`);
@@ -414,13 +420,16 @@ export function ServerManagementPanel() {
     setMessage("已复制安装命令。请勿把该命令写入文档、日志或 Git。");
   }
 
-  async function loadWorkerCommands(workerId: string) {
+  async function loadWorkerCommands(workerId: string, serverId?: string) {
     const result = await listWorkerCommands(workerId);
     if (!result.success) {
       setMessage(`${result.error_code}: ${result.message}`);
       return;
     }
     setWorkerCommandsByWorkerId((current) => ({ ...current, [workerId]: result.data.commands }));
+    if (serverId && result.data.commands[0]) {
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [serverId]: result.data.commands[0] }));
+    }
   }
 
   async function runWorkerCheck(server: VpsServerData) {
@@ -434,20 +443,44 @@ export function ServerManagementPanel() {
       const csrfToken = await ensureCsrfToken();
       const result = await createWorkerCommand(
         server.worker_id,
-        { command_type: "collect_status", payload: null },
+        { command_type: "collect_status", payload: null, server_id: server.id, server_type: "landing" },
         csrfToken,
       );
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setMessage(`Worker 检查命令已创建：${result.data.command.id}。请稍后刷新命令状态。`);
-      await loadWorkerCommands(server.worker_id);
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [server.id]: result.data.command }));
+      const targetVersion = result.data.target_worker_version || "未知版本";
+      const targetNote = result.data.target_worker_changed ? "已自动切换到最新支持命令的 Worker。" : "";
+      setMessage(
+        `Worker 检查命令已创建：${result.data.command.id}；目标 Worker：${result.data.target_worker_id} / ${targetVersion}。${targetNote}`,
+      );
+      await loadWorkerCommands(result.data.target_worker_id, server.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "创建 Worker 检查命令失败。");
     } finally {
       setWorkerCommandLoadingId(null);
     }
+  }
+
+  function latestWorkerCommandForServer(server: VpsServerData) {
+    return latestWorkerCommandByServerId[server.id] ?? (server.worker_id ? workerCommandsByWorkerId[server.worker_id]?.[0] : undefined);
+  }
+
+  function renderRecentWorkerCommand(command: WorkerCommandData | undefined) {
+    if (!command) {
+      return null;
+    }
+    return (
+      <span className="worker-command-status">
+        最近命令：
+        {workerCommandTypeLabel(command.command_type)} / {workerCommandStatusLabel(command.status)}
+        {command.target_worker_version ? ` / Worker ${command.target_worker_version}` : ""}
+        {command.result_summary ? ` / ${command.result_summary}` : ""}
+        {command.error_message ? ` / ${command.error_message}` : ""}
+      </span>
+    );
   }
 
   async function openNodeDetail(node: ServerNodeSummary, showQr = false) {
@@ -747,19 +780,7 @@ export function ServerManagementPanel() {
                     Worker：{server.worker_status ? displayStatusLabel(server.worker_status) : "未注册"}；主机名：
                     {server.worker_hostname || "暂无"}；网卡：{server.worker_interface_name || "暂无"}；最后心跳：
                     {formatTime(server.worker_last_heartbeat_at)}
-                    {server.worker_id && workerCommandsByWorkerId[server.worker_id]?.[0] ? (
-                      <span className="worker-command-status">
-                        最近命令：
-                        {workerCommandTypeLabel(workerCommandsByWorkerId[server.worker_id][0].command_type)} /{" "}
-                        {workerCommandStatusLabel(workerCommandsByWorkerId[server.worker_id][0].status)}
-                        {workerCommandsByWorkerId[server.worker_id][0].result_summary
-                          ? ` / ${workerCommandsByWorkerId[server.worker_id][0].result_summary}`
-                          : ""}
-                        {workerCommandsByWorkerId[server.worker_id][0].error_message
-                          ? ` / ${workerCommandsByWorkerId[server.worker_id][0].error_message}`
-                          : ""}
-                      </span>
-                    ) : null}
+                    {renderRecentWorkerCommand(latestWorkerCommandForServer(server))}
                   </div>
                 ) : null}
                 {server.last_ssh_error ? <div className="server-row-error">最近 SSH 失败原因：{server.last_ssh_error}</div> : null}
