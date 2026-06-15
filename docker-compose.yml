@@ -35,6 +35,8 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
       INIT_TOKEN: ${INIT_TOKEN:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-86400}
@@ -63,6 +65,8 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
       INIT_TOKEN: ${INIT_TOKEN:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-86400}
@@ -79,6 +83,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     depends_on:

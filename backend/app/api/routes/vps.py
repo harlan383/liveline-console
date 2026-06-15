@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from rq import Queue
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -14,6 +14,17 @@ from app.schemas.read_node import ConfirmHostKeyRequest
 from app.services.auth_service import record_audit
 from app.services.credentials import store_temp_credential
 from app.services.task_logging import add_task_log
+from app.services.worker_binding import (
+    WORKER_PENDING_STATUS,
+    WorkerPublicUrlError,
+    connection_mode_for_vps,
+    create_bound_worker_token,
+    latest_workers_by_server,
+    serialize_worker_token_bootstrap,
+    vps_display_status,
+    worker_public_url_error_response,
+    worker_summary_fields,
+)
 from app.worker.jobs import (
     check_vps_ssh_job,
     delete_xray_backup_candidate_job,
@@ -70,6 +81,20 @@ class VpsUpdateRequest(BaseModel):
     notes: str | None = None
 
 
+class VpsWorkerBootstrapRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    ip: str = Field(min_length=1, max_length=45)
+    expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
+
+    @field_validator("name", "ip")
+    @classmethod
+    def clean_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("value cannot be empty")
+        return cleaned
+
+
 async def read_private_key_payload(
     private_key_text: str | None,
     private_key_file: UploadFile | None,
@@ -121,7 +146,7 @@ def serialize_vps_node(node, *, vps_ip: str) -> dict:
     }
 
 
-def serialize_vps(vps: VpsServer) -> dict:
+def serialize_vps(vps: VpsServer, *, worker=None) -> dict:
     nodes = [
         serialize_vps_node(node, vps_ip=vps.ip)
         for node in sorted(
@@ -131,6 +156,7 @@ def serialize_vps(vps: VpsServer) -> dict:
         )
         if node.deleted_at is None
     ]
+    worker_fields = worker_summary_fields(worker)
     return {
         "id": vps.id,
         "name": vps.name or vps.ip,
@@ -143,6 +169,9 @@ def serialize_vps(vps: VpsServer) -> dict:
         "last_ssh_status": vps.last_ssh_status,
         "last_ssh_check_at": vps.last_ssh_check_at.isoformat() if vps.last_ssh_check_at else None,
         "last_ssh_error": vps.last_ssh_error,
+        "connection_mode": connection_mode_for_vps(vps, worker),
+        "display_status": vps_display_status(vps, worker),
+        **worker_fields,
         "created_at": vps.created_at.isoformat() if vps.created_at else None,
         "updated_at": vps.updated_at.isoformat() if vps.updated_at else None,
         "nodes": nodes,
@@ -252,7 +281,11 @@ def list_vps(request: Request, db: Session = Depends(get_db)):
         .where(VpsServer.status != "deleted")
         .order_by(VpsServer.created_at.desc())
     ).all()
-    return success_response({"servers": [serialize_vps(vps) for vps in servers]}, "ok")
+    workers = latest_workers_by_server(db, role="landing", server_ids=[vps.id for vps in servers])
+    return success_response(
+        {"servers": [serialize_vps(vps, worker=workers.get(vps.id)) for vps in servers]},
+        "ok",
+    )
 
 
 @router.post("")
@@ -333,6 +366,86 @@ async def create_vps(
     return success_response(
         {"task_id": task.id, "vps_id": vps.id, "server": serialize_vps(vps)},
         "服务器记录已保存，SSH 握手检测任务已创建。",
+    )
+
+
+@router.post("/worker-bootstrap")
+def create_vps_worker_bootstrap(
+    payload: VpsWorkerBootstrapRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    data, validation_error = validate_vps_payload(
+        name=payload.name,
+        ip=payload.ip,
+        ssh_port=22,
+        ssh_user="root",
+        notes=None,
+    )
+    if validation_error:
+        return error_response(*validation_error)
+    assert data is not None
+
+    existing = db.scalar(
+        select(VpsServer).where(
+            VpsServer.ip == data["ip"],
+            VpsServer.status != "deleted",
+        )
+    )
+    if existing:
+        return error_response(409, "VPS_ALREADY_EXISTS", "该落地服务器记录已存在，请编辑现有记录或删除后重试。")
+
+    try:
+        vps = VpsServer(
+            name=data["name"],
+            ip=data["ip"],
+            ssh_port=22,
+            ssh_username="root",
+            notes=None,
+            status=WORKER_PENDING_STATUS,
+            last_ssh_status="unchecked",
+            last_ssh_error=None,
+        )
+        db.add(vps)
+        db.flush()
+        token, raw_token, install_command = create_bound_worker_token(
+            db,
+            role="landing",
+            name=vps.name,
+            server_id=vps.id,
+            admin_id=session.admin_id,
+            expires_in_minutes=payload.expires_in_minutes,
+        )
+        record_audit(
+            db,
+            admin_id=session.admin_id,
+            action="create_vps_worker_bootstrap",
+            result="success",
+            request=request,
+            resource_type="vps",
+            resource_id=vps.id,
+        )
+        db.commit()
+        db.refresh(vps)
+        db.refresh(token)
+    except WorkerPublicUrlError as exc:
+        db.rollback()
+        return worker_public_url_error_response(exc)
+
+    return success_response(
+        {
+            "server": serialize_vps(vps),
+            "token": serialize_worker_token_bootstrap(token, raw_token, install_command),
+            "install_command": install_command,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+        },
+        "落地服务器记录已创建，Worker 安装命令已生成。",
     )
 
 

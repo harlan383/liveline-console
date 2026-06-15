@@ -23,6 +23,11 @@ from app.schemas.workers import (
     WorkerTokenCreate,
 )
 from app.services.auth_service import record_audit
+from app.services.worker_binding import (
+    sync_worker_bound_resource_status,
+    try_bind_worker_by_public_ip,
+    validate_worker_token_binding_target,
+)
 
 router = APIRouter()
 setup_router = APIRouter()
@@ -312,8 +317,11 @@ def create_worker_token(
         name=payload.name,
         expires_at=expires_at,
         created_by=session.admin_id,
-        server_id=None,
+        server_id=payload.server_id,
     )
+    binding_error = validate_worker_token_binding_target(db, token)
+    if binding_error:
+        return error_response(400, binding_error[0], binding_error[1])
     db.add(token)
     db.flush()
     record_audit(
@@ -338,6 +346,7 @@ def create_worker_token(
             "install_command": install_command,
             "masked_token": mask_token(raw_token),
             "status": token.status,
+            "server_id": token.server_id,
         },
         "Worker 安装 token 已生成。明文 token 只在本次响应中返回。",
     )
@@ -408,6 +417,9 @@ def register_worker(payload: WorkerRegisterRequest, db: Session = Depends(get_db
         return error_response(400, "WORKER_TOKEN_EXPIRED", "Worker token 已过期。")
     if token_record.role != payload.role:
         return error_response(400, "WORKER_ROLE_MISMATCH", "Worker role 与 token 不一致。")
+    binding_error = validate_worker_token_binding_target(db, token_record)
+    if binding_error:
+        return error_response(400, binding_error[0], binding_error[1])
 
     current_time = now_utc()
     raw_worker_secret = new_token()
@@ -431,6 +443,7 @@ def register_worker(payload: WorkerRegisterRequest, db: Session = Depends(get_db
     token_record.used_at = current_time
     db.add(worker)
     db.add(token_record)
+    sync_worker_bound_resource_status(db, worker)
     db.commit()
     db.refresh(worker)
 
@@ -481,6 +494,10 @@ def worker_heartbeat(
         "latest_status": redact_metadata(heartbeat_data),
     }
     db.add(worker)
+    if worker.server_id:
+        sync_worker_bound_resource_status(db, worker)
+    else:
+        try_bind_worker_by_public_ip(db, worker)
     db.commit()
 
     return success_response(

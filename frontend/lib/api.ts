@@ -113,6 +113,16 @@ export type TransitResourceData = {
   ssh_port: number | null;
   ssh_username: string | null;
   status: string;
+  connection_mode: string;
+  worker_id: string | null;
+  worker_status: string | null;
+  worker_role: WorkerRole | null;
+  worker_hostname: string | null;
+  worker_interface_name: string | null;
+  worker_version: string | null;
+  worker_last_heartbeat_at: string | null;
+  worker_online: boolean;
+  display_status: string;
   expires_at: string | null;
   notes: string | null;
   created_at: string | null;
@@ -274,6 +284,16 @@ export type VpsServerData = {
   last_ssh_status: string;
   last_ssh_check_at: string | null;
   last_ssh_error: string | null;
+  connection_mode: string;
+  worker_id: string | null;
+  worker_status: string | null;
+  worker_role: WorkerRole | null;
+  worker_hostname: string | null;
+  worker_interface_name: string | null;
+  worker_version: string | null;
+  worker_last_heartbeat_at: string | null;
+  worker_online: boolean;
+  display_status: string;
   created_at: string | null;
   updated_at: string | null;
   nodes: VpsServerNodeSummary[];
@@ -307,6 +327,7 @@ export type WorkerRole = "landing" | "transit";
 export type WorkerTokenCreateRequest = {
   role: WorkerRole;
   name?: string | null;
+  server_id?: string | null;
   expires_in_minutes?: number;
 };
 
@@ -317,6 +338,33 @@ export type WorkerTokenCreateResult = {
   install_command: string;
   masked_token: string;
   status: string;
+  server_id: string | null;
+};
+
+export type VpsWorkerBootstrapRequest = {
+  name: string;
+  ip: string;
+  expires_in_minutes?: number;
+};
+
+export type VpsWorkerBootstrapResult = {
+  server: VpsServerData;
+  token: WorkerTokenCreateResult;
+  install_command: string;
+  expires_at: string;
+};
+
+export type TransitWorkerBootstrapRequest = {
+  name: string;
+  ip: string;
+  expires_in_minutes?: number;
+};
+
+export type TransitWorkerBootstrapResult = {
+  resource: TransitResourceData;
+  token: WorkerTokenCreateResult;
+  install_command: string;
+  expires_at: string;
 };
 
 export type WorkerMetadataSummary = {
@@ -356,6 +404,28 @@ export async function createWorkerToken(
   csrfToken: string,
 ): Promise<ApiResponse<WorkerTokenCreateResult>> {
   return apiFetch<WorkerTokenCreateResult>("/api/worker-tokens", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createVpsWorkerBootstrap(
+  payload: VpsWorkerBootstrapRequest,
+  csrfToken: string,
+): Promise<ApiResponse<VpsWorkerBootstrapResult>> {
+  return apiFetch<VpsWorkerBootstrapResult>("/api/vps/worker-bootstrap", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createTransitWorkerBootstrap(
+  payload: TransitWorkerBootstrapRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitWorkerBootstrapResult>> {
+  return apiFetch<TransitWorkerBootstrapResult>("/api/transit-resources/worker-bootstrap", {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),

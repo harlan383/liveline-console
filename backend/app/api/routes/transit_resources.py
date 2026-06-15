@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from pydantic import BaseModel, Field, field_validator
 from rq import Queue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,16 +22,42 @@ from app.schemas.transit_resource import (
 from app.services.auth_service import record_audit
 from app.services.credentials import store_temp_credential
 from app.services.task_logging import add_task_log
+from app.services.worker_binding import (
+    WORKER_PENDING_STATUS,
+    WorkerPublicUrlError,
+    connection_mode_for_transit,
+    create_bound_worker_token,
+    latest_workers_by_server,
+    serialize_worker_token_bootstrap,
+    transit_display_status,
+    worker_public_url_error_response,
+    worker_summary_fields,
+)
 from app.worker.jobs import install_gost_job, install_socat_job, read_transit_server_job
 
 router = APIRouter()
+
+
+class TransitWorkerBootstrapRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    ip: str = Field(min_length=1, max_length=45)
+    expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
+
+    @field_validator("name", "ip")
+    @classmethod
+    def clean_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("value cannot be empty")
+        return cleaned
 
 
 def numeric_value(value: Decimal | None) -> float | None:
     return float(value) if value is not None else None
 
 
-def serialize_transit_resource(resource: TransitResource) -> dict:
+def serialize_transit_resource(resource: TransitResource, *, worker=None) -> dict:
+    worker_fields = worker_summary_fields(worker)
     return {
         "id": resource.id,
         "name": resource.name,
@@ -49,6 +76,9 @@ def serialize_transit_resource(resource: TransitResource) -> dict:
         "ssh_port": resource.ssh_port,
         "ssh_username": resource.ssh_username,
         "status": resource.status,
+        "connection_mode": connection_mode_for_transit(resource, worker),
+        "display_status": transit_display_status(resource, worker),
+        **worker_fields,
         "expires_at": resource.expires_at.isoformat() if resource.expires_at else None,
         "notes": resource.notes,
         "created_at": resource.created_at.isoformat() if resource.created_at else None,
@@ -124,9 +154,10 @@ def list_transit_resources(
         .where(*conditions)
         .order_by(TransitResource.created_at.desc())
     ).all()
+    workers = latest_workers_by_server(db, role="transit", server_ids=[resource.id for resource in resources])
 
     return success_response(
-        {"resources": [serialize_transit_resource(resource) for resource in resources]},
+        {"resources": [serialize_transit_resource(resource, worker=workers.get(resource.id)) for resource in resources]},
         "ok",
     )
 
@@ -166,6 +197,86 @@ def create_transit_resource(
     return success_response(
         serialize_transit_resource(resource),
         "中转资源已创建。本阶段只保存资源信息，不会连接远端。",
+    )
+
+
+@router.post("/worker-bootstrap")
+def create_transit_resource_worker_bootstrap(
+    payload: TransitWorkerBootstrapRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    from app.services.vps_validation import validate_public_ipv4
+
+    host_error = validate_public_ipv4(payload.ip)
+    if host_error:
+        return error_response(400, host_error, "中转服务器 IP 格式不合法，只允许公网 IPv4。")
+
+    existing = db.scalar(
+        select(TransitResource).where(
+            TransitResource.deleted_at.is_(None),
+            TransitResource.resource_type == "server",
+            TransitResource.entry_host == payload.ip,
+        )
+    )
+    if existing:
+        return error_response(409, "TRANSIT_RESOURCE_ALREADY_EXISTS", "该中转服务器记录已存在，请编辑现有记录。")
+
+    try:
+        resource = TransitResource(
+            name=payload.name,
+            resource_type="server",
+            provider=None,
+            entry_host=payload.ip,
+            entry_port=22,
+            protocol_hint="tcp",
+            has_ssh=False,
+            ssh_host=None,
+            ssh_port=None,
+            ssh_username=None,
+            status=WORKER_PENDING_STATUS,
+            notes=None,
+        )
+        db.add(resource)
+        db.flush()
+        token, raw_token, install_command = create_bound_worker_token(
+            db,
+            role="transit",
+            name=resource.name,
+            server_id=resource.id,
+            admin_id=session.admin_id,
+            expires_in_minutes=payload.expires_in_minutes,
+        )
+        record_audit(
+            db,
+            admin_id=session.admin_id,
+            action="create_transit_resource_worker_bootstrap",
+            result="success",
+            request=request,
+            resource_type="transit_resource",
+            resource_id=resource.id,
+        )
+        db.commit()
+        db.refresh(resource)
+        db.refresh(token)
+    except WorkerPublicUrlError as exc:
+        db.rollback()
+        return worker_public_url_error_response(exc)
+
+    return success_response(
+        {
+            "resource": serialize_transit_resource(resource),
+            "token": serialize_worker_token_bootstrap(token, raw_token, install_command),
+            "install_command": install_command,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+        },
+        "中转服务器记录已创建，Worker 安装命令已生成。",
     )
 
 

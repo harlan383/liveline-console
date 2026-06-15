@@ -873,6 +873,7 @@ textarea {
   padding: 14px;
 }
 
+.server-row-worker,
 .server-row-error,
 .server-node-empty,
 .server-table-empty {
@@ -881,6 +882,10 @@ textarea {
   color: var(--muted);
   font-size: 13px;
   padding: 10px 12px;
+}
+
+.server-row-worker {
+  color: #b9fff5;
 }
 
 .server-row-error {
