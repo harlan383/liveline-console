@@ -583,6 +583,25 @@ does not add database migrations, does not modify `node.share_link`, does not
 add listening ports, does not execute SSH or remote commands, does not create
 real nodes by page load or modal open, and does not perform formal cutover.
 
+## Stage 3.3.19 Transit server UI table alignment scope
+
+Stage 3.3.19 aligns the Transit Servers page with the Landing Servers
+management-table experience before the first Worker implementation. The page
+now defaults to a transit-server table with name, IP address, SSH port, status,
+and actions; existing forwarding routes are shown as child rows under their
+transit server. Advanced single-route planning, readonly preflight, and legacy
+diagnostic tools remain available, but are collapsed behind an advanced-tools
+section by default.
+
+Stage 3.3.19 uses existing transit resource and transit route read/write APIs
+only for local resource records. Add/edit transit server works through local
+resource APIs; remote recheck, remote cleanup, safe route deletion, real Worker
+onboarding, and real forwarding creation remain future Worker/API stages. It
+does not implement Worker, does not generate Worker tokens, does not execute
+SSH or remote commands, does not create real transit routes by default, does
+not add HAProxy, does not add database migrations, does not add listening
+ports, does not modify `node.share_link`, and does not perform formal cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -1760,6 +1779,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.14 UI zh-CN collapsible tips | Console UI localized to Chinese; large safety tips collapsed by default |
 | Stage 3.3.17 Server management UI table | Servers page changed to server-management table backed by VPS APIs |
 | Stage 3.3.18 Node menu consolidation | Nodes left-nav entry removed; nav renamed to Transit Servers / Landing Servers; node actions consolidated under landing-server child rows |
+| Stage 3.3.19 Transit server UI table alignment | Transit Servers page aligned to management-table UI; Worker/remote execution remains future-stage |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
