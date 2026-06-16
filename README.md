@@ -962,6 +962,26 @@ install Xray, create nodes, add listening ports, modify firewall / cloud
 security groups, generate real node links, modify `node.share_link`, or perform
 cutover.
 
+## Stage 3.3.37-c Worker installer ReadWritePaths precreate hotfix scope
+
+Stage 3.3.37-c fixes a Worker installer compatibility issue with the hardened
+systemd sandbox. The Worker unit uses
+`ReadWritePaths=/opt/liveline-xray /etc/systemd/system /run/systemd`; if
+`/opt/liveline-xray` does not exist before systemd sets up the namespace,
+`liveline-worker.service` can fail with `status=226/NAMESPACE`.
+
+The Worker install script now pre-creates `/opt/liveline-xray` with mode `755`
+before writing and starting `liveline-worker.service`. This directory is only
+the future LiveLine-owned writable root for Xray execution stages. The installer
+does not create `/opt/liveline-xray/bin/xray`, does not create
+`/opt/liveline-xray/config/config.json`, and does not create
+`liveline-xray.service`.
+
+This stage does not trigger `landing_node_create`, execute SSH or remote
+commands, deploy the public console, reinstall Worker on any VPS, install Xray,
+create nodes, add listening ports, modify firewall / cloud security groups,
+generate real node links, modify `node.share_link`, or perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2158,6 +2178,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.37 Formal landing node create execution | Controlled landing-node create command path added; local validation did not execute real creation |
 | Stage 3.3.37-a Formal create Worker targeting hotfix | Formal create now targets the latest eligible online ens17 landing Worker; no real execution |
 | Stage 3.3.37-b Xray install path and Worker sandbox hotfix | Xray path moved to /opt/liveline-xray and Worker sandbox write paths narrowed |
+| Stage 3.3.37-c Worker installer ReadWritePaths precreate hotfix | Worker installer precreates /opt/liveline-xray before starting the sandboxed service |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
