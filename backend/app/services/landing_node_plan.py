@@ -12,7 +12,8 @@ from app.schemas.landing_node_plan import LandingNodePlanRequest
 from app.services.worker_binding import worker_runtime_status
 from app.services.worker_targeting import worker_supports_command_channel
 
-DEFAULT_NEXT_STAGE = "Stage 3.3.35-formal-landing-node-create-approval"
+DEFAULT_NEXT_STAGE = "Stage 3.3.37-formal-landing-node-create-execution"
+APPROVED_FORMAL_LISTEN_PORT = 27939
 SAFE_PORT_MIN = 1
 SAFE_PORT_MAX = 65535
 BLOCKED_NODE_LISTEN_PORTS = {
@@ -200,6 +201,16 @@ def build_landing_node_plan(
     blocked_reasons: list[str] = []
     warnings: list[str] = []
     confirmations: list[str] = []
+    execution_guard = [
+        "27939/TCP 已由用户确认完成云安全组 / 云防火墙 / 服务器本机防火墙放行",
+        "正式执行前必须重新运行 landing_preflight",
+        "正式执行前必须确认 27939/TCP 当前未监听",
+        "正式执行前必须确认 Xray 当前未安装",
+        "正式执行前必须确认当前无已有 Xray 配置",
+        "只有创建成功、Xray 服务启动成功、端口监听成功后才能写入 node.share_link",
+        "真实节点链接不得写入 README、阶段文档、终端日志或聊天记录",
+        "失败回滚只允许清理本次新增的 Xray 配置、systemd 服务和监听端口",
+    ]
 
     if not worker:
         blocked_reasons.append("worker_offline")
@@ -223,12 +234,16 @@ def build_landing_node_plan(
     elif configured_interface and not primary_interface_ip:
         warnings.append("Worker 未返回 primary_interface_ip，正式创建前需确认公网网卡识别正确。")
 
-    if payload.listen_port < SAFE_PORT_MIN or payload.listen_port > SAFE_PORT_MAX or payload.listen_port in BLOCKED_NODE_LISTEN_PORTS:
+    if payload.listen_port != APPROVED_FORMAL_LISTEN_PORT:
+        blocked_reasons.append("approved_port_mismatch")
+    elif payload.listen_port < SAFE_PORT_MIN or payload.listen_port > SAFE_PORT_MAX or payload.listen_port in BLOCKED_NODE_LISTEN_PORTS:
         blocked_reasons.append("unsafe_port")
     else:
         warnings.append(
             f"候选 TCP 端口 {payload.listen_port} 仅用于审批计划；正式创建前，用户必须到云安全组 / 云防火墙 / 服务器本机防火墙放行该 TCP 端口。"
         )
+    warnings.append("正式执行前必须重新运行 landing_preflight，并以最新预检结果确认端口、Xray 和配置状态。")
+    warnings.append("当前仍未进入正式执行阶段；本接口只生成 execution guard / dry-run 审批计划。")
 
     if command:
         port_status = important_port_status(command.result_json or {}, payload.listen_port)
@@ -288,8 +303,10 @@ def build_landing_node_plan(
         "warnings": warnings,
         "blocked_reasons": blocked_reasons,
         "next_stage_required": DEFAULT_NEXT_STAGE,
+        "execution_guard": execution_guard,
         "safety_boundary": [
             "本阶段只生成 dry-run 计划",
+            "当前未进入正式执行阶段",
             "不安装 Xray",
             "不写入 Xray 配置",
             "不创建节点",
@@ -298,6 +315,7 @@ def build_landing_node_plan(
             "不修改云服务器安全组",
             "不修改 node.share_link",
             "不生成真实可用节点链接",
+            "不创建任务",
             "不执行 cutover",
         ],
     }

@@ -59,4 +59,5 @@ class LandingNodePlanResponse(BaseModel):
     warnings: list[str]
     blocked_reasons: list[str]
     next_stage_required: str
+    execution_guard: list[str]
     safety_boundary: list[str]
