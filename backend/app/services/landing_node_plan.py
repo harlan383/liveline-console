@@ -12,10 +12,27 @@ from app.schemas.landing_node_plan import LandingNodePlanRequest
 from app.services.worker_binding import worker_runtime_status
 from app.services.worker_targeting import worker_supports_command_channel
 
-DEFAULT_NEXT_STAGE = "Stage 3.3.33-worker-preflight-interface-normalization 或 Stage 3.3.33-formal-landing-node-create-approval"
+DEFAULT_NEXT_STAGE = "Stage 3.3.35-formal-landing-node-create-approval"
 SAFE_PORT_MIN = 1
 SAFE_PORT_MAX = 65535
-BLOCKED_MANAGEMENT_PORTS = {22, 20575}
+BLOCKED_NODE_LISTEN_PORTS = {
+    22,
+    80,
+    443,
+    8080,
+    8443,
+    18443,
+    3000,
+    3200,
+    8000,
+    8200,
+    5432,
+    6379,
+    15432,
+    16379,
+    10000,
+    27017,
+}
 
 
 def latest_landing_preflight(db: Session, server_id: str) -> WorkerCommand | None:
@@ -206,10 +223,12 @@ def build_landing_node_plan(
     elif configured_interface and not primary_interface_ip:
         warnings.append("Worker 未返回 primary_interface_ip，正式创建前需确认公网网卡识别正确。")
 
-    if payload.listen_port < SAFE_PORT_MIN or payload.listen_port > SAFE_PORT_MAX or payload.listen_port in BLOCKED_MANAGEMENT_PORTS:
+    if payload.listen_port < SAFE_PORT_MIN or payload.listen_port > SAFE_PORT_MAX or payload.listen_port in BLOCKED_NODE_LISTEN_PORTS:
         blocked_reasons.append("unsafe_port")
-    elif payload.listen_port in {443, 8443, 18443}:
-        warnings.append(f"端口 {payload.listen_port} 可作为候选端口，但正式使用前必须单独确认云安全组 / 云防火墙 / 服务器防火墙。")
+    else:
+        warnings.append(
+            f"候选 TCP 端口 {payload.listen_port} 仅用于审批计划；正式创建前，用户必须到云安全组 / 云防火墙 / 服务器本机防火墙放行该 TCP 端口。"
+        )
 
     if command:
         port_status = important_port_status(command.result_json or {}, payload.listen_port)

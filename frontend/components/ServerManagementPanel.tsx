@@ -62,6 +62,43 @@ type WorkerBootstrapFormState = {
 
 type ServerNodeSummary = VpsServerData["nodes"][number];
 
+const CANDIDATE_PORT_MIN = 10000;
+const CANDIDATE_PORT_MAX = 30000;
+const BLOCKED_NODE_LISTEN_PORTS = new Set([
+  22,
+  80,
+  443,
+  8080,
+  8443,
+  18443,
+  3000,
+  3200,
+  8000,
+  8200,
+  5432,
+  6379,
+  15432,
+  16379,
+  10000,
+  27017,
+]);
+
+function randomCandidateListenPort() {
+  const span = CANDIDATE_PORT_MAX - CANDIDATE_PORT_MIN + 1;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const port = CANDIDATE_PORT_MIN + Math.floor(Math.random() * span);
+    if (!BLOCKED_NODE_LISTEN_PORTS.has(port)) {
+      return String(port);
+    }
+  }
+  for (let port = CANDIDATE_PORT_MIN; port <= CANDIDATE_PORT_MAX; port += 1) {
+    if (!BLOCKED_NODE_LISTEN_PORTS.has(port)) {
+      return String(port);
+    }
+  }
+  return "10001";
+}
+
 const emptyServerForm: ServerFormState = {
   name: "",
   ip: "",
@@ -72,23 +109,25 @@ const emptyServerForm: ServerFormState = {
   passphrase: "",
 };
 
-const emptyNodePlanForm: NodePlanFormState = {
-  listenPort: "443",
-  protocol: "vless",
-  security: "reality",
-  flow: "xtls-rprx-vision",
-  serverName: "www.microsoft.com",
-  dest: "www.microsoft.com:443",
-  remark: "",
-  allowInstallXray: false,
-  allowModifyFirewall: false,
-  allowGenerateShareLink: false,
-  allowOverwriteExistingConfig: false,
-  cloudSecurityGroupConfirmed: false,
-  cloudFirewallConfirmed: false,
-  serverFirewallConfirmed: false,
-  requirePreflightSuccess: true,
-};
+function createEmptyNodePlanForm(): NodePlanFormState {
+  return {
+    listenPort: randomCandidateListenPort(),
+    protocol: "vless",
+    security: "reality",
+    flow: "xtls-rprx-vision",
+    serverName: "www.microsoft.com",
+    dest: "www.microsoft.com:443",
+    remark: "",
+    allowInstallXray: false,
+    allowModifyFirewall: false,
+    allowGenerateShareLink: false,
+    allowOverwriteExistingConfig: false,
+    cloudSecurityGroupConfirmed: false,
+    cloudFirewallConfirmed: false,
+    serverFirewallConfirmed: false,
+    requirePreflightSuccess: true,
+  };
+}
 
 const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
   name: "",
@@ -231,7 +270,7 @@ export function ServerManagementPanel() {
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [selectedServer, setSelectedServer] = useState<VpsServerData | null>(null);
   const [serverForm, setServerForm] = useState<ServerFormState>(emptyServerForm);
-  const [nodePlanForm, setNodePlanForm] = useState<NodePlanFormState>(emptyNodePlanForm);
+  const [nodePlanForm, setNodePlanForm] = useState<NodePlanFormState>(() => createEmptyNodePlanForm());
   const [nodePlanResult, setNodePlanResult] = useState<LandingNodePlanResponse | null>(null);
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
@@ -283,7 +322,7 @@ export function ServerManagementPanel() {
     setModalMode(null);
     setSelectedServer(null);
     setServerForm(emptyServerForm);
-    setNodePlanForm(emptyNodePlanForm);
+    setNodePlanForm(createEmptyNodePlanForm());
     setNodePlanResult(null);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
@@ -348,7 +387,7 @@ export function ServerManagementPanel() {
 
   function openNodePlan(server: VpsServerData) {
     setSelectedServer(server);
-    setNodePlanForm(emptyNodePlanForm);
+    setNodePlanForm(createEmptyNodePlanForm());
     setNodePlanResult(null);
     setModalMode("nodePlan");
   }
@@ -762,6 +801,10 @@ export function ServerManagementPanel() {
     const listenPort = Number(nodePlanForm.listenPort);
     if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
       setMessage("计划监听端口必须是 1-65535 之间的整数。");
+      return;
+    }
+    if (BLOCKED_NODE_LISTEN_PORTS.has(listenPort)) {
+      setMessage(`端口 ${listenPort} 是常用 / 保留端口，不能作为本次落地节点候选监听端口。请改用 10000-30000 中未被保留的 TCP 端口。`);
       return;
     }
     setSubmitting(true);
@@ -1321,7 +1364,15 @@ export function ServerManagementPanel() {
             value={nodePlanForm.listenPort}
             onChange={(event) => setNodePlanForm({ ...nodePlanForm, listenPort: event.target.value })}
           />
+          <small>默认随机选择 10000-30000 的候选 TCP 端口，并自动避开常用 / 保留端口。</small>
         </label>
+        <button
+          className="secondary wide-field"
+          type="button"
+          onClick={() => setNodePlanForm({ ...nodePlanForm, listenPort: randomCandidateListenPort() })}
+        >
+          重新随机候选端口
+        </button>
         <label>
           协议
           <select value={nodePlanForm.protocol} onChange={(event) => setNodePlanForm({ ...nodePlanForm, protocol: event.target.value })}>
@@ -1422,16 +1473,16 @@ export function ServerManagementPanel() {
 
         <div className="warning-box wide-field">
           <strong>端口和安全组提醒</strong>
-          <span>443 是常见 HTTPS / Reality 端口；8443 和 18443 只能作为候选端口并单独审批。</span>
-          <span>22 和历史问题端口 20575 不可用于业务节点监听。</span>
-          <span>凡新增或变更监听端口，必须同步去云服务器安全组 / 云防火墙放行对应 TCP 端口，并检查服务器本机防火墙。</span>
+          <span>候选端口策略：随机选择 10000-30000 的 TCP 端口，不再默认使用 443。</span>
+          <span>禁止使用常用 / 保留端口：22、80、443、8080、8443、18443、3000、3200、8000、8200、5432、6379、15432、16379、10000、27017。</span>
+          <span>正式创建前，用户必须到云服务器安全组 / 云防火墙 / 服务器本机防火墙放行候选 TCP 端口。</span>
         </div>
 
         <div className="failure-box wide-field">
           <strong>当前阶段不会执行</strong>
           <span>不会执行 SSH / 远程命令，不会安装 Xray，不会创建节点，不会开放端口，不会修改防火墙。</span>
           <span>不会生成完整节点链接，不会修改 node.share_link，不会执行 cutover。</span>
-          <span>正式创建必须进入下一阶段审批。</span>
+          <span>正式创建必须进入 Stage 3.3.35-formal-landing-node-create-approval 审批。</span>
         </div>
 
         <div className="modal-actions wide-field">
