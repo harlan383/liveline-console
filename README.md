@@ -886,9 +886,8 @@ or remote commands, create tasks, or perform cutover.
 
 Stage 3.3.37 adds the controlled formal landing-node creation execution path.
 The only approved target is landing server
-`968519b3-9017-4b27-a9a0-d5731033f84f` at `64.90.13.19`, Worker
-`ef421476-dcad-4380-8cea-40dc81e543fd`, interface `ens17`, and listen port
-`27939/TCP`.
+`968519b3-9017-4b27-a9a0-d5731033f84f` at `64.90.13.19`, interface `ens17`,
+and listen port `27939/TCP`.
 
 The backend now exposes `POST /api/vps/{server_id}/landing-node-create` with
 mandatory second confirmations for firewall allowance, real share-link
@@ -907,6 +906,32 @@ This stage's local development and PR validation did not execute SSH, remote
 commands, public deployment, Xray installation, node creation, new listening
 ports, firewall / cloud security group changes, real link generation,
 `node.share_link` modification, or cutover.
+
+## Stage 3.3.37-a Formal create Worker targeting hotfix scope
+
+Stage 3.3.37-a fixes the formal landing-node create Worker targeting guard.
+The original Stage 3.3.37 implementation locked the create path to one
+historical Worker ID. After the Worker was upgraded and re-registered, the
+formal create endpoint correctly refused to create a command, but it could not
+select the current online Worker.
+
+The hotfix removes the old hard-coded Worker ID and selects the latest eligible
+Worker for the approved landing server. A Worker is eligible only when it is
+bound to server `968519b3-9017-4b27-a9a0-d5731033f84f`, has role `landing`, has
+interface `ens17`, is recorded as `online`, has a fresh heartbeat, and supports
+`landing_node_create` with version `0.1.4-stage-3.3.37` or newer. If multiple
+Workers match, the backend chooses the one with the newest heartbeat, then
+newest registration / creation timestamp.
+
+This hotfix does not lower the formal execution guard. The approved server ID,
+approved port `27939/TCP`, required second confirmations, successful preflight,
+no-listener check, no-Xray-installed check, and no-existing-Xray-config check
+remain required before any command can be created.
+
+This stage's local validation did not trigger `landing_node_create`, execute
+SSH or remote commands, deploy the public console, install Xray, create nodes,
+add listening ports, modify firewall / cloud security groups, generate real
+node links, modify `node.share_link`, or perform cutover.
 
 ## Stage 3.3.14 C cutover decision pack scope
 
@@ -2102,6 +2127,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.35 Formal landing node create approval | Landing-node dry-run uses random high candidate ports and blocks common ports; no real execution |
 | Stage 3.3.36 Formal landing node create execution guard | Fixed 27939/TCP execution guard documented; real execution remains disabled |
 | Stage 3.3.37 Formal landing node create execution | Controlled landing-node create command path added; local validation did not execute real creation |
+| Stage 3.3.37-a Formal create Worker targeting hotfix | Formal create now targets the latest eligible online ens17 landing Worker; no real execution |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
