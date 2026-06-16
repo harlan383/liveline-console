@@ -933,6 +933,35 @@ SSH or remote commands, deploy the public console, install Xray, create nodes,
 add listening ports, modify firewall / cloud security groups, generate real
 node links, modify `node.share_link`, or perform cutover.
 
+## Stage 3.3.37-b Xray install path and Worker sandbox hotfix scope
+
+Stage 3.3.37-b fixes the Xray install path and Worker systemd sandbox write
+boundary after the first formal create attempt failed safely with
+`open /usr/local/bin/xray: read-only file system`. The failure did not leave
+`27939/TCP` listening, did not create `liveline-xray.service`, did not leave
+LiveLine Xray files, did not create nodes, and did not write `node.share_link`.
+
+The Worker no longer installs Xray to `/usr/local/bin` or writes LiveLine Xray
+config under `/usr/local/etc`. It now uses LiveLine-owned paths:
+`/opt/liveline-xray/bin/xray`, `/opt/liveline-xray/config/config.json`, and
+`/opt/liveline-xray/state`. The generated `liveline-xray.service` runs
+`/opt/liveline-xray/bin/xray run -config /opt/liveline-xray/config/config.json`.
+
+The Worker install script keeps `NoNewPrivileges=true`, `ProtectSystem=full`,
+`ProtectHome=read-only`, and `PrivateTmp=true`, and adds only the minimal
+`ReadWritePaths=/opt/liveline-xray /etc/systemd/system /run/systemd` allowance.
+It does not open `/usr`, `/etc`, or `/` broadly.
+
+The formal create preflight now rejects both the new LiveLine-owned paths and
+legacy Xray / LiveLine paths if they already exist before the current run.
+Rollback removes only files and directories created by the current run.
+
+This stage's local validation did not trigger `landing_node_create`, execute
+SSH or remote commands, deploy the public console, connect to the landing VPS,
+install Xray, create nodes, add listening ports, modify firewall / cloud
+security groups, generate real node links, modify `node.share_link`, or perform
+cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2128,6 +2157,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.36 Formal landing node create execution guard | Fixed 27939/TCP execution guard documented; real execution remains disabled |
 | Stage 3.3.37 Formal landing node create execution | Controlled landing-node create command path added; local validation did not execute real creation |
 | Stage 3.3.37-a Formal create Worker targeting hotfix | Formal create now targets the latest eligible online ens17 landing Worker; no real execution |
+| Stage 3.3.37-b Xray install path and Worker sandbox hotfix | Xray path moved to /opt/liveline-xray and Worker sandbox write paths narrowed |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

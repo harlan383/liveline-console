@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.4-stage-3.3.37"
+const workerVersion = "0.1.5-stage-3.3.37"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -31,9 +31,12 @@ const commandOutputLimit = 12000
 const commandTimeout = 180 * time.Second
 const formalLandingPort = 27939
 const xrayDownloadURL = "https://github.com/XTLS/Xray-core/releases/download/v25.1.1/Xray-linux-64.zip"
-const managedXrayBinaryPath = "/usr/local/bin/xray"
-const managedXrayConfigPath = "/usr/local/etc/liveline-xray/config.json"
-const managedXrayConfigDir = "/usr/local/etc/liveline-xray"
+const managedXrayBaseDir = "/opt/liveline-xray"
+const managedXrayBinDir = "/opt/liveline-xray/bin"
+const managedXrayBinaryPath = "/opt/liveline-xray/bin/xray"
+const managedXrayConfigDir = "/opt/liveline-xray/config"
+const managedXrayConfigPath = "/opt/liveline-xray/config/config.json"
+const managedXrayStateDir = "/opt/liveline-xray/state"
 const managedXrayServiceName = "liveline-xray.service"
 const managedXrayServicePath = "/etc/systemd/system/liveline-xray.service"
 
@@ -455,11 +458,15 @@ type landingNodeCreateRequest struct {
 }
 
 type landingNodeCreateArtifacts struct {
-	ConfigWritten  bool
-	ServiceWritten bool
-	BinaryWritten  bool
-	DaemonReloaded bool
-	ServiceStarted bool
+	ConfigWritten    bool
+	ServiceWritten   bool
+	BinaryWritten    bool
+	DaemonReloaded   bool
+	ServiceStarted   bool
+	BaseDirCreated   bool
+	BinDirCreated    bool
+	ConfigDirCreated bool
+	StateDirCreated  bool
 }
 
 func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]any, error) {
@@ -484,7 +491,7 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 	}
 	addPhase("preflight_recheck", "passed", "27939/TCP 未监听，Xray / x-ui / 3x-ui 未安装，已有 Xray 配置未发现。")
 
-	if err := installXrayBinary(); err != nil {
+	if err := installXrayBinary(artifacts); err != nil {
 		addPhase("install_xray_core", "failed", err.Error())
 		rollbackLandingNodeCreate(artifacts)
 		return landingNodeFailureResult(request, phases), err
@@ -500,7 +507,7 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 	}
 	addPhase("generate_reality_material", "passed", "VLESS UUID、Reality public key 和 shortId 已生成；private key 仅写入本机配置。")
 
-	if err := writeManagedXrayConfig(request, reality); err != nil {
+	if err := writeManagedXrayConfig(request, reality, artifacts); err != nil {
 		addPhase("write_xray_config", "failed", err.Error())
 		rollbackLandingNodeCreate(artifacts)
 		return landingNodeFailureResult(request, phases), err
@@ -651,9 +658,16 @@ func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
 		return fmt.Errorf("approved TCP port %d is already listening", request.ListenPort)
 	}
 	for _, path := range []string{
+		managedXrayBaseDir,
+		managedXrayBinDir,
 		managedXrayBinaryPath,
+		managedXrayConfigDir,
 		"/usr/bin/xray",
 		managedXrayConfigPath,
+		managedXrayStateDir,
+		"/usr/local/bin/xray",
+		"/usr/local/etc/liveline-xray/config.json",
+		"/usr/local/etc/liveline-xray",
 		"/usr/local/etc/xray/config.json",
 		"/etc/xray/config.json",
 		managedXrayServicePath,
@@ -678,7 +692,7 @@ func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
 	return nil
 }
 
-func installXrayBinary() error {
+func installXrayBinary(artifacts *landingNodeCreateArtifacts) error {
 	tmpDir, err := os.MkdirTemp("", "liveline-xray-*")
 	if err != nil {
 		return err
@@ -696,7 +710,51 @@ func installXrayBinary() error {
 	if err := os.Chmod(xrayPath, 0o755); err != nil {
 		return err
 	}
+	if err := ensureManagedXrayDirs(artifacts); err != nil {
+		return err
+	}
 	return copyFile(xrayPath, managedXrayBinaryPath, 0o755)
+}
+
+func ensureManagedXrayDirs(artifacts *landingNodeCreateArtifacts) error {
+	created, err := ensureDir(managedXrayBaseDir, 0o755)
+	if err != nil {
+		return err
+	}
+	artifacts.BaseDirCreated = artifacts.BaseDirCreated || created
+	created, err = ensureDir(managedXrayBinDir, 0o755)
+	if err != nil {
+		return err
+	}
+	artifacts.BinDirCreated = artifacts.BinDirCreated || created
+	created, err = ensureDir(managedXrayConfigDir, 0o700)
+	if err != nil {
+		return err
+	}
+	artifacts.ConfigDirCreated = artifacts.ConfigDirCreated || created
+	created, err = ensureDir(managedXrayStateDir, 0o700)
+	if err != nil {
+		return err
+	}
+	artifacts.StateDirCreated = artifacts.StateDirCreated || created
+	return nil
+}
+
+func ensureDir(path string, mode os.FileMode) (bool, error) {
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return false, fmt.Errorf("%s exists but is not a directory", path)
+		}
+		return false, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := os.Mkdir(path, mode); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func downloadFile(rawURL string, destination string) error {
@@ -838,7 +896,7 @@ func randomHex(byteCount int) (string, error) {
 	return hex.EncodeToString(buffer), nil
 }
 
-func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMaterial) error {
+func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMaterial, artifacts *landingNodeCreateArtifacts) error {
 	config := map[string]any{
 		"log": map[string]any{"loglevel": "warning"},
 		"inbounds": []any{
@@ -880,7 +938,7 @@ func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMat
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(managedXrayConfigDir, 0o700); err != nil {
+	if err := ensureManagedXrayDirs(artifacts); err != nil {
 		return err
 	}
 	return os.WriteFile(managedXrayConfigPath, append(content, '\n'), 0o600)
@@ -894,7 +952,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/xray run -config /usr/local/etc/liveline-xray/config.json
+ExecStart=/opt/liveline-xray/bin/xray run -config /opt/liveline-xray/config/config.json
 Restart=on-failure
 RestartSec=5
 User=root
@@ -982,10 +1040,21 @@ func rollbackLandingNodeCreate(artifacts *landingNodeCreateArtifacts) {
 	}
 	if artifacts.ConfigWritten {
 		_ = os.Remove(managedXrayConfigPath)
-		_ = os.Remove(managedXrayConfigDir)
 	}
 	if artifacts.BinaryWritten {
 		_ = os.Remove(managedXrayBinaryPath)
+	}
+	if artifacts.StateDirCreated {
+		_ = os.Remove(managedXrayStateDir)
+	}
+	if artifacts.ConfigDirCreated {
+		_ = os.Remove(managedXrayConfigDir)
+	}
+	if artifacts.BinDirCreated {
+		_ = os.Remove(managedXrayBinDir)
+	}
+	if artifacts.BaseDirCreated {
+		_ = os.Remove(managedXrayBaseDir)
 	}
 	if artifacts.DaemonReloaded || artifacts.ServiceWritten {
 		_, _ = runCommand(30*time.Second, "systemctl", "daemon-reload")
