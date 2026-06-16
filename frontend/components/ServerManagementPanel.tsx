@@ -6,12 +6,14 @@ import QRCode from "react-qr-code";
 import {
   apiFetch,
   apiFormFetch,
+  createLandingNodeExecution,
   createLandingNodePlan,
   createWorkerCommand,
   createVpsWorkerBootstrap,
   createWorkerToken,
   listWorkerCommands,
   type LandingNodePlanResponse,
+  type LandingNodeCreateResponse,
   type CsrfResult,
   type NodeData,
   type VpsServerData,
@@ -52,6 +54,17 @@ type NodePlanFormState = {
   cloudFirewallConfirmed: boolean;
   serverFirewallConfirmed: boolean;
   requirePreflightSuccess: boolean;
+};
+
+type FormalCreateConfirmState = {
+  firewallOpen: boolean;
+  installXray: boolean;
+  createRealityNode: boolean;
+  noExistingXray: boolean;
+  listenPortApproved: boolean;
+  generateShareLink: boolean;
+  writeShareLinkAfterSuccess: boolean;
+  rollbackNewArtifactsOnly: boolean;
 };
 
 type WorkerBootstrapFormState = {
@@ -109,6 +122,19 @@ function createEmptyNodePlanForm(): NodePlanFormState {
     cloudFirewallConfirmed: true,
     serverFirewallConfirmed: true,
     requirePreflightSuccess: true,
+  };
+}
+
+function createEmptyFormalCreateConfirm(): FormalCreateConfirmState {
+  return {
+    firewallOpen: false,
+    installXray: false,
+    createRealityNode: false,
+    noExistingXray: false,
+    listenPortApproved: false,
+    generateShareLink: false,
+    writeShareLinkAfterSuccess: false,
+    rollbackNewArtifactsOnly: false,
   };
 }
 
@@ -181,6 +207,7 @@ function workerCommandTypeLabel(commandType: string) {
     collect_status: "状态采集",
     service_status: "服务状态",
     landing_preflight: "只读预检",
+    landing_node_create: "正式创建落地节点",
   };
   return labels[commandType] ?? commandType;
 }
@@ -255,6 +282,8 @@ export function ServerManagementPanel() {
   const [serverForm, setServerForm] = useState<ServerFormState>(emptyServerForm);
   const [nodePlanForm, setNodePlanForm] = useState<NodePlanFormState>(() => createEmptyNodePlanForm());
   const [nodePlanResult, setNodePlanResult] = useState<LandingNodePlanResponse | null>(null);
+  const [formalCreateConfirm, setFormalCreateConfirm] = useState<FormalCreateConfirmState>(() => createEmptyFormalCreateConfirm());
+  const [formalCreateResult, setFormalCreateResult] = useState<LandingNodeCreateResponse | null>(null);
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
@@ -307,6 +336,8 @@ export function ServerManagementPanel() {
     setServerForm(emptyServerForm);
     setNodePlanForm(createEmptyNodePlanForm());
     setNodePlanResult(null);
+    setFormalCreateConfirm(createEmptyFormalCreateConfirm());
+    setFormalCreateResult(null);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
     clearFileInput();
@@ -372,6 +403,8 @@ export function ServerManagementPanel() {
     setSelectedServer(server);
     setNodePlanForm(createEmptyNodePlanForm());
     setNodePlanResult(null);
+    setFormalCreateConfirm(createEmptyFormalCreateConfirm());
+    setFormalCreateResult(null);
     setModalMode("nodePlan");
   }
 
@@ -833,6 +866,57 @@ export function ServerManagementPanel() {
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "生成落地节点创建计划失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function allFormalCreateConfirmationsChecked() {
+    return Object.values(formalCreateConfirm).every(Boolean);
+  }
+
+  async function submitFormalLandingNodeCreate() {
+    if (!selectedServer) {
+      return;
+    }
+    if (!nodePlanResult?.ready) {
+      setMessage("必须先生成 Ready 的 dry-run / execution guard 计划。");
+      return;
+    }
+    if (!allFormalCreateConfirmationsChecked()) {
+      setMessage("正式创建前必须完成全部二次确认。");
+      return;
+    }
+    setSubmitting(true);
+    setFormalCreateResult(null);
+    setMessage("正在创建正式落地节点 Worker 命令；真实执行由审批锁定的 Worker 轮询处理。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await createLandingNodeExecution(
+        selectedServer.id,
+        {
+          approved_port: APPROVED_FORMAL_LISTEN_PORT,
+          confirm_firewall_open: formalCreateConfirm.firewallOpen,
+          confirm_generate_share_link: formalCreateConfirm.generateShareLink,
+          confirm_write_share_link_after_success: formalCreateConfirm.writeShareLinkAfterSuccess,
+          confirm_no_existing_xray: formalCreateConfirm.noExistingXray,
+          confirm_rollback_new_artifacts_only: formalCreateConfirm.rollbackNewArtifactsOnly,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setFormalCreateResult(result.data);
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [selectedServer.id]: result.data.command }));
+      setMessage(
+        `正式创建 Worker 命令已创建：${result.data.command_id}。真实链接不会写入命令结果、日志或聊天记录。`,
+      );
+      await loadWorkerCommands(result.data.target_worker_id, selectedServer.id);
+      await loadServers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建正式落地节点命令失败。");
     } finally {
       setSubmitting(false);
     }
@@ -1328,11 +1412,106 @@ export function ServerManagementPanel() {
           {nodePlanResult.execution_guard.map((item) => (
             <span key={item}>{item}</span>
           ))}
-          <span>当前只生成 execution guard / dry-run 计划，不会触发真实执行接口。</span>
+          <span>只有完成下面全部二次确认后，才允许创建正式 Worker 执行命令。</span>
+        </div>
+
+        <div className="landing-plan-checklist formal-create-checklist">
+          <strong>正式创建二次确认</strong>
+          <label>
+            <input
+              type="checkbox"
+              checked={formalCreateConfirm.firewallOpen}
+              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, firewallOpen: event.target.checked })}
+            />
+            已确认云安全组 / 云防火墙 / 服务器本机防火墙均已放行 27939/TCP
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={formalCreateConfirm.installXray}
+              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, installXray: event.target.checked })}
+            />
+            允许本次正式执行安装 Xray-core
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={formalCreateConfirm.createRealityNode}
+              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, createRealityNode: event.target.checked })}
+            />
+            允许本次正式执行创建 VLESS Reality 落地节点
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={formalCreateConfirm.listenPortApproved}
+              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, listenPortApproved: event.target.checked })}
+            />
+            允许本次正式执行监听 27939/TCP
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={formalCreateConfirm.noExistingXray}
+              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, noExistingXray: event.target.checked })}
+            />
+            已确认正式执行前仍需复核 Xray 未安装且无已有 Xray 配置
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={formalCreateConfirm.generateShareLink}
+              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, generateShareLink: event.target.checked })}
+            />
+            允许生成真实分享链接，但不写入文档、日志或聊天
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={formalCreateConfirm.writeShareLinkAfterSuccess}
+              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, writeShareLinkAfterSuccess: event.target.checked })}
+            />
+            允许在创建成功、Xray 启动成功、端口监听成功后写入 node.share_link
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={formalCreateConfirm.rollbackNewArtifactsOnly}
+              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, rollbackNewArtifactsOnly: event.target.checked })}
+            />
+            如失败，只允许清理本次新增内容，不删除非 LiveLine 管理文件
+          </label>
+          <button
+            className="danger"
+            disabled={submitting || !nodePlanResult.ready || !allFormalCreateConfirmationsChecked()}
+            type="button"
+            onClick={() => void submitFormalLandingNodeCreate()}
+          >
+            {submitting ? "创建命令中..." : "正式创建落地节点"}
+          </button>
+          <small>该按钮只创建 Worker 命令；Worker 会先重新预检。命令结果不会默认展示完整分享链接。</small>
+        </div>
+
+        {formalCreateResult ? (
+          <div className="worker-command-panel">
+            <strong>正式创建命令已创建</strong>
+            <span>命令 ID：{formalCreateResult.command_id}</span>
+            <span>目标 Worker：{formalCreateResult.target_worker_id}</span>
+            <span>Worker 版本：{formalCreateResult.target_worker_version || "未返回"}</span>
+            <span>状态：{workerCommandStatusLabel(formalCreateResult.status)}</span>
+            <span>{formalCreateResult.next_action}</span>
+            {formalCreateResult.safety_boundary.map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="server-management-note">
+          前端不会 console.log 完整分享链接；真实链接只允许在创建成功后的受控节点详情 / 复制区域查看。
         </div>
 
         <div className="server-management-note">
-          计划结果只用于审批准备；本阶段未执行远程命令、未安装 Xray、未创建节点、未新增监听端口、未修改防火墙、未生成真实节点链接。
+          dry-run 计划本身只用于审批准备；只有上方二次确认全部完成并点击正式创建后，才会创建 Worker 执行命令。
         </div>
       </div>
     );

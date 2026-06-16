@@ -1,8 +1,11 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,10 +23,19 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.3-stage-3.3.33"
+const workerVersion = "0.1.4-stage-3.3.37"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
+const commandOutputLimit = 12000
+const commandTimeout = 180 * time.Second
+const formalLandingPort = 27939
+const xrayDownloadURL = "https://github.com/XTLS/Xray-core/releases/download/v25.1.1/Xray-linux-64.zip"
+const managedXrayBinaryPath = "/usr/local/bin/xray"
+const managedXrayConfigPath = "/usr/local/etc/liveline-xray/config.json"
+const managedXrayConfigDir = "/usr/local/etc/liveline-xray"
+const managedXrayServiceName = "liveline-xray.service"
+const managedXrayServicePath = "/etc/systemd/system/liveline-xray.service"
 
 type config struct {
 	ConsoleURL               string
@@ -406,9 +419,602 @@ func executeWorkerCommand(cfg config, command workerCommand) (map[string]any, er
 		result := collectLandingPreflight(cfg, hostname)
 		result["timestamp"] = now
 		return result, nil
+	case "landing_node_create":
+		if cfg.Role != "landing" {
+			return nil, fmt.Errorf("landing_node_create requires landing worker role")
+		}
+		result, err := executeLandingNodeCreate(cfg, command.Payload)
+		if err != nil {
+			return nil, err
+		}
+		result["worker_version"] = workerVersion
+		result["hostname"] = hostname
+		result["timestamp"] = now
+		return result, nil
 	default:
 		return nil, fmt.Errorf("unsupported command_type %q", command.CommandType)
 	}
+}
+
+type landingNodeCreateRequest struct {
+	ServerID           string
+	ServerIP           string
+	WorkerID           string
+	InterfaceName      string
+	ListenPort         int
+	Protocol           string
+	Security           string
+	Flow               string
+	ServerName         string
+	Dest               string
+	Fingerprint        string
+	NodeName           string
+	ManagedConfigPath  string
+	ManagedServiceName string
+	ManagedServicePath string
+}
+
+type landingNodeCreateArtifacts struct {
+	ConfigWritten  bool
+	ServiceWritten bool
+	BinaryWritten  bool
+	DaemonReloaded bool
+	ServiceStarted bool
+}
+
+func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]any, error) {
+	request, err := parseLandingNodeCreateRequest(cfg, payload)
+	if err != nil {
+		return nil, err
+	}
+	phases := []map[string]any{}
+	artifacts := &landingNodeCreateArtifacts{}
+
+	addPhase := func(name string, status string, summary string) {
+		phases = append(phases, map[string]any{
+			"name":    name,
+			"status":  status,
+			"summary": summary,
+		})
+	}
+
+	if err := landingNodePreflightRecheck(request); err != nil {
+		addPhase("preflight_recheck", "failed", err.Error())
+		return landingNodeFailureResult(request, phases), err
+	}
+	addPhase("preflight_recheck", "passed", "27939/TCP 未监听，Xray / x-ui / 3x-ui 未安装，已有 Xray 配置未发现。")
+
+	if err := installXrayBinary(); err != nil {
+		addPhase("install_xray_core", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	artifacts.BinaryWritten = true
+	addPhase("install_xray_core", "passed", "Xray-core binary 已安装到 LiveLine 审批路径。")
+
+	reality, err := generateRealityMaterial()
+	if err != nil {
+		addPhase("generate_reality_material", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	addPhase("generate_reality_material", "passed", "VLESS UUID、Reality public key 和 shortId 已生成；private key 仅写入本机配置。")
+
+	if err := writeManagedXrayConfig(request, reality); err != nil {
+		addPhase("write_xray_config", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	artifacts.ConfigWritten = true
+	addPhase("write_xray_config", "passed", "LiveLine 管理的 Xray 配置已写入。")
+
+	if err := writeManagedXrayService(); err != nil {
+		addPhase("write_systemd_service", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	artifacts.ServiceWritten = true
+	addPhase("write_systemd_service", "passed", "LiveLine 管理的 systemd service 已写入。")
+
+	if _, err := runCommand(commandTimeout, managedXrayBinaryPath, "run", "-test", "-config", managedXrayConfigPath); err != nil {
+		addPhase("xray_config_test", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	addPhase("xray_config_test", "passed", "Xray 配置测试通过。")
+
+	if _, err := runCommand(commandTimeout, "systemctl", "daemon-reload"); err != nil {
+		addPhase("systemd_daemon_reload", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	artifacts.DaemonReloaded = true
+	if _, err := runCommand(commandTimeout, "systemctl", "enable", managedXrayServiceName); err != nil {
+		addPhase("systemd_enable", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	if _, err := runCommand(commandTimeout, "systemctl", "restart", managedXrayServiceName); err != nil {
+		addPhase("systemd_restart", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	artifacts.ServiceStarted = true
+	addPhase("systemd_start", "passed", "LiveLine 管理的 Xray service 已 enable 并 restart。")
+
+	if err := verifyManagedXrayActiveAndListening(request.ListenPort); err != nil {
+		addPhase("verify_listening", "failed", err.Error())
+		rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResult(request, phases), err
+	}
+	addPhase("verify_listening", "passed", "Xray service active，27939/TCP 已监听。")
+
+	shareLink := buildVLESSRealityShareLink(request, reality)
+	return map[string]any{
+		"status":              "succeeded",
+		"phases":              phases,
+		"node_name":           request.NodeName,
+		"listen_port":         request.ListenPort,
+		"protocol":            request.Protocol,
+		"security":            request.Security,
+		"flow":                request.Flow,
+		"server_name":         request.ServerName,
+		"dest":                request.Dest,
+		"fingerprint":         request.Fingerprint,
+		"uuid":                reality.UUID,
+		"reality_public_key":  reality.PublicKey,
+		"reality_short_id":    reality.ShortID,
+		"managed_config_path": managedXrayConfigPath,
+		"managed_service":     managedXrayServiceName,
+		"share_link_present":  true,
+		"masked_share_link":   maskShareLink(shareLink),
+		"secure_share_link":   shareLink,
+		"safety_boundary": []any{
+			"node.share_link is written only by backend after this success result",
+			"Reality private key was not returned",
+			"rollback scope is current run artifacts only",
+		},
+	}, nil
+}
+
+func parseLandingNodeCreateRequest(cfg config, payload map[string]any) (landingNodeCreateRequest, error) {
+	request := landingNodeCreateRequest{
+		ServerID:           stringPayload(payload, "server_id"),
+		ServerIP:           stringPayload(payload, "server_ip"),
+		WorkerID:           stringPayload(payload, "worker_id"),
+		InterfaceName:      stringPayload(payload, "interface_name"),
+		ListenPort:         intPayload(payload, "listen_port"),
+		Protocol:           defaultStringPayload(payload, "protocol", "vless"),
+		Security:           defaultStringPayload(payload, "security", "reality"),
+		Flow:               defaultStringPayload(payload, "flow", "xtls-rprx-vision"),
+		ServerName:         defaultStringPayload(payload, "server_name", "www.microsoft.com"),
+		Dest:               defaultStringPayload(payload, "dest", "www.microsoft.com:443"),
+		Fingerprint:        defaultStringPayload(payload, "fingerprint", "chrome"),
+		NodeName:           defaultStringPayload(payload, "node_name", "liveline-reality-27939"),
+		ManagedConfigPath:  defaultStringPayload(payload, "managed_config_path", managedXrayConfigPath),
+		ManagedServiceName: defaultStringPayload(payload, "managed_service_name", managedXrayServiceName),
+		ManagedServicePath: defaultStringPayload(payload, "managed_service_path", managedXrayServicePath),
+	}
+	if request.WorkerID != cfg.WorkerID {
+		return request, errors.New("landing_node_create worker_id does not match local worker")
+	}
+	if request.InterfaceName != cfg.InterfaceName {
+		return request, errors.New("landing_node_create interface does not match local worker config")
+	}
+	if request.ListenPort != formalLandingPort {
+		return request, fmt.Errorf("landing_node_create approved port must be %d", formalLandingPort)
+	}
+	if request.Protocol != "vless" || request.Security != "reality" || request.Flow == "" || request.ServerName == "" || request.Dest == "" {
+		return request, errors.New("landing_node_create payload contains unsupported protocol or Reality fields")
+	}
+	if net.ParseIP(request.ServerIP) == nil {
+		return request, errors.New("landing_node_create server_ip is invalid")
+	}
+	if request.ManagedConfigPath != managedXrayConfigPath || request.ManagedServicePath != managedXrayServicePath || request.ManagedServiceName != managedXrayServiceName {
+		return request, errors.New("landing_node_create managed paths do not match LiveLine safety boundary")
+	}
+	return request, nil
+}
+
+func stringPayload(payload map[string]any, key string) string {
+	value, _ := payload[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func defaultStringPayload(payload map[string]any, key string, fallback string) string {
+	value := stringPayload(payload, key)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func intPayload(payload map[string]any, key string) int {
+	switch value := payload[key].(type) {
+	case int:
+		return value
+	case float64:
+		return int(value)
+	case string:
+		parsed, _ := strconv.Atoi(value)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
+	if os.Geteuid() != 0 {
+		return errors.New("landing_node_create must run as root because Xray and systemd files are managed")
+	}
+	if portListening(request.ListenPort) {
+		return fmt.Errorf("approved TCP port %d is already listening", request.ListenPort)
+	}
+	for _, path := range []string{
+		managedXrayBinaryPath,
+		"/usr/bin/xray",
+		managedXrayConfigPath,
+		"/usr/local/etc/xray/config.json",
+		"/etc/xray/config.json",
+		managedXrayServicePath,
+		"/etc/systemd/system/xray.service",
+		"/etc/systemd/system/x-ui.service",
+		"/etc/systemd/system/3x-ui.service",
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("preflight refused because %s already exists", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("preflight cannot inspect %s: %w", path, err)
+		}
+	}
+	for _, binary := range []string{"xray", "x-ui", "3x-ui"} {
+		if path, err := exec.LookPath(binary); err == nil && path != "" {
+			return fmt.Errorf("preflight refused because %s is already installed at %s", binary, path)
+		}
+	}
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return errors.New("systemctl is required")
+	}
+	return nil
+}
+
+func installXrayBinary() error {
+	tmpDir, err := os.MkdirTemp("", "liveline-xray-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	zipPath := filepath.Join(tmpDir, "xray.zip")
+	if err := downloadFile(xrayDownloadURL, zipPath); err != nil {
+		return err
+	}
+	xrayPath := filepath.Join(tmpDir, "xray")
+	if err := extractZipFile(zipPath, "xray", xrayPath); err != nil {
+		return err
+	}
+	if err := os.Chmod(xrayPath, 0o755); err != nil {
+		return err
+	}
+	return copyFile(xrayPath, managedXrayBinaryPath, 0o755)
+}
+
+func downloadFile(rawURL string, destination string) error {
+	client := &http.Client{Timeout: 120 * time.Second}
+	response, err := client.Get(rawURL)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("download failed status=%d", response.StatusCode)
+	}
+	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	written, err := io.Copy(file, io.LimitReader(response.Body, 200<<20))
+	if err != nil {
+		return err
+	}
+	if written <= 0 {
+		return errors.New("downloaded Xray archive is empty")
+	}
+	return nil
+}
+
+func extractZipFile(zipPath string, wantedName string, destination string) error {
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	for _, item := range reader.File {
+		if filepath.Base(item.Name) != wantedName {
+			continue
+		}
+		source, err := item.Open()
+		if err != nil {
+			return err
+		}
+		defer source.Close()
+		target, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(target, source); err != nil {
+			target.Close()
+			return err
+		}
+		return target.Close()
+	}
+	return fmt.Errorf("xray binary %q not found in archive", wantedName)
+}
+
+func copyFile(source string, destination string, mode os.FileMode) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(output, input); err != nil {
+		output.Close()
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(destination, mode)
+}
+
+type realityMaterial struct {
+	UUID       string
+	PrivateKey string
+	PublicKey  string
+	ShortID    string
+}
+
+func generateRealityMaterial() (realityMaterial, error) {
+	output, err := runCommand(commandTimeout, managedXrayBinaryPath, "x25519")
+	if err != nil {
+		return realityMaterial{}, err
+	}
+	privateKey, publicKey := parseX25519Keys(output)
+	if privateKey == "" || publicKey == "" {
+		return realityMaterial{}, errors.New("xray x25519 output did not include expected key pair")
+	}
+	uuidValue, err := randomUUID()
+	if err != nil {
+		return realityMaterial{}, err
+	}
+	shortID, err := randomHex(8)
+	if err != nil {
+		return realityMaterial{}, err
+	}
+	return realityMaterial{
+		UUID:       uuidValue,
+		PrivateKey: privateKey,
+		PublicKey:  publicKey,
+		ShortID:    shortID,
+	}, nil
+}
+
+func parseX25519Keys(output string) (string, string) {
+	privateKey := ""
+	publicKey := ""
+	for _, line := range strings.Split(output, "\n") {
+		cleaned := strings.TrimSpace(line)
+		lowered := strings.ToLower(cleaned)
+		if strings.HasPrefix(lowered, "private key:") {
+			privateKey = strings.TrimSpace(cleaned[len("Private key:"):])
+		}
+		if strings.HasPrefix(lowered, "public key:") {
+			publicKey = strings.TrimSpace(cleaned[len("Public key:"):])
+		}
+	}
+	return privateKey, publicKey
+}
+
+func randomUUID() (string, error) {
+	buffer := make([]byte, 16)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	buffer[6] = (buffer[6] & 0x0f) | 0x40
+	buffer[8] = (buffer[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", buffer[0:4], buffer[4:6], buffer[6:8], buffer[8:10], buffer[10:16]), nil
+}
+
+func randomHex(byteCount int) (string, error) {
+	buffer := make([]byte, byteCount)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buffer), nil
+}
+
+func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMaterial) error {
+	config := map[string]any{
+		"log": map[string]any{"loglevel": "warning"},
+		"inbounds": []any{
+			map[string]any{
+				"listen":   "0.0.0.0",
+				"port":     request.ListenPort,
+				"protocol": "vless",
+				"settings": map[string]any{
+					"clients": []any{
+						map[string]any{
+							"id":   reality.UUID,
+							"flow": request.Flow,
+						},
+					},
+					"decryption": "none",
+				},
+				"streamSettings": map[string]any{
+					"network":  "tcp",
+					"security": "reality",
+					"realitySettings": map[string]any{
+						"show":        false,
+						"dest":        request.Dest,
+						"xver":        0,
+						"serverNames": []any{request.ServerName},
+						"privateKey":  reality.PrivateKey,
+						"shortIds":    []any{reality.ShortID},
+					},
+				},
+			},
+		},
+		"outbounds": []any{
+			map[string]any{
+				"protocol": "freedom",
+				"tag":      "direct",
+			},
+		},
+	}
+	content, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(managedXrayConfigDir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(managedXrayConfigPath, append(content, '\n'), 0o600)
+}
+
+func writeManagedXrayService() error {
+	content := `[Unit]
+Description=LiveLine managed Xray Reality node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/xray run -config /usr/local/etc/liveline-xray/config.json
+Restart=on-failure
+RestartSec=5
+User=root
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+`
+	return os.WriteFile(managedXrayServicePath, []byte(content), 0o644)
+}
+
+func verifyManagedXrayActiveAndListening(port int) error {
+	output, err := runCommand(commandTimeout, "systemctl", "is-active", managedXrayServiceName)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(output) != "active" {
+		return fmt.Errorf("%s is not active", managedXrayServiceName)
+	}
+	if !portListening(port) {
+		return fmt.Errorf("approved TCP port %d is not listening after Xray start", port)
+	}
+	return nil
+}
+
+func portListening(port int) bool {
+	output, _ := readonlyCommandOutput("ss", "-lntup")
+	rows, _ := listeningPortRows(output)
+	for _, row := range rows {
+		if value, ok := row["port"].(int); ok && value == port {
+			return true
+		}
+	}
+	return false
+}
+
+func buildVLESSRealityShareLink(request landingNodeCreateRequest, reality realityMaterial) string {
+	values := url.Values{}
+	values.Set("encryption", "none")
+	values.Set("flow", request.Flow)
+	values.Set("security", "reality")
+	values.Set("sni", request.ServerName)
+	values.Set("fp", request.Fingerprint)
+	values.Set("pbk", reality.PublicKey)
+	values.Set("sid", reality.ShortID)
+	values.Set("type", "tcp")
+	fragment := url.QueryEscape(request.NodeName)
+	return fmt.Sprintf(
+		"vless://%s@%s:%d?%s#%s",
+		reality.UUID,
+		request.ServerIP,
+		request.ListenPort,
+		values.Encode(),
+		fragment,
+	)
+}
+
+func maskShareLink(shareLink string) string {
+	if len(shareLink) <= 40 {
+		return "[redacted-link]"
+	}
+	return shareLink[:18] + "..." + shareLink[len(shareLink)-10:]
+}
+
+func landingNodeFailureResult(request landingNodeCreateRequest, phases []map[string]any) map[string]any {
+	return map[string]any{
+		"status":      "failed",
+		"node_name":   request.NodeName,
+		"listen_port": request.ListenPort,
+		"phases":      phases,
+		"rollback":    "attempted_current_run_artifacts_only",
+	}
+}
+
+func rollbackLandingNodeCreate(artifacts *landingNodeCreateArtifacts) {
+	if artifacts == nil {
+		return
+	}
+	if artifacts.ServiceStarted {
+		_, _ = runCommand(30*time.Second, "systemctl", "stop", managedXrayServiceName)
+	}
+	if artifacts.ServiceWritten {
+		_, _ = runCommand(30*time.Second, "systemctl", "disable", managedXrayServiceName)
+		_ = os.Remove(managedXrayServicePath)
+	}
+	if artifacts.ConfigWritten {
+		_ = os.Remove(managedXrayConfigPath)
+		_ = os.Remove(managedXrayConfigDir)
+	}
+	if artifacts.BinaryWritten {
+		_ = os.Remove(managedXrayBinaryPath)
+	}
+	if artifacts.DaemonReloaded || artifacts.ServiceWritten {
+		_, _ = runCommand(30*time.Second, "systemctl", "daemon-reload")
+	}
+}
+
+func runCommand(timeout time.Duration, name string, args ...string) (string, error) {
+	if _, err := exec.LookPath(name); err != nil && strings.Contains(name, "/") {
+		if _, statErr := os.Stat(name); statErr != nil {
+			return "", fmt.Errorf("%s not found", name)
+		}
+	} else if err != nil {
+		return "", fmt.Errorf("%s not found", name)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	output, err := cmd.CombinedOutput()
+	trimmed := truncateReadonlyOutput(strings.TrimSpace(string(output)), commandOutputLimit)
+	if ctx.Err() == context.DeadlineExceeded {
+		return trimmed, fmt.Errorf("%s timed out", name)
+	}
+	if err != nil {
+		if trimmed != "" {
+			return trimmed, fmt.Errorf("%s failed: %s", name, trimmed)
+		}
+		return "", fmt.Errorf("%s failed: %w", name, err)
+	}
+	return trimmed, nil
 }
 
 func postWorkerCommandResult(cfg config, commandID string, result map[string]any) error {
@@ -834,7 +1440,7 @@ func summarizeListeningPorts(ssOutput string, limit int) []map[string]any {
 
 func landingPortSummary(ssOutput string) map[string]any {
 	rows, skipped := listeningPortRows(ssOutput)
-	checks := portChecksFromRows(rows, []int{22, 80, 443, 8443, 18443})
+	checks := portChecksFromRows(rows, []int{22, 80, 443, 8443, 18443, formalLandingPort})
 	importantPorts := map[string]any{}
 	for _, check := range checks {
 		port := fmt.Sprintf("%v", check["port"])

@@ -10,11 +10,16 @@ from app.db.session import get_db
 from app.models.task import Task
 from app.models.vps_server import VpsServer
 from app.schemas.common import error_response, success_response
-from app.schemas.landing_node_plan import LandingNodePlanRequest
+from app.schemas.landing_node_plan import LandingNodeCreateRequest, LandingNodePlanRequest
 from app.schemas.read_node import ConfirmHostKeyRequest
 from app.services.auth_service import record_audit
 from app.services.credentials import store_temp_credential
 from app.services.landing_node_plan import build_landing_node_plan
+from app.services.landing_node_create import (
+    APPROVED_FORMAL_LISTEN_PORT,
+    LandingNodeCreateError,
+    create_landing_node_create_command,
+)
 from app.services.task_logging import add_task_log
 from app.services.worker_binding import (
     WORKER_PENDING_STATUS,
@@ -34,6 +39,7 @@ from app.worker.jobs import (
     list_xray_backups_job,
     preview_xray_backup_cleanup_job,
 )
+from app.services.worker_commands import serialize_worker_command
 from app.worker.ssh_xray_backups import is_valid_failed_backup_filename
 
 router = APIRouter()
@@ -473,6 +479,60 @@ def create_landing_node_plan(
     plan = build_landing_node_plan(db=db, vps=vps, worker=worker, payload=payload)
 
     return success_response(plan, "落地节点创建 dry-run 计划已生成；未执行任何远程操作。")
+
+
+@router.post("/{vps_id}/landing-node-create")
+def create_landing_node(
+    vps_id: str,
+    payload: LandingNodeCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    vps = db.get(VpsServer, vps_id)
+    if not vps or vps.status == "deleted":
+        return error_response(404, "VPS_NOT_FOUND", "落地服务器记录不存在。")
+
+    try:
+        command, worker = create_landing_node_create_command(db=db, vps=vps, payload=payload)
+    except LandingNodeCreateError as exc:
+        return error_response(400, exc.code, exc.message)
+
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="create_landing_node",
+        result="success",
+        request=request,
+        resource_type="worker_command",
+        resource_id=command.id,
+    )
+    db.commit()
+    db.refresh(command)
+    return success_response(
+        {
+            "command_id": command.id,
+            "command": serialize_worker_command(command, include_payload=True, worker=worker),
+            "target_worker_id": worker.id,
+            "target_worker_version": worker.worker_version,
+            "server_id": vps.id,
+            "approved_port": APPROVED_FORMAL_LISTEN_PORT,
+            "status": command.status,
+            "next_action": "等待 liveline-worker 轮询执行 landing_node_create；真实链接不会写入命令结果或日志。",
+            "safety_boundary": [
+                "正式执行会先由 Worker 重新运行本机预检",
+                "只有 Worker 成功安装 Xray、写入 LiveLine 管理配置、启动服务并验证 27939/TCP 监听后，backend 才写入 node.share_link",
+                "真实 vless:// 链接不会写入 README、阶段文档、终端日志、Worker 日志或聊天记录",
+                "失败回滚只允许清理本次新增内容",
+            ],
+        },
+        "正式创建命令已创建；将由审批锁定的 Worker 执行。",
+    )
 
 
 @router.post("/{vps_id}/recheck")
