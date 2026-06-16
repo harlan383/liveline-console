@@ -164,7 +164,7 @@ POST /api/vps/{server_id}/landing-node-plan
 当前建议进入以下二选一后续阶段：
 
 - `Stage 3.3.33-worker-preflight-interface-normalization`
-- `Stage 3.3.33-formal-landing-node-create-approval`
+- `Stage 3.3.35-formal-landing-node-create-approval`
 
 在 interface mismatch 未解决或未单独审批前，不应进入真实节点创建。
 

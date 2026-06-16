@@ -842,6 +842,25 @@ execute SSH or remote commands, does not connect to real VPS hosts, does not
 create nodes or transit routes, does not add listening ports, does not modify
 firewall rules, does not modify `node.share_link`, and does not perform cutover.
 
+## Stage 3.3.35 Formal landing node create approval scope
+
+Stage 3.3.35 updates the landing-node dry-run approval plan. The next-stage
+prompt now points to `Stage 3.3.35-formal-landing-node-create-approval`, and
+the default candidate listen port is no longer `443`. The frontend now randomly
+chooses a candidate TCP port in `10000-30000` and avoids common / reserved
+ports.
+
+Blocked candidate ports are `22`, `80`, `443`, `8080`, `8443`, `18443`, `3000`,
+`3200`, `8000`, `8200`, `5432`, `6379`, `15432`, `16379`, `10000`, and `27017`.
+The backend dry-run plan rejects these ports with `unsafe_port`.
+
+The dry-run UI clearly reminds the operator that formal creation requires the
+candidate TCP port to be allowed in the cloud security group, cloud firewall,
+and server-local firewall before execution. This stage remains plan-only: it
+does not install Xray, create nodes, add listening ports, modify firewall rules,
+generate real node links, modify `node.share_link`, execute SSH or remote
+commands, create tasks, or perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2033,6 +2052,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.30 Worker landing readonly preflight | Landing Worker read-only preflight command added; no remote SSH or cutover |
 | Stage 3.3.32 Landing node create plan | Dry-run landing node creation plan added; no node creation, no SSH, no cutover |
 | Stage 3.3.33 Worker preflight interface normalization | Landing preflight interface fields normalized and listener parsing fixed; no remote execution |
+| Stage 3.3.35 Formal landing node create approval | Landing-node dry-run uses random high candidate ports and blocks common ports; no real execution |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
