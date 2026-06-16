@@ -17,10 +17,13 @@ from app.services.landing_node_plan import (
 )
 from app.services.worker_binding import worker_runtime_status
 from app.services.worker_commands import create_worker_command
-from app.services.worker_targeting import worker_supports_command_channel
+from app.services.worker_targeting import (
+    minimum_worker_version_for_command,
+    worker_sort_key,
+    worker_supports_command_channel,
+)
 
 APPROVED_FORMAL_SERVER_ID = "968519b3-9017-4b27-a9a0-d5731033f84f"
-APPROVED_FORMAL_WORKER_ID = "ef421476-dcad-4380-8cea-40dc81e543fd"
 APPROVED_FORMAL_SERVER_IP = "64.90.13.19"
 APPROVED_FORMAL_INTERFACE = "ens17"
 LANDING_NODE_CREATE_COMMAND = "landing_node_create"
@@ -76,21 +79,37 @@ def _active_node_on_port_exists(db: Session, server_id: str, port: int) -> bool:
 
 
 def _approved_worker(db: Session) -> Worker:
-    worker = db.get(Worker, APPROVED_FORMAL_WORKER_ID)
-    if not worker:
-        raise LandingNodeCreateError("APPROVED_WORKER_NOT_FOUND", "审批锁定的 Worker 不存在。")
-    if worker.server_id != APPROVED_FORMAL_SERVER_ID or worker.role != "landing":
-        raise LandingNodeCreateError("APPROVED_WORKER_MISMATCH", "审批锁定的 Worker 与目标落地服务器不匹配。")
-    if worker.interface_name != APPROVED_FORMAL_INTERFACE:
-        raise LandingNodeCreateError("APPROVED_WORKER_INTERFACE_MISMATCH", "审批锁定的 Worker 网卡不是 ens17。")
-    if worker_runtime_status(worker) != "online":
-        raise LandingNodeCreateError("APPROVED_WORKER_OFFLINE", "审批锁定的 Worker 当前不在线。")
-    if not worker_supports_command_channel(worker, LANDING_NODE_CREATE_COMMAND):
+    workers = db.scalars(
+        select(Worker)
+        .where(Worker.server_id == APPROVED_FORMAL_SERVER_ID)
+        .where(Worker.role == "landing")
+        .where(Worker.status == "online")
+        .where(Worker.interface_name == APPROVED_FORMAL_INTERFACE)
+    ).all()
+    if not workers:
+        raise LandingNodeCreateError(
+            "APPROVED_WORKER_NOT_FOUND",
+            "没有找到绑定到审批落地服务器、角色为 landing、网卡为 ens17 的在线 Worker。",
+        )
+
+    online_workers = [worker for worker in workers if worker_runtime_status(worker) == "online"]
+    if not online_workers:
+        raise LandingNodeCreateError(
+            "APPROVED_WORKER_OFFLINE",
+            "审批落地服务器上的 ens17 landing Worker 心跳已过期或不在线。",
+        )
+
+    capable_workers = [
+        worker for worker in online_workers if worker_supports_command_channel(worker, LANDING_NODE_CREATE_COMMAND)
+    ]
+    if not capable_workers:
+        minimum_version = minimum_worker_version_for_command(LANDING_NODE_CREATE_COMMAND)
         raise LandingNodeCreateError(
             "APPROVED_WORKER_COMMAND_UNSUPPORTED",
-            "审批锁定的 Worker 版本不支持正式创建命令，请先升级 liveline-worker。",
+            f"审批落地服务器上的在线 Worker 版本不支持正式创建命令，请先升级到 {minimum_version} 或更高版本。",
         )
-    return worker
+
+    return sorted(capable_workers, key=worker_sort_key, reverse=True)[0]
 
 
 def validate_landing_node_create_request(
@@ -243,4 +262,3 @@ def persist_successful_landing_node_result(
     sanitized["masked_share_link"] = mask_share_link(share_link)
     sanitized["share_link_storage"] = "node.share_link_written_after_success"
     return sanitized
-
