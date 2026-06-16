@@ -277,6 +277,10 @@ echo "LiveLine Worker install: installing liveline-worker for role=$ROLE interfa
 echo "LiveLine Worker install: this installs only the worker binary and systemd service."
 echo "LiveLine Worker install: it does not install Xray, socat, or gost; does not open ports; does not modify firewall rules."
 
+echo "LiveLine Worker install: preparing Worker sandbox writable directory /opt/liveline-xray."
+mkdir -p /opt/liveline-xray
+chmod 755 /opt/liveline-xray
+
 install -d -m 700 "$CONFIG_DIR"
 TMP_BINARY="$(mktemp)"
 cleanup() {{
