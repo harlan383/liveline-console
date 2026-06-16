@@ -62,8 +62,7 @@ type WorkerBootstrapFormState = {
 
 type ServerNodeSummary = VpsServerData["nodes"][number];
 
-const CANDIDATE_PORT_MIN = 10000;
-const CANDIDATE_PORT_MAX = 30000;
+const APPROVED_FORMAL_LISTEN_PORT = 27939;
 const BLOCKED_NODE_LISTEN_PORTS = new Set([
   22,
   80,
@@ -83,22 +82,6 @@ const BLOCKED_NODE_LISTEN_PORTS = new Set([
   27017,
 ]);
 
-function randomCandidateListenPort() {
-  const span = CANDIDATE_PORT_MAX - CANDIDATE_PORT_MIN + 1;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const port = CANDIDATE_PORT_MIN + Math.floor(Math.random() * span);
-    if (!BLOCKED_NODE_LISTEN_PORTS.has(port)) {
-      return String(port);
-    }
-  }
-  for (let port = CANDIDATE_PORT_MIN; port <= CANDIDATE_PORT_MAX; port += 1) {
-    if (!BLOCKED_NODE_LISTEN_PORTS.has(port)) {
-      return String(port);
-    }
-  }
-  return "10001";
-}
-
 const emptyServerForm: ServerFormState = {
   name: "",
   ip: "",
@@ -111,20 +94,20 @@ const emptyServerForm: ServerFormState = {
 
 function createEmptyNodePlanForm(): NodePlanFormState {
   return {
-    listenPort: randomCandidateListenPort(),
+    listenPort: String(APPROVED_FORMAL_LISTEN_PORT),
     protocol: "vless",
     security: "reality",
     flow: "xtls-rprx-vision",
     serverName: "www.microsoft.com",
     dest: "www.microsoft.com:443",
     remark: "",
-    allowInstallXray: false,
+    allowInstallXray: true,
     allowModifyFirewall: false,
-    allowGenerateShareLink: false,
+    allowGenerateShareLink: true,
     allowOverwriteExistingConfig: false,
-    cloudSecurityGroupConfirmed: false,
-    cloudFirewallConfirmed: false,
-    serverFirewallConfirmed: false,
+    cloudSecurityGroupConfirmed: true,
+    cloudFirewallConfirmed: true,
+    serverFirewallConfirmed: true,
     requirePreflightSuccess: true,
   };
 }
@@ -803,6 +786,10 @@ export function ServerManagementPanel() {
       setMessage("计划监听端口必须是 1-65535 之间的整数。");
       return;
     }
+    if (listenPort !== APPROVED_FORMAL_LISTEN_PORT) {
+      setMessage(`Stage 3.3.36 的正式审批候选端口固定为 ${APPROVED_FORMAL_LISTEN_PORT}/TCP，本阶段不会为其他端口生成执行计划。`);
+      return;
+    }
     if (BLOCKED_NODE_LISTEN_PORTS.has(listenPort)) {
       setMessage(`端口 ${listenPort} 是常用 / 保留端口，不能作为本次落地节点候选监听端口。请改用 10000-30000 中未被保留的 TCP 端口。`);
       return;
@@ -1257,6 +1244,7 @@ export function ServerManagementPanel() {
       xray_existing_config_detected: "检测到已有 Xray 配置",
       missing_cloud_firewall_confirmation: "云安全组 / 云防火墙 / 服务器防火墙确认不完整",
       unsafe_port: "端口不安全或不可用于业务节点",
+      approved_port_mismatch: "端口不符合本次审批的固定候选端口 27939/TCP",
       share_link_generation_not_approved: "未审批生成分享链接",
     };
     return labels[reason] ?? reason;
@@ -1335,6 +1323,14 @@ export function ServerManagementPanel() {
           ))}
         </div>
 
+        <div className="failure-box">
+          <strong>正式执行保护清单</strong>
+          {nodePlanResult.execution_guard.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+          <span>当前只生成 execution guard / dry-run 计划，不会触发真实执行接口。</span>
+        </div>
+
         <div className="server-management-note">
           计划结果只用于审批准备；本阶段未执行远程命令、未安装 Xray、未创建节点、未新增监听端口、未修改防火墙、未生成真实节点链接。
         </div>
@@ -1361,18 +1357,12 @@ export function ServerManagementPanel() {
           计划监听端口
           <input
             inputMode="numeric"
+            readOnly
             value={nodePlanForm.listenPort}
             onChange={(event) => setNodePlanForm({ ...nodePlanForm, listenPort: event.target.value })}
           />
-          <small>默认随机选择 10000-30000 的候选 TCP 端口，并自动避开常用 / 保留端口。</small>
+          <small>Stage 3.3.36 候选端口固定为 27939/TCP，本阶段只生成审批计划。</small>
         </label>
-        <button
-          className="secondary wide-field"
-          type="button"
-          onClick={() => setNodePlanForm({ ...nodePlanForm, listenPort: randomCandidateListenPort() })}
-        >
-          重新随机候选端口
-        </button>
         <label>
           协议
           <select value={nodePlanForm.protocol} onChange={(event) => setNodePlanForm({ ...nodePlanForm, protocol: event.target.value })}>
@@ -1473,16 +1463,28 @@ export function ServerManagementPanel() {
 
         <div className="warning-box wide-field">
           <strong>端口和安全组提醒</strong>
-          <span>候选端口策略：随机选择 10000-30000 的 TCP 端口，不再默认使用 443。</span>
+          <span>候选端口固定为 27939/TCP，用户已确认云安全组 / 云防火墙 / 服务器本机防火墙放行该端口。</span>
           <span>禁止使用常用 / 保留端口：22、80、443、8080、8443、18443、3000、3200、8000、8200、5432、6379、15432、16379、10000、27017。</span>
-          <span>正式创建前，用户必须到云服务器安全组 / 云防火墙 / 服务器本机防火墙放行候选 TCP 端口。</span>
+          <span>正式创建前仍必须重新运行 landing_preflight，确认 27939/TCP 未监听，Xray 未安装，且当前无已有 Xray 配置。</span>
+        </div>
+
+        <div className="failure-box wide-field">
+          <strong>正式执行保护清单</strong>
+          <span>27939/TCP 已确认放行。</span>
+          <span>正式执行前必须重新预检。</span>
+          <span>27939/TCP 当前必须未监听。</span>
+          <span>Xray 当前必须未安装。</span>
+          <span>当前必须无已有 Xray 配置。</span>
+          <span>只有创建成功、Xray 服务启动成功、端口监听成功后才能写入 node.share_link。</span>
+          <span>真实链接不得写入日志、文档或聊天。</span>
+          <span>失败回滚只清理本次新增内容。</span>
         </div>
 
         <div className="failure-box wide-field">
           <strong>当前阶段不会执行</strong>
           <span>不会执行 SSH / 远程命令，不会安装 Xray，不会创建节点，不会开放端口，不会修改防火墙。</span>
           <span>不会生成完整节点链接，不会修改 node.share_link，不会执行 cutover。</span>
-          <span>正式创建必须进入 Stage 3.3.35-formal-landing-node-create-approval 审批。</span>
+          <span>正式创建必须进入 Stage 3.3.37-formal-landing-node-create-execution。</span>
         </div>
 
         <div className="modal-actions wide-field">

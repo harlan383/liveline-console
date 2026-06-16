@@ -295,6 +295,7 @@ export type LandingNodePlanResponse = {
   warnings: string[];
   blocked_reasons: string[];
   next_stage_required: string;
+  execution_guard: string[];
   safety_boundary: string[];
 };
 

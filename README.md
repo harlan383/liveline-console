@@ -861,6 +861,27 @@ does not install Xray, create nodes, add listening ports, modify firewall rules,
 generate real node links, modify `node.share_link`, execute SSH or remote
 commands, create tasks, or perform cutover.
 
+## Stage 3.3.36 Formal landing node create execution guard scope
+
+Stage 3.3.36 adds the final execution guard before any formal landing-node
+creation. The approved candidate port is fixed to `27939/TCP`, and the operator
+has confirmed cloud security group, cloud firewall, and server-local firewall
+allowance for that port.
+
+The dry-run plan now points the next stage to
+`Stage 3.3.37-formal-landing-node-create-execution`, keeps execution disabled,
+and displays a formal execution guard checklist. Before any real execution, the
+operator must rerun `landing_preflight` and confirm `27939/TCP` is not
+listening, Xray is not installed, and there is no existing Xray config.
+
+`node.share_link` may only be written in a later execution stage after node
+creation succeeds, Xray service starts successfully, and `27939/TCP` is
+listening. Real node links must not be written to README, stage documents,
+terminal logs, task logs, PR descriptions, or chat records. This stage does not
+install Xray, create nodes, add listening ports, modify firewall rules or cloud
+security groups, generate real node links, modify `node.share_link`, execute SSH
+or remote commands, create tasks, or perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2053,6 +2074,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.32 Landing node create plan | Dry-run landing node creation plan added; no node creation, no SSH, no cutover |
 | Stage 3.3.33 Worker preflight interface normalization | Landing preflight interface fields normalized and listener parsing fixed; no remote execution |
 | Stage 3.3.35 Formal landing node create approval | Landing-node dry-run uses random high candidate ports and blocks common ports; no real execution |
+| Stage 3.3.36 Formal landing node create execution guard | Fixed 27939/TCP execution guard documented; real execution remains disabled |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
