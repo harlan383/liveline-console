@@ -312,6 +312,7 @@ NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=read-only
 PrivateTmp=true
+ReadWritePaths=/opt/liveline-xray /etc/systemd/system /run/systemd
 
 [Install]
 WantedBy=multi-user.target

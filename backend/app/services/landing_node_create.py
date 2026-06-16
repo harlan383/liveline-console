@@ -31,7 +31,7 @@ DEFAULT_REALITY_SERVER_NAME = "www.microsoft.com"
 DEFAULT_REALITY_DEST = "www.microsoft.com:443"
 DEFAULT_REALITY_FLOW = "xtls-rprx-vision"
 DEFAULT_FINGERPRINT = "chrome"
-MANAGED_XRAY_CONFIG_PATH = "/usr/local/etc/liveline-xray/config.json"
+MANAGED_XRAY_CONFIG_PATH = "/opt/liveline-xray/config/config.json"
 MANAGED_XRAY_SERVICE_NAME = "liveline-xray.service"
 MANAGED_XRAY_SERVICE_PATH = "/etc/systemd/system/liveline-xray.service"
 
