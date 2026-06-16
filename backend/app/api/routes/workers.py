@@ -40,6 +40,10 @@ from app.services.worker_commands import (
     serialize_worker_command,
     serialize_worker_command_for_worker,
 )
+from app.services.landing_node_create import (
+    LandingNodeCreateError,
+    persist_successful_landing_node_result,
+)
 from app.services.worker_targeting import (
     WorkerTargetError,
     minimum_worker_version_for_command,
@@ -591,7 +595,16 @@ def worker_command_result(
     if command.status in {"succeeded", "failed", "cancelled", "expired"}:
         return error_response(409, "WORKER_COMMAND_ALREADY_FINISHED", "Worker 命令已结束。")
 
-    complete_worker_command(db, command, payload.result)
+    result_payload = payload.result
+    try:
+        result_payload = persist_successful_landing_node_result(db=db, command=command, result=payload.result)
+    except LandingNodeCreateError as exc:
+        fail_worker_command(db, command, exc.message, {"code": exc.code})
+        db.commit()
+        db.refresh(command)
+        return error_response(400, exc.code, exc.message)
+
+    complete_worker_command(db, command, result_payload)
     db.commit()
     db.refresh(command)
     return success_response(
@@ -645,7 +658,17 @@ def create_admin_worker_command(
     if not worker:
         return error_response(404, "WORKER_NOT_FOUND", "Worker 不存在。")
     if not command_type_allowed(payload.command_type):
-        return error_response(400, "WORKER_COMMAND_NOT_ALLOWED", "只允许 ping、collect_status、service_status、landing_preflight。")
+        return error_response(
+            400,
+            "WORKER_COMMAND_NOT_ALLOWED",
+            "只允许 ping、collect_status、service_status、landing_preflight、landing_node_create。",
+        )
+    if payload.command_type == "landing_node_create":
+        return error_response(
+            400,
+            "LANDING_NODE_CREATE_ENDPOINT_REQUIRED",
+            "正式创建落地节点必须通过 /api/vps/{id}/landing-node-create 并完成二次确认。",
+        )
 
     server_id = payload.server_id or worker.server_id
     server_type = payload.server_type or worker.role

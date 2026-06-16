@@ -12,6 +12,8 @@ MIN_COMMAND_CHANNEL_VERSION = "0.1.1-stage-3.3.28"
 MIN_COMMAND_CHANNEL_VERSION_KEY = (0, 1, 1, 3, 3, 28)
 MIN_LANDING_PREFLIGHT_VERSION = "0.1.3-stage-3.3.33"
 MIN_LANDING_PREFLIGHT_VERSION_KEY = (0, 1, 3, 3, 3, 33)
+MIN_LANDING_NODE_CREATE_VERSION = "0.1.4-stage-3.3.37"
+MIN_LANDING_NODE_CREATE_VERSION_KEY = (0, 1, 4, 3, 3, 37)
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+))?$")
 
 
@@ -59,12 +61,16 @@ def worker_supports_min_version(worker: Worker | None, min_version_key: tuple[in
 
 
 def minimum_worker_version_for_command(command_type: str | None) -> str:
+    if command_type == "landing_node_create":
+        return MIN_LANDING_NODE_CREATE_VERSION
     if command_type == "landing_preflight":
         return MIN_LANDING_PREFLIGHT_VERSION
     return MIN_COMMAND_CHANNEL_VERSION
 
 
 def minimum_worker_version_key_for_command(command_type: str | None) -> tuple[int, int, int, int, int, int]:
+    if command_type == "landing_node_create":
+        return MIN_LANDING_NODE_CREATE_VERSION_KEY
     if command_type == "landing_preflight":
         return MIN_LANDING_PREFLIGHT_VERSION_KEY
     return MIN_COMMAND_CHANNEL_VERSION_KEY

@@ -299,6 +299,27 @@ export type LandingNodePlanResponse = {
   safety_boundary: string[];
 };
 
+export type LandingNodeCreateRequest = {
+  approved_port: number;
+  confirm_firewall_open: boolean;
+  confirm_generate_share_link: boolean;
+  confirm_write_share_link_after_success: boolean;
+  confirm_no_existing_xray: boolean;
+  confirm_rollback_new_artifacts_only: boolean;
+};
+
+export type LandingNodeCreateResponse = {
+  command_id: string;
+  command: WorkerCommandData;
+  target_worker_id: string;
+  target_worker_version: string | null;
+  server_id: string;
+  approved_port: number;
+  status: string;
+  next_action: string;
+  safety_boundary: string[];
+};
+
 export type VpsActionResult = {
   task_id: string;
   vps_id: string;
@@ -443,7 +464,7 @@ export type WorkerListResult = {
   workers: WorkerData[];
 };
 
-export type WorkerCommandType = "ping" | "collect_status" | "service_status" | "landing_preflight";
+export type WorkerCommandType = "ping" | "collect_status" | "service_status" | "landing_preflight" | "landing_node_create";
 
 export type WorkerCommandData = {
   id: string;
@@ -527,6 +548,18 @@ export async function createLandingNodePlan(
   csrfToken: string,
 ): Promise<ApiResponse<LandingNodePlanResponse>> {
   return apiFetch<LandingNodePlanResponse>(`/api/vps/${serverId}/landing-node-plan`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createLandingNodeExecution(
+  serverId: string,
+  payload: LandingNodeCreateRequest,
+  csrfToken: string,
+): Promise<ApiResponse<LandingNodeCreateResponse>> {
+  return apiFetch<LandingNodeCreateResponse>(`/api/vps/${serverId}/landing-node-create`, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),

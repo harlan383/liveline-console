@@ -882,6 +882,32 @@ install Xray, create nodes, add listening ports, modify firewall rules or cloud
 security groups, generate real node links, modify `node.share_link`, execute SSH
 or remote commands, create tasks, or perform cutover.
 
+## Stage 3.3.37 Formal landing node create execution scope
+
+Stage 3.3.37 adds the controlled formal landing-node creation execution path.
+The only approved target is landing server
+`968519b3-9017-4b27-a9a0-d5731033f84f` at `64.90.13.19`, Worker
+`ef421476-dcad-4380-8cea-40dc81e543fd`, interface `ens17`, and listen port
+`27939/TCP`.
+
+The backend now exposes `POST /api/vps/{server_id}/landing-node-create` with
+mandatory second confirmations for firewall allowance, real share-link
+generation, post-success `node.share_link` write, no existing Xray, and
+rollback scope. The generic Worker command endpoint cannot bypass this
+confirmation flow.
+
+The Worker binary now supports `landing_node_create`. It reruns local preflight,
+refuses existing Xray / x-ui / 3x-ui or a listening `27939/TCP`, installs only
+the controlled Xray-core binary, writes only LiveLine-managed config and
+systemd service files, verifies service startup and port listening, then returns
+the real link only for backend persistence. Backend removes the complete link
+from command history and writes `node.share_link` only after full success.
+
+This stage's local development and PR validation did not execute SSH, remote
+commands, public deployment, Xray installation, node creation, new listening
+ports, firewall / cloud security group changes, real link generation,
+`node.share_link` modification, or cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2075,6 +2101,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.33 Worker preflight interface normalization | Landing preflight interface fields normalized and listener parsing fixed; no remote execution |
 | Stage 3.3.35 Formal landing node create approval | Landing-node dry-run uses random high candidate ports and blocks common ports; no real execution |
 | Stage 3.3.36 Formal landing node create execution guard | Fixed 27939/TCP execution guard documented; real execution remains disabled |
+| Stage 3.3.37 Formal landing node create execution | Controlled landing-node create command path added; local validation did not execute real creation |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

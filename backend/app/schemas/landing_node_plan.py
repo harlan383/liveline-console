@@ -61,3 +61,23 @@ class LandingNodePlanResponse(BaseModel):
     next_stage_required: str
     execution_guard: list[str]
     safety_boundary: list[str]
+
+
+class LandingNodeCreateRequest(BaseModel):
+    approved_port: int = Field(ge=1, le=65535)
+    confirm_firewall_open: bool = False
+    confirm_generate_share_link: bool = False
+    confirm_write_share_link_after_success: bool = False
+    confirm_no_existing_xray: bool = False
+    confirm_rollback_new_artifacts_only: bool = False
+
+
+class LandingNodeCreateResponse(BaseModel):
+    command_id: str
+    target_worker_id: str
+    target_worker_version: str | None = None
+    server_id: str
+    approved_port: int
+    status: str
+    next_action: str
+    safety_boundary: list[str]

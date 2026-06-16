@@ -186,6 +186,11 @@ def result_summary(command: WorkerCommand) -> str | None:
                     if isinstance(check, dict)
                 )
         return f"landing_preflight listening_count={listening_count} important_ports={important_ports} warnings={warning_count}"
+    if command.command_type == "landing_node_create":
+        node_id = result.get("node_id") or "-"
+        listen_port = result.get("listen_port") or "-"
+        masked_link = result.get("masked_share_link") or "-"
+        return f"landing_node_create node_id={node_id} listen_port={listen_port} share_link={masked_link}"
     return "命令已返回脱敏结果。"
 
 

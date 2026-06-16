@@ -2,7 +2,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-WORKER_COMMAND_TYPES = {"ping", "collect_status", "service_status", "landing_preflight"}
+WORKER_COMMAND_TYPES = {
+    "ping",
+    "collect_status",
+    "service_status",
+    "landing_preflight",
+    "landing_node_create",
+}
 WORKER_COMMAND_STATUSES = {
     "pending",
     "claimed",
@@ -25,7 +31,9 @@ class WorkerCommandCreate(BaseModel):
     def validate_command_type(cls, value: str) -> str:
         cleaned = value.strip().lower()
         if cleaned not in WORKER_COMMAND_TYPES:
-            raise ValueError("command_type must be ping, collect_status, service_status, or landing_preflight")
+            raise ValueError(
+                "command_type must be ping, collect_status, service_status, landing_preflight, or landing_node_create"
+            )
         return cleaned
 
     @field_validator("server_type")
