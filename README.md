@@ -1004,6 +1004,28 @@ Xray, create nodes, add listening ports, modify firewall / cloud security
 groups, generate real node links, modify `node.share_link`, execute SSH or
 remote commands, or perform cutover.
 
+## Stage 3.3.37-e Formal create client acceptance record scope
+
+Stage 3.3.37-e records the successful client acceptance after the formal
+landing-node create flow completed outside this documentation-only stage. The
+public console was deployed to main commit
+`ca10e668b3b089c3e9b2a3707927f0201c7ff0c8`, the landing Worker reported
+version `0.1.6-stage-3.3.37`, and the successful `landing_node_create` command
+completed at `2026-06-17 01:04:15+00`.
+
+The accepted landing node uses `64.90.13.19:27939/TCP`, with
+`liveline-xray.service` active and Xray running from
+`/opt/liveline-xray/bin/xray` with config at
+`/opt/liveline-xray/config/config.json`. The `nodes` table has an active VLESS
+Reality node record for `liveline-reality-27939`; `node.share_link` is written
+and present, but the real link is not shown in README or documentation.
+
+Client acceptance confirmed that importing the node into the client allowed
+normal internet access. This stage is not a cutover and does not modify any
+transit route or fallback route. Next-stage candidates are
+`Stage 3.3.38-post-acceptance-security-hardening-or-key-rotation-review` or
+`Stage 3.3.38-transit-integration-planning`.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2202,6 +2224,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.37-b Xray install path and Worker sandbox hotfix | Xray path moved to /opt/liveline-xray and Worker sandbox write paths narrowed |
 | Stage 3.3.37-c Worker installer ReadWritePaths precreate hotfix | Worker installer precreates /opt/liveline-xray before starting the sandboxed service |
 | Stage 3.3.37-d Allow empty LiveLine Xray directory hotfix | Worker formal-create guard allows an empty precreated /opt/liveline-xray while still rejecting real artifacts |
+| Stage 3.3.37-e Formal create client acceptance record | Formal landing node create completed client acceptance; this record stage is not cutover |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
