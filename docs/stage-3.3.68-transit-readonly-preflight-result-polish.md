@@ -82,6 +82,35 @@ more defensively:
 This hotfix does not change the Worker allowlist checks and does not add any
 real transit creation capability.
 
+## Hotfix 4: Worker Result Submit EOF
+
+Stage 3.3.68-hotfix-4-worker-result-submit-eof hardens the Worker-side
+submission path after production showed `transit_readonly_preflight` commands
+still stuck in `running` while the transit Worker logged EOF on result POST.
+
+The Worker changes are:
+
+- Worker version is bumped to `0.1.8-stage-3.3.68`.
+- `transit_readonly_preflight` result payloads are sanitized and bounded before
+  POST.
+- NUL bytes are removed and large strings are truncated.
+- Result arrays and maps are capped before JSON serialization.
+- Sensitive keys and proxy-link values are redacted before submission.
+- Result POST requests use `Connection: close` and disable HTTP keepalive reuse
+  to avoid stale connection EOF loops.
+- HTTP submit failures now include status and response-body summaries when a
+  response exists.
+- If full result submit fails, the Worker attempts a minimal `/fail` fallback
+  result containing command id, command type, redacted error, and the safety
+  boundary.
+
+The backend minimum Worker version for `transit_readonly_preflight` is raised
+to `0.1.8-stage-3.3.68`. This prevents new remote readonly preflight commands
+from being assigned to the older `0.1.7-stage-3.3.63` transit Worker that lacks
+the submit fallback. This stage only updates code and the packaged Worker
+binary; it does not auto-upgrade any remote Worker or retry any production
+command.
+
 ## Safety Boundary
 
 This stage does not:
