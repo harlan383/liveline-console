@@ -1091,6 +1091,24 @@ Recommended follow-up stages are
 `Stage 3.3.42-formal-node-rotation-execution-approval` or
 `Stage 3.3.43-transit-integration-planning`.
 
+## Stage 3.3.50 Transit Worker install command regeneration scope
+
+Stage 3.3.50 adds a recovery path for `pending_worker` transit servers when the
+one-time Worker install command was closed before being copied. Eligible transit
+server rows can regenerate a new bound role = `transit` Worker install command
+while invalidating older active tokens for the same transit server.
+
+The regeneration API is limited to existing `server` transit resources in
+`pending_worker` state with no online bound Worker. It reuses the existing
+Worker public URL validation and token bootstrap serialization, returns only a
+new masked token plus one-time install command in the current response, and
+marks older active tokens for the same resource as `revoked`.
+
+This stage does not execute SSH, execute Worker commands, install Worker,
+install `socat` / `gost`, create transit routes, add listening ports, change
+firewall or cloud security group rules, modify Xray, modify `nodes.share_link`,
+export client links, or perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2293,6 +2311,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.38 Post-acceptance security hardening and key rotation review | Formal node post-acceptance security review recorded; no rotation or environment change |
 | Stage 3.3.40 Share-link redaction and export confirmation | Node share links are default-redacted and require confirmed export; no node or environment change |
 | Stage 3.3.41 Node key rotation runbook | Node key rotation / rebuild / old-link retirement runbook documented; no real rotation or node change |
+| Stage 3.3.50 Transit Worker install command regeneration | pending_worker transit servers can regenerate a bound Worker install command; real installation remains manual |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

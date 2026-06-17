@@ -11,6 +11,7 @@ from app.db.redis import get_rq_redis_client
 from app.db.session import get_db
 from app.models.task import Task
 from app.models.transit_resource import TransitResource
+from app.models.worker import Worker, WorkerToken
 from app.schemas.common import error_response, success_response
 from app.schemas.transit_resource import (
     PROTOCOL_HINTS,
@@ -31,6 +32,7 @@ from app.services.worker_binding import (
     serialize_worker_token_bootstrap,
     transit_display_status,
     worker_public_url_error_response,
+    worker_runtime_status,
     worker_summary_fields,
 )
 from app.worker.jobs import install_gost_job, install_socat_job, read_transit_server_job
@@ -50,6 +52,10 @@ class TransitWorkerBootstrapRequest(BaseModel):
         if not cleaned:
             raise ValueError("value cannot be empty")
         return cleaned
+
+
+class TransitWorkerBootstrapRegenerateRequest(BaseModel):
+    expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
 
 
 def numeric_value(value: Decimal | None) -> float | None:
@@ -277,6 +283,92 @@ def create_transit_resource_worker_bootstrap(
             "expires_at": token.expires_at.isoformat() if token.expires_at else None,
         },
         "中转服务器记录已创建，Worker 安装命令已生成。",
+    )
+
+
+@router.post("/{resource_id}/worker-bootstrap/regenerate")
+def regenerate_transit_resource_worker_bootstrap(
+    resource_id: str,
+    payload: TransitWorkerBootstrapRegenerateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    resource = get_transit_resource_or_error(db, resource_id)
+    if not resource:
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
+    if resource.resource_type != "server":
+        return error_response(400, "TRANSIT_RESOURCE_NOT_SERVER", "只允许 server 类型中转资源重新生成 Worker 安装命令。")
+    if resource.status != WORKER_PENDING_STATUS:
+        return error_response(
+            400,
+            "TRANSIT_RESOURCE_NOT_PENDING_WORKER",
+            "只允许 pending_worker 且 Worker 未注册的中转服务器重新生成安装命令。",
+        )
+
+    bound_workers = db.scalars(
+        select(Worker).where(
+            Worker.role == "transit",
+            Worker.server_id == resource.id,
+        )
+    ).all()
+    online_workers = [worker for worker in bound_workers if worker_runtime_status(worker) == "online"]
+    if online_workers:
+        return error_response(
+            409,
+            "TRANSIT_RESOURCE_WORKER_ALREADY_ONLINE",
+            "该中转服务器已有在线 Worker，不允许重新生成安装命令。",
+        )
+
+    try:
+        old_tokens = db.scalars(
+            select(WorkerToken).where(
+                WorkerToken.server_id == resource.id,
+                WorkerToken.role == "transit",
+                WorkerToken.status == "active",
+            )
+        ).all()
+        for old_token in old_tokens:
+            old_token.status = "revoked"
+            db.add(old_token)
+
+        token, raw_token, install_command = create_bound_worker_token(
+            db,
+            role="transit",
+            name=resource.name,
+            server_id=resource.id,
+            admin_id=session.admin_id,
+            expires_in_minutes=payload.expires_in_minutes,
+        )
+        record_audit(
+            db,
+            admin_id=session.admin_id,
+            action="regenerate_transit_resource_worker_bootstrap",
+            result="success",
+            request=request,
+            resource_type="transit_resource",
+            resource_id=resource.id,
+        )
+        db.commit()
+        db.refresh(resource)
+        db.refresh(token)
+    except WorkerPublicUrlError as exc:
+        db.rollback()
+        return worker_public_url_error_response(exc)
+
+    return success_response(
+        {
+            "resource": serialize_transit_resource(resource),
+            "token": serialize_worker_token_bootstrap(token, raw_token, install_command),
+            "install_command": install_command,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+        },
+        "新的 Worker 安装命令已生成，请立即复制并妥善保存。",
     )
 
 

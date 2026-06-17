@@ -449,6 +449,10 @@ export type TransitWorkerBootstrapResult = {
   expires_at: string;
 };
 
+export type TransitWorkerBootstrapRegenerateRequest = {
+  expires_in_minutes?: number;
+};
+
 export type WorkerMetadataSummary = {
   received_at?: string | null;
   uptime_seconds?: number | null;
@@ -588,6 +592,18 @@ export async function createTransitWorkerBootstrap(
   csrfToken: string,
 ): Promise<ApiResponse<TransitWorkerBootstrapResult>> {
   return apiFetch<TransitWorkerBootstrapResult>("/api/transit-resources/worker-bootstrap", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function regenerateTransitWorkerBootstrap(
+  resourceId: string,
+  payload: TransitWorkerBootstrapRegenerateRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitWorkerBootstrapResult>> {
+  return apiFetch<TransitWorkerBootstrapResult>(`/api/transit-resources/${resourceId}/worker-bootstrap/regenerate`, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),

@@ -9,6 +9,7 @@ import {
   createTransitWorkerBootstrap,
   exportNodeShareLink,
   listWorkerCommands,
+  regenerateTransitWorkerBootstrap,
   type CsrfResult,
   type NodeData,
   type NodeListResult,
@@ -595,7 +596,7 @@ export function TransitServersPanel() {
   const [resources, setResources] = useState<TransitResourceData[]>([]);
   const [loadingResources, setLoadingResources] = useState(true);
   const [message, setMessage] = useState("中转服务器只代表本地资源记录；真实转发关系请到“中转链路”页面配置。");
-  const [modalMode, setModalMode] = useState<"add" | "edit" | null>(null);
+  const [modalMode, setModalMode] = useState<"add" | "edit" | "regenerate" | null>(null);
   const [selectedTransitResource, setSelectedTransitResource] = useState<TransitResourceData | null>(null);
   const [transitServerForm, setTransitServerForm] = useState<TransitServerFormState>(emptyTransitServerForm);
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
@@ -604,6 +605,7 @@ export function TransitServersPanel() {
   const [latestWorkerCommandByResourceId, setLatestWorkerCommandByResourceId] = useState<Record<string, WorkerCommandData>>({});
   const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
   const [submittingTransitResource, setSubmittingTransitResource] = useState(false);
+  const [regeneratingResourceId, setRegeneratingResourceId] = useState<string | null>(null);
 
   async function ensureCsrfToken() {
     const csrf = await apiFetch<CsrfResult>("/api/auth/csrf");
@@ -662,6 +664,11 @@ export function TransitServersPanel() {
     setSelectedTransitResource(resource);
     setTransitServerForm(formFromTransitResource(resource));
     setModalMode("edit");
+  }
+
+  function canRegenerateWorkerBootstrap(resource: TransitResourceData) {
+    const isPendingWorker = resource.status === "pending_worker" || resource.display_status === "pending_worker";
+    return resource.connection_mode === "worker" && isPendingWorker && !resource.worker_online;
   }
 
   async function submitTransitServer(event: FormEvent<HTMLFormElement>) {
@@ -740,6 +747,34 @@ export function TransitServersPanel() {
       setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
     } finally {
       setSubmittingTransitResource(false);
+    }
+  }
+
+  async function regenerateWorkerInstallCommand(resource: TransitResourceData) {
+    if (!canRegenerateWorkerBootstrap(resource)) {
+      setMessage("只有 pending_worker 且 Worker 未在线的中转服务器可以重新生成安装命令。");
+      return;
+    }
+    try {
+      setRegeneratingResourceId(resource.id);
+      setWorkerTokenResult(null);
+      setSelectedTransitResource(resource);
+      setMessage("正在为已有中转服务器重新生成一次性 Worker 安装命令。");
+      const csrfToken = await ensureCsrfToken();
+      const result = await regenerateTransitWorkerBootstrap(resource.id, { expires_in_minutes: 60 }, csrfToken);
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setSelectedTransitResource(result.data.resource);
+      setWorkerTokenResult(result.data.token);
+      setModalMode("regenerate");
+      setMessage("新的 Worker 安装命令已生成。命令只显示一次，请立即复制并妥善保存。");
+      await loadTransitServers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "重新生成 Worker 安装命令失败。");
+    } finally {
+      setRegeneratingResourceId(null);
     }
   }
 
@@ -823,7 +858,12 @@ export function TransitServersPanel() {
     if (!modalMode) {
       return null;
     }
-    const title = modalMode === "edit" ? "编辑中转服务器" : "添加中转服务器";
+    const title =
+      modalMode === "edit"
+        ? "编辑中转服务器"
+        : modalMode === "regenerate"
+          ? "重新生成 Worker 安装命令"
+          : "添加中转服务器";
     return (
       <div className="modal-backdrop" role="presentation" onClick={closeTransitServerModal}>
         <div className="modal-card transit-server-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
@@ -833,14 +873,77 @@ export function TransitServersPanel() {
               <p className="message">
                 {modalMode === "add"
                   ? "默认使用 Worker 安装命令接入；仅在点击生成按钮时创建一次性 token，不会执行 SSH。"
-                  : "只保存本地资源记录；不会安装 Worker、不会生成 token、不会执行 SSH 或远程命令。"}
+                  : modalMode === "regenerate"
+                    ? "仅为已有 pending_worker 中转服务器生成新的绑定安装命令；不会执行 SSH、不会安装 Worker、不会创建中转链路。"
+                    : "只保存本地资源记录；不会安装 Worker、不会生成 token、不会执行 SSH 或远程命令。"}
               </p>
             </div>
             <button className="secondary compact" type="button" onClick={closeTransitServerModal}>
               关闭
             </button>
           </div>
-          {modalMode === "add" ? renderWorkerBootstrapForm("transit") : renderTransitResourceForm()}
+          {modalMode === "add"
+            ? renderWorkerBootstrapForm("transit")
+            : modalMode === "regenerate"
+              ? renderRegeneratedWorkerCommand()
+              : renderTransitResourceForm()}
+        </div>
+      </div>
+    );
+  }
+
+  function renderWorkerCommandPanel() {
+    if (!workerTokenResult) {
+      return null;
+    }
+    return (
+      <div className="worker-command-panel wide-field">
+        <div className="worker-command-meta">
+          <span>role：{workerTokenResult.role}</span>
+          <span>masked token：{workerTokenResult.masked_token}</span>
+          <span>过期时间：{formatTime(workerTokenResult.expires_at)}</span>
+          <span>状态：{workerTokenResult.status}</span>
+        </div>
+        <label>
+          安装命令
+          <textarea
+            ref={workerInstallCommandRef}
+            className="worker-install-command"
+            readOnly
+            value={workerTokenResult.install_command}
+          />
+        </label>
+        <div className="modal-actions">
+          <button className="secondary" type="button" onClick={() => void copyInstallCommand()}>
+            复制命令
+          </button>
+        </div>
+        <p className="message">
+          命令只显示一次，关闭后无法再次查看。请在 VPS 上先确认能访问主控地址；不要把命令写入聊天、Git、README、PR、日志或截图。
+        </p>
+      </div>
+    );
+  }
+
+  function renderRegeneratedWorkerCommand() {
+    return (
+      <div className="form transit-server-form worker-bootstrap-form">
+        <div className="worker-bootstrap-intro wide-field">
+          <strong>{selectedTransitResource?.name ?? "中转服务器"} 的新安装命令</strong>
+          <span>已为这条 pending_worker 中转服务器生成新的 role = transit 一次性安装命令。</span>
+          <span>同一中转服务器下旧的 active token 已在后端失效，旧命令不再可用。</span>
+        </div>
+        <div className="warning-box wide-field">
+          <strong>敏感命令提醒</strong>
+          <span>完整安装命令包含一次性 token，只在本次响应中显示。</span>
+          <span>不要写入聊天、Git、README、PR、日志或截图。</span>
+          <span>本按钮只重新生成命令，不执行 SSH、不执行 Worker 命令、不安装 Worker、不创建中转链路。</span>
+        </div>
+        {renderWorkerCommandPanel()}
+        <div className="modal-actions wide-field">
+          <button className="secondary" type="button" onClick={closeTransitServerModal}>
+            关闭
+          </button>
         </div>
       </div>
     );
@@ -896,33 +999,7 @@ export function TransitServersPanel() {
             取消
           </button>
         </div>
-        {workerTokenResult ? (
-          <div className="worker-command-panel wide-field">
-            <div className="worker-command-meta">
-              <span>role：{workerTokenResult.role}</span>
-              <span>masked token：{workerTokenResult.masked_token}</span>
-              <span>过期时间：{formatTime(workerTokenResult.expires_at)}</span>
-              <span>状态：{workerTokenResult.status}</span>
-            </div>
-            <label>
-              安装命令
-              <textarea
-                ref={workerInstallCommandRef}
-                className="worker-install-command"
-                readOnly
-                value={workerTokenResult.install_command}
-              />
-            </label>
-            <div className="modal-actions">
-              <button className="secondary" type="button" onClick={() => void copyInstallCommand()}>
-                复制命令
-              </button>
-            </div>
-            <p className="message">
-              请在 VPS 上先确认能访问主控地址。明文 token 只出现在这条一次性安装命令中。不要把命令写入 README、阶段文档、终端日志或 Git。
-            </p>
-          </div>
-        ) : (
+        {workerTokenResult ? renderWorkerCommandPanel() : (
           <p className="message wide-field">点击“生成安装命令”后，这里会显示一次性 curl | bash 命令和 token 过期时间。</p>
         )}
       </div>
@@ -1055,6 +1132,16 @@ export function TransitServersPanel() {
                   {renderRecentWorkerCommand(latestWorkerCommandForResource(resource))}
                 </div>
                 <div className="server-actions">
+                  {canRegenerateWorkerBootstrap(resource) ? (
+                    <button
+                      className="secondary compact"
+                      disabled={regeneratingResourceId === resource.id}
+                      type="button"
+                      onClick={() => void regenerateWorkerInstallCommand(resource)}
+                    >
+                      {regeneratingResourceId === resource.id ? "生成中..." : "重新生成安装命令"}
+                    </button>
+                  ) : null}
                   {resource.worker_id ? (
                     <button
                       className="secondary compact"
