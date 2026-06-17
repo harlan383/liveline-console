@@ -11,6 +11,7 @@ import {
   createWorkerCommand,
   createVpsWorkerBootstrap,
   createWorkerToken,
+  exportNodeShareLink,
   listWorkerCommands,
   type LandingNodePlanResponse,
   type LandingNodeCreateResponse,
@@ -293,6 +294,7 @@ export function ServerManagementPanel() {
   const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
   const [showFullShareLink, setShowFullShareLink] = useState(false);
   const [showNodeQrCode, setShowNodeQrCode] = useState(false);
+  const [exportedNodeShareLink, setExportedNodeShareLink] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function ensureCsrfToken() {
@@ -347,6 +349,7 @@ export function ServerManagementPanel() {
     setSelectedNodeDetail(null);
     setShowFullShareLink(false);
     setShowNodeQrCode(false);
+    setExportedNodeShareLink(null);
   }
 
   function openAddServer() {
@@ -659,8 +662,42 @@ export function ServerManagementPanel() {
     }
     setSelectedNodeDetail(detail);
     setShowFullShareLink(false);
-    setShowNodeQrCode(showQr && Boolean(detail.share_link));
+    setShowNodeQrCode(false);
+    setExportedNodeShareLink(null);
+    if (showQr) {
+      await exportSelectedNodeShareLink(detail.id, "qr_code", { showQr: true });
+    }
     setMessage("节点详情已读取。完整分享链接默认隐藏。");
+  }
+
+  async function exportSelectedNodeShareLink(
+    nodeId: string,
+    reason: string,
+    options: { copy?: boolean; reveal?: boolean; showQr?: boolean } = {},
+  ) {
+    const confirmed = window.confirm(
+      "节点分享链接属于敏感信息，仅用于导入客户端。不要粘贴到聊天、PR、日志或文档中。确认继续导出吗？",
+    );
+    if (!confirmed) {
+      return null;
+    }
+    const csrfToken = await ensureCsrfToken();
+    const result = await exportNodeShareLink(nodeId, csrfToken, reason);
+    if (!result.success) {
+      setMessage(`${result.error_code}: ${result.message}`);
+      return null;
+    }
+    const link = result.data.share_link;
+    setExportedNodeShareLink(link);
+    setShowFullShareLink(Boolean(options.reveal));
+    setShowNodeQrCode(Boolean(options.showQr));
+    if (options.copy) {
+      await navigator.clipboard.writeText(link);
+      setMessage("节点链接已复制到剪贴板，请妥善保存，不要公开分享。");
+    } else {
+      setMessage("节点链接已临时导出，请勿公开分享。");
+    }
+    return link;
   }
 
   async function copyNodeShareLink(node: ServerNodeSummary) {
@@ -668,13 +705,7 @@ export function ServerManagementPanel() {
       setMessage("该节点还没有可复制的分享链接。");
       return;
     }
-    const detail = await fetchNodeDetail(node.id);
-    if (!detail?.share_link) {
-      setMessage("该节点还没有可复制的分享链接。");
-      return;
-    }
-    await navigator.clipboard.writeText(detail.share_link);
-    setMessage("完整分享链接已复制。完整链接未写入页面默认展示。");
+    await exportSelectedNodeShareLink(node.id, "client_import", { copy: true });
   }
 
   async function submitAddServer(event: React.FormEvent<HTMLFormElement>) {
@@ -1684,7 +1715,9 @@ export function ServerManagementPanel() {
     if (!selectedNodeDetail) {
       return null;
     }
-    const shareLink = selectedNodeDetail.share_link ?? "";
+    const shareLink = exportedNodeShareLink ?? "";
+    const shareLinkAvailable =
+      selectedNodeDetail.has_share_link ?? selectedNodeDetail.share_link_present ?? Boolean(selectedNodeDetail.masked_share_link);
     return (
       <div className="modal-backdrop" role="presentation">
         <div className="modal-card node-detail-modal" role="dialog" aria-modal="true" aria-label="节点详情">
@@ -1712,13 +1745,17 @@ export function ServerManagementPanel() {
             <span>状态</span>
             <strong>{nodeStatusLabel(selectedNodeDetail.status)}</strong>
             <span>share_link 状态</span>
-            <strong>{shareLink ? "已生成 / 默认隐藏完整链接" : "未生成"}</strong>
+            <strong>
+              {shareLinkAvailable
+                ? `已生成 / 默认隐藏完整链接${selectedNodeDetail.share_link_length ? ` / ${selectedNodeDetail.share_link_length} 字符` : ""}`
+                : "未生成"}
+            </strong>
             <span>Reality serverName</span>
             <strong>{selectedNodeDetail.reality_server_name ?? "-"}</strong>
             <span>Reality publicKey</span>
-            <strong>{selectedNodeDetail.reality_public_key ?? "-"}</strong>
+            <strong>{selectedNodeDetail.masked_reality_public_key ?? "-"}</strong>
             <span>shortId</span>
-            <strong>{selectedNodeDetail.reality_short_id ?? "-"}</strong>
+            <strong>{selectedNodeDetail.masked_reality_short_id ?? "-"}</strong>
             <span>flow</span>
             <strong>{selectedNodeDetail.flow ?? "-"}</strong>
           </div>
@@ -1729,32 +1766,51 @@ export function ServerManagementPanel() {
               <textarea
                 className="share-link-value"
                 readOnly
-                value={shareLink ? (showFullShareLink ? shareLink : maskShareLink(shareLink)) : ""}
+                value={
+                  shareLink
+                    ? showFullShareLink
+                      ? shareLink
+                      : maskShareLink(shareLink)
+                    : selectedNodeDetail.masked_share_link ?? ""
+                }
               />
+              <small>节点链接属于敏感信息；完整链接只在二次确认导出后临时用于复制或二维码。</small>
             </label>
 
             <div className="node-actions export-actions">
               <button
                 className="secondary"
-                disabled={!shareLink}
+                disabled={!shareLinkAvailable}
                 type="button"
-                onClick={() => void navigator.clipboard.writeText(shareLink).then(() => setMessage("完整分享链接已复制。"))}
+                onClick={() => void exportSelectedNodeShareLink(selectedNodeDetail.id, "client_import", { copy: true })}
               >
-                复制完整链接
+                导出并复制链接
               </button>
               <button
                 className="secondary"
-                disabled={!shareLink}
+                disabled={!shareLinkAvailable}
                 type="button"
-                onClick={() => setShowFullShareLink((current) => !current)}
+                onClick={() => {
+                  if (shareLink) {
+                    setShowFullShareLink((current) => !current);
+                    return;
+                  }
+                  void exportSelectedNodeShareLink(selectedNodeDetail.id, "temporary_reveal", { reveal: true });
+                }}
               >
                 {showFullShareLink ? "隐藏完整链接" : "显示完整链接"}
               </button>
               <button
                 className="secondary"
-                disabled={!shareLink}
+                disabled={!shareLinkAvailable}
                 type="button"
-                onClick={() => setShowNodeQrCode((current) => !current)}
+                onClick={() => {
+                  if (shareLink) {
+                    setShowNodeQrCode((current) => !current);
+                    return;
+                  }
+                  void exportSelectedNodeShareLink(selectedNodeDetail.id, "qr_code", { showQr: true });
+                }}
               >
                 {showNodeQrCode ? "隐藏二维码" : "显示二维码"}
               </button>

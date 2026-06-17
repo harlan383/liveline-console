@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   apiFetch,
   apiFormFetch,
+  exportNodeShareLink,
   type CsrfResult,
   type ReadNodeResult,
   type TaskData,
@@ -344,13 +345,24 @@ export function ReadVpsPanel({ recreateVpsId, onRecreateVpsConsumed }: ReadVpsPa
   }
 
   async function copyShareLink() {
-    const shareLink = resultNode(task)?.["share_link"];
-    if (typeof shareLink !== "string") {
-      setMessage("没有可复制的分享链接。");
+    if (!task?.node_id) {
+      setMessage("没有可导出的节点链接。");
       return;
     }
-    await navigator.clipboard.writeText(shareLink);
-    setMessage("分享链接已复制。");
+    const confirmed = window.confirm(
+      "节点分享链接属于敏感信息，仅用于导入客户端。不要粘贴到聊天、PR、日志或文档中。确认继续导出吗？",
+    );
+    if (!confirmed) {
+      return;
+    }
+    const csrfToken = await ensureCsrfToken();
+    const result = await exportNodeShareLink(task.node_id, csrfToken, "client_import");
+    if (!result.success) {
+      setMessage(`${result.error_code}: ${result.message}`);
+      return;
+    }
+    await navigator.clipboard.writeText(result.data.share_link);
+    setMessage("节点链接已复制到剪贴板，请妥善保存，不要公开分享。");
   }
 
   return (
@@ -487,8 +499,9 @@ export function ReadVpsPanel({ recreateVpsId, onRecreateVpsConsumed }: ReadVpsPa
                     Reality serverName：
                     {String(resultNode(task)?.["reality_server_name"] ?? "-")}
                   </span>
-                  <button className="secondary" type="button" onClick={() => void copyShareLink()}>
-                    复制分享链接
+                  <span>share_link：已写入 / 默认隐藏完整链接</span>
+                  <button className="secondary" type="button" disabled={!task.node_id} onClick={() => void copyShareLink()}>
+                    导出并复制链接
                   </button>
                 </div>
               ) : null}

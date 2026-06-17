@@ -1052,6 +1052,27 @@ cutover. Recommended follow-up stages are
 `Stage 3.3.42-formal-node-rotation-execution-approval`, and
 `Stage 3.3.43-transit-integration-planning`.
 
+## Stage 3.3.40 Share-link redaction and export confirmation scope
+
+Stage 3.3.40 hardens node `share_link` handling after formal landing-node
+client acceptance. Default node list and detail responses expose only
+`has_share_link`, `share_link_length`, and masked link / Reality material
+summaries. Full node links are available only through an explicit export API
+that requires a confirmation flag and an authenticated CSRF-protected request.
+
+The local UI now keeps full `vless://` links hidden by default. Copy, reveal,
+QR-code, and socat-candidate-link flows require a user confirmation warning
+that node links are sensitive and must not be pasted into chats, PRs, logs, or
+documentation. Task result and task-log API responses also apply recursive
+sensitive-field redaction before returning data to the browser.
+
+This stage does not reinstall Worker, install or restart Xray, create / delete /
+rotate nodes, add listening ports, modify firewall or cloud security group
+rules, modify existing `node.share_link` values, generate new real node links,
+connect to any VPS, deploy the public console, or perform cutover. Recommended
+follow-up stages remain `Stage 3.3.41-node-key-rotation-runbook` and
+`Stage 3.3.43-transit-integration-planning`.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2252,6 +2273,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.37-d Allow empty LiveLine Xray directory hotfix | Worker formal-create guard allows an empty precreated /opt/liveline-xray while still rejecting real artifacts |
 | Stage 3.3.37-e Formal create client acceptance record | Formal landing node create completed client acceptance; this record stage is not cutover |
 | Stage 3.3.38 Post-acceptance security hardening and key rotation review | Formal node post-acceptance security review recorded; no rotation or environment change |
+| Stage 3.3.40 Share-link redaction and export confirmation | Node share links are default-redacted and require confirmed export; no node or environment change |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

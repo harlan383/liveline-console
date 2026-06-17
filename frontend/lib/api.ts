@@ -72,14 +72,24 @@ export type NodeData = {
   service_status: string | null;
   connectivity_status: string | null;
   uuid: string | null;
+  uuid_present?: boolean;
+  masked_uuid?: string | null;
   flow: string | null;
   reality_public_key: string | null;
+  reality_public_key_present?: boolean;
+  masked_reality_public_key?: string | null;
   reality_short_id: string | null;
+  reality_short_id_present?: boolean;
+  masked_reality_short_id?: string | null;
   reality_server_name: string | null;
   reality_dest: string | null;
   fingerprint: string | null;
   source: string;
   share_link?: string | null;
+  has_share_link?: boolean;
+  share_link_present?: boolean;
+  share_link_length?: number | null;
+  masked_share_link?: string | null;
   created_at: string | null;
   updated_at: string | null;
   last_remote_check_at: string | null;
@@ -88,6 +98,13 @@ export type NodeData = {
 
 export type NodeListResult = {
   nodes: NodeData[];
+};
+
+export type NodeShareLinkExportResult = {
+  node_id: string;
+  node_name: string;
+  share_link: string;
+  warning: string;
 };
 
 export type NodeActionResult = {
@@ -643,5 +660,17 @@ export async function requestReadonlyPreflightPlan(
   return apiFetch<ReadonlyPreflightPlanResponse>("/api/transit-routes/readonly-preflight-plan", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function exportNodeShareLink(
+  nodeId: string,
+  csrfToken: string,
+  reason = "client_import",
+): Promise<ApiResponse<NodeShareLinkExportResult>> {
+  return apiFetch<NodeShareLinkExportResult>(`/api/nodes/${nodeId}/share-link/export`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ confirm_export: true, reason }),
   });
 }

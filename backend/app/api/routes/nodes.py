@@ -2,6 +2,7 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from pydantic import BaseModel, Field
 from rq import Queue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from app.models.vps_server import VpsServer
 from app.schemas.common import error_response, success_response
 from app.services.auth_service import record_audit
 from app.services.credentials import store_temp_credential
+from app.services.redaction import mask_identifier, mask_share_link
 from app.services.task_logging import add_task_log
 from app.services.vps_validation import validate_public_ipv4, validate_ssh_port
 from app.worker.jobs import (
@@ -45,6 +47,11 @@ MUTATING_TASK_TYPES = (
     "restart_xray",
     "delete_node",
 )
+
+
+class NodeShareLinkExportRequest(BaseModel):
+    confirm_export: bool = False
+    reason: str | None = Field(default=None, max_length=120)
 
 
 async def read_private_key_payload(
@@ -118,8 +125,9 @@ def validate_direct_node_params(
     )
 
 
-def serialize_node(node: Node, *, include_share_link: bool = True) -> dict:
+def serialize_node(node: Node, *, include_share_link: bool = False) -> dict:
     vps = node.vps
+    has_share_link = bool(node.share_link)
     data = {
         "id": node.id,
         "vps_id": node.vps_id,
@@ -133,13 +141,23 @@ def serialize_node(node: Node, *, include_share_link: bool = True) -> dict:
         "status": node.status,
         "service_status": node.service_status,
         "connectivity_status": node.connectivity_status,
-        "uuid": node.uuid,
+        "uuid": None,
+        "uuid_present": bool(node.uuid),
+        "masked_uuid": mask_identifier(node.uuid),
         "flow": node.flow,
-        "reality_public_key": node.reality_public_key,
-        "reality_short_id": node.reality_short_id,
+        "reality_public_key": None,
+        "reality_public_key_present": bool(node.reality_public_key),
+        "masked_reality_public_key": mask_identifier(node.reality_public_key),
+        "reality_short_id": None,
+        "reality_short_id_present": bool(node.reality_short_id),
+        "masked_reality_short_id": mask_identifier(node.reality_short_id),
         "reality_server_name": node.sni,
         "reality_dest": node.dest,
         "fingerprint": node.fingerprint,
+        "has_share_link": has_share_link,
+        "share_link_present": has_share_link,
+        "share_link_length": len(node.share_link) if node.share_link else None,
+        "masked_share_link": mask_share_link(node.share_link),
         "source": node.source,
         "created_at": node.created_at.isoformat() if node.created_at else None,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,
@@ -536,6 +554,49 @@ def get_node(node_id: str, request: Request, db: Session = Depends(get_db)):
         return error_response(404, "NODE_NOT_FOUND", "节点不存在。")
 
     return success_response(serialize_node(node), "ok")
+
+
+@router.post("/{node_id}/share-link/export")
+def export_node_share_link(
+    node_id: str,
+    payload: NodeShareLinkExportRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+    if not payload.confirm_export:
+        return error_response(400, "EXPORT_CONFIRMATION_REQUIRED", "导出节点链接前必须明确确认。")
+
+    node = db.get(Node, node_id)
+    if not node or node.deleted_at is not None:
+        return error_response(404, "NODE_NOT_FOUND", "节点不存在。")
+    if not node.share_link:
+        return error_response(409, "SHARE_LINK_NOT_AVAILABLE", "该节点没有可导出的分享链接。")
+
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="export_node_share_link",
+        result="success",
+        request=request,
+        resource_type="node",
+        resource_id=node.id,
+    )
+    db.commit()
+
+    return success_response(
+        {
+            "node_id": node.id,
+            "node_name": node.node_name,
+            "share_link": node.share_link,
+            "warning": "share_link is sensitive; do not paste it into chats, logs, PRs, or documents.",
+        },
+        "节点分享链接已导出",
+    )
 
 
 def create_node_action_task(

@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.models.task import Task
 from app.models.task_log import TaskLog
 from app.schemas.common import error_response, success_response
+from app.services.redaction import redact_sensitive_payload, redact_text
 
 router = APIRouter()
 
@@ -21,8 +22,8 @@ def serialize_task(task: Task) -> dict:
         "current_step": task.current_step,
         "progress": task.progress,
         "error_code": task.error_code,
-        "error_message": task.error_message,
-        "result_data": task.result_data,
+        "error_message": redact_text(task.error_message) if task.error_message else None,
+        "result_data": redact_sensitive_payload(task.result_data),
         "started_at": task.started_at.isoformat() if task.started_at else None,
         "finished_at": task.finished_at.isoformat() if task.finished_at else None,
         "created_at": task.created_at.isoformat() if task.created_at else None,
@@ -36,8 +37,8 @@ def serialize_task_log(log: TaskLog) -> dict:
         "task_id": log.task_id,
         "level": log.level,
         "step": log.step,
-        "message": log.message,
-        "raw_output": log.raw_output,
+        "message": redact_text(log.message),
+        "raw_output": redact_text(log.raw_output) if log.raw_output else None,
         "created_at": log.created_at.isoformat() if log.created_at else None,
     }
 

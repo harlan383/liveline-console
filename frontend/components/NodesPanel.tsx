@@ -5,6 +5,7 @@ import QRCode from "react-qr-code";
 import {
   apiFetch,
   apiFormFetch,
+  exportNodeShareLink,
   type CsrfResult,
   type NodeActionResult,
   type NodeData,
@@ -175,6 +176,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
   const [deleteConfirmName, setDeleteConfirmName] = useState("");
   const [showFullShareLink, setShowFullShareLink] = useState(false);
   const [showQrCode, setShowQrCode] = useState(false);
+  const [exportedShareLink, setExportedShareLink] = useState<string | null>(null);
   const [cleanupPreviewTask, setCleanupPreviewTask] = useState<TaskData | null>(null);
   const [backupDeleteTarget, setBackupDeleteTarget] = useState<Record<string, unknown> | null>(null);
   const [backupDeleteConfirmName, setBackupDeleteConfirmName] = useState("");
@@ -205,7 +207,7 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
       setSelectedNode(null);
       return;
     }
-    if (selectedNode?.id === listSelected.id && selectedNode.share_link) {
+    if (selectedNode?.id === listSelected.id) {
       setSelectedNode(selectedNode);
       return;
     }
@@ -216,6 +218,9 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
     const result = await apiFetch<NodeData>(`/api/nodes/${nodeId}`);
     if (result.success) {
       setSelectedNode(result.data);
+      setExportedShareLink(null);
+      setShowFullShareLink(false);
+      setShowQrCode(false);
     } else {
       setMessage(result.message);
     }
@@ -380,13 +385,41 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
     }
   }
 
-  async function copyShareLink() {
-    if (!selectedNode?.share_link) {
+  async function exportSelectedShareLink(
+    reason: string,
+    options: { copy?: boolean; reveal?: boolean; showQr?: boolean } = {},
+  ) {
+    if (!selectedNode || !(selectedNode.has_share_link ?? selectedNode.share_link_present ?? Boolean(selectedNode.masked_share_link))) {
       setMessage("没有可复制的分享链接。");
-      return;
+      return null;
     }
-    await navigator.clipboard.writeText(selectedNode.share_link);
-    setMessage("分享链接已复制。");
+    const confirmed = window.confirm(
+      "节点分享链接属于敏感信息，仅用于导入客户端。不要粘贴到聊天、PR、日志或文档中。确认继续导出吗？",
+    );
+    if (!confirmed) {
+      return null;
+    }
+    const csrfToken = await ensureCsrfToken();
+    const result = await exportNodeShareLink(selectedNode.id, csrfToken, reason);
+    if (!result.success) {
+      setMessage(`${result.error_code}: ${result.message}`);
+      return null;
+    }
+    const link = result.data.share_link;
+    setExportedShareLink(link);
+    setShowFullShareLink(Boolean(options.reveal));
+    setShowQrCode(Boolean(options.showQr));
+    if (options.copy) {
+      await navigator.clipboard.writeText(link);
+      setMessage("节点链接已复制到剪贴板，请妥善保存，不要公开分享。");
+    } else {
+      setMessage("节点链接已临时导出，请勿公开分享。");
+    }
+    return link;
+  }
+
+  async function copyShareLink() {
+    await exportSelectedShareLink("client_import", { copy: true });
   }
 
   async function runBackupScan() {
@@ -500,7 +533,10 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
     }
   }
 
-  const shareLink = selectedNode?.share_link ?? "";
+  const shareLink = exportedShareLink ?? "";
+  const shareLinkAvailable = selectedNode
+    ? selectedNode.has_share_link ?? selectedNode.share_link_present ?? Boolean(selectedNode.masked_share_link)
+    : false;
   const selectedBackupTask =
     task?.task_type === "list_xray_backups" && task.vps_id === selectedNode?.vps_id ? task : null;
   const selectedCleanupPreviewTask =
@@ -559,13 +595,17 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
             <span>状态</span>
             <strong>{statusLabel(selectedNode.status)}</strong>
             <span>share_link 状态</span>
-            <strong>{shareLink ? "已生成 / 默认脱敏展示" : "未生成"}</strong>
+            <strong>
+              {shareLinkAvailable
+                ? `已生成 / 默认隐藏完整链接${selectedNode.share_link_length ? ` / ${selectedNode.share_link_length} 字符` : ""}`
+                : "未生成"}
+            </strong>
             <span>Reality serverName</span>
             <strong>{selectedNode.reality_server_name ?? "-"}</strong>
             <span>Reality publicKey</span>
-            <strong>{selectedNode.reality_public_key ?? "-"}</strong>
+            <strong>{selectedNode.masked_reality_public_key ?? "-"}</strong>
             <span>shortId</span>
-            <strong>{selectedNode.reality_short_id ?? "-"}</strong>
+            <strong>{selectedNode.masked_reality_short_id ?? "-"}</strong>
             <span>flow</span>
             <strong>{selectedNode.flow ?? "-"}</strong>
           </div>
@@ -576,32 +616,51 @@ export function NodesPanel({ onVpsReadyForRecreate }: NodesPanelProps) {
               <textarea
                 className="share-link-value"
                 readOnly
-                value={shareLink ? (showFullShareLink ? shareLink : maskShareLink(shareLink)) : ""}
+                value={
+                  shareLink
+                    ? showFullShareLink
+                      ? shareLink
+                      : maskShareLink(shareLink)
+                    : selectedNode.masked_share_link ?? ""
+                }
               />
+              <small>完整链接需二次确认后临时导出；不要粘贴到聊天、PR、日志或文档中。</small>
             </label>
 
             <div className="node-actions export-actions">
               <button
                 className="secondary"
                 type="button"
-                disabled={!shareLink}
+                disabled={!shareLinkAvailable}
                 onClick={() => void copyShareLink()}
               >
-                复制完整链接
+                导出并复制链接
               </button>
               <button
                 className="secondary"
                 type="button"
-                disabled={!shareLink}
-                onClick={() => setShowFullShareLink((current) => !current)}
+                disabled={!shareLinkAvailable}
+                onClick={() => {
+                  if (shareLink) {
+                    setShowFullShareLink((current) => !current);
+                    return;
+                  }
+                  void exportSelectedShareLink("temporary_reveal", { reveal: true });
+                }}
               >
                 {showFullShareLink ? "隐藏完整链接" : "显示完整链接"}
               </button>
               <button
                 className="secondary"
                 type="button"
-                disabled={!shareLink}
-                onClick={() => setShowQrCode((current) => !current)}
+                disabled={!shareLinkAvailable}
+                onClick={() => {
+                  if (shareLink) {
+                    setShowQrCode((current) => !current);
+                    return;
+                  }
+                  void exportSelectedShareLink("qr_code", { showQr: true });
+                }}
               >
                 {showQrCode ? "隐藏二维码" : "显示二维码"}
               </button>
