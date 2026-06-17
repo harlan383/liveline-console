@@ -7,6 +7,7 @@ import {
   apiFormFetch,
   createWorkerCommand,
   createTransitWorkerBootstrap,
+  exportNodeShareLink,
   listWorkerCommands,
   type CsrfResult,
   type NodeData,
@@ -1191,14 +1192,8 @@ export function TransitRoutesPanel() {
     const serverResources = resourceResult.data.resources.filter((resource) => resource.resource_type === "server");
     const activeResources = serverResources.filter((resource) => resource.status === "active");
     const activeNodes = nodeResult.data.nodes.filter((node) => node.status === "active");
-    const activeNodeDetails = await Promise.all(
-      activeNodes.map(async (node) => {
-        const detailResult = await apiFetch<NodeData>(`/api/nodes/${node.id}`);
-        return detailResult.success ? { ...node, ...detailResult.data } : node;
-      }),
-    );
     setResources(serverResources);
-    setNodes(activeNodeDetails);
+    setNodes(activeNodes);
     setRoutes(routeResult.data.routes);
     setSelectedResourceId((current) => current || activeResources[0]?.id || "");
     setSelectedNodeId((current) => current || activeNodes[0]?.id || "");
@@ -1630,6 +1625,10 @@ export function TransitRoutesPanel() {
     if (shareLink === "-") {
       return;
     }
+    const confirmed = window.confirm("中转链接属于敏感信息，仅用于客户端导入。不要粘贴到聊天、PR、日志或文档中。确认复制吗？");
+    if (!confirmed) {
+      return;
+    }
     await navigator.clipboard.writeText(shareLink);
     setCopied(true);
   }
@@ -1638,24 +1637,37 @@ export function TransitRoutesPanel() {
     if (!route.share_link) {
       return;
     }
+    const confirmed = window.confirm("中转链接属于敏感信息，仅用于客户端导入。不要粘贴到聊天、PR、日志或文档中。确认复制吗？");
+    if (!confirmed) {
+      return;
+    }
     await navigator.clipboard.writeText(route.share_link);
     setCopiedRouteId(route.id);
   }
 
   async function copySocatCandidateLink(route: TransitRouteData) {
-    const derivedLink = derivedSocatCandidateLinkForRoute(route);
-    if (!derivedLink) {
-      setDiagnosticMessage("当前页面缺少 node.share_link，暂不能生成候选正式链接。");
+    const node = activeNodeForRoute(route);
+    const transitHost = transitHostForRoute(route);
+    if (!node || !transitHost || !(node.has_share_link ?? node.share_link_present ?? Boolean(node.masked_share_link))) {
+      setDiagnosticMessage("当前 active 节点没有可导出的 share_link，暂不能生成候选正式链接。");
       return;
     }
     const confirmed = window.confirm(
-      "这是 socat 18443 候选正式链接，但尚未正式 cutover。复制后请手动在客户端测试；本操作不会修改 node.share_link，也不会停用 gost 8443。",
+      "这是敏感候选链接，仅用于客户端导入测试。不要粘贴到聊天、PR、日志或文档中。本操作不会修改 node.share_link，也不会停用 gost 8443。确认继续导出并复制吗？",
     );
     if (!confirmed) {
       return;
     }
+    const csrfToken = await ensureCsrfToken();
+    const exportResult = await exportNodeShareLink(node.id, csrfToken, "socat_candidate_link");
+    if (!exportResult.success) {
+      setDiagnosticMessage(`${exportResult.error_code}: ${exportResult.message}`);
+      return;
+    }
+    const derivedLink = deriveSocatCandidateLink(route, exportResult.data.share_link, transitHost);
     await navigator.clipboard.writeText(derivedLink);
     setCopiedSocatCandidateRouteId(route.id);
+    setDiagnosticMessage("候选链接已复制，请妥善保存，不要公开分享。");
   }
 
   async function copyDiagnostics(route: TransitRouteData) {
@@ -1796,17 +1808,7 @@ export function TransitRoutesPanel() {
     return nodes.find((node) => node.id === route.node_id && node.status === "active") ?? null;
   }
 
-  function derivedSocatCandidateLinkForRoute(route: TransitRouteData) {
-    if (!isSocatTestRoute(route)) {
-      return null;
-    }
-    const node = activeNodeForRoute(route);
-    const shareLink = node?.share_link;
-    const transitHost = transitHostForRoute(route);
-    if (!shareLink || !transitHost) {
-      return null;
-    }
-
+  function deriveSocatCandidateLink(route: TransitRouteData, shareLink: string, transitHost: string) {
     try {
       const url = new URL(shareLink);
       url.hostname = transitHost;
@@ -3024,7 +3026,10 @@ export function TransitRoutesPanel() {
             const diagnosticWarnings = resultStrings(diagnosticResultRecord, "warnings");
             const diagnosticHints = resultStrings(diagnosticResultRecord, "hints");
             const diagnosticFailures = resultStrings(diagnosticResultRecord, "failures");
-            const derivedSocatCandidateLink = derivedSocatCandidateLinkForRoute(route);
+            const canExportSocatCandidateLink =
+              isSocatTestRoute(route) &&
+              Boolean(transitHostForRoute(route)) &&
+              Boolean(activeNodeForRoute(route)?.has_share_link ?? activeNodeForRoute(route)?.share_link_present);
             return (
             <div className="route-card" key={route.id}>
               <div className="status-row">
@@ -3115,9 +3120,9 @@ export function TransitRoutesPanel() {
                     <span>gost 8443 仍保留为回退链路，不会被停用或替换。</span>
                     <span>如果候选链接不可用，请继续使用原直连链接或 gost 8443 回退链路。</span>
                   </CollapsibleWarning>
-                  {derivedSocatCandidateLink ? (
+                  {canExportSocatCandidateLink ? (
                     <div className="route-copy-row">
-                      <span className="route-share-link">{maskLink(derivedSocatCandidateLink)}</span>
+                      <span className="route-share-link">完整候选链接按需导出，默认不展示</span>
                       <button
                         className="secondary compact"
                         type="button"
@@ -3128,7 +3133,7 @@ export function TransitRoutesPanel() {
                     </div>
                   ) : (
                     <div className="warning-box">
-                      <span>当前页面缺少 node.share_link，暂不能生成候选正式链接。</span>
+                      <span>当前 active 节点没有可导出的 share_link，暂不能生成候选正式链接。</span>
                     </div>
                   )}
                 </div>
