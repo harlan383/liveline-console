@@ -7,7 +7,8 @@ import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 import { ServerManagementPanel } from "@/components/ServerManagementPanel";
 import { SystemStatus } from "@/components/SystemStatus";
 import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
-import { TransitRoutesPanel, TransitServersPanel } from "@/components/TransitRoutesPanel";
+import { TransitReadonlyPreflightSimplePanel } from "@/components/TransitReadonlyPreflightSimplePanel";
+import { TransitServersPanel } from "@/components/TransitRoutesPanel";
 import { TransitTopologyPreviewPanel } from "@/components/TransitTopologyPreviewPanel";
 import {
   AUTH_EXPIRED_EVENT,
@@ -55,7 +56,7 @@ const panels: Array<{
     label: "中转链路",
     title: "中转链路",
     eyebrow: "转发关系",
-    description: "配置中转服务器到落地节点的转发关系；本地规划不等于远程执行或正式 cutover。",
+    description: "使用简化按钮做远程只读预检；本阶段仍不创建真实转发关系或 cutover。",
   },
   {
     id: "tasks",
@@ -217,7 +218,7 @@ export function AppShell() {
           {activePanel === "dashboard" ? <DashboardPanel /> : null}
           {activePanel === "servers" ? <ServerManagementPanel /> : null}
           {activePanel === "transitRoutes" ? <TransitServersPanel /> : null}
-          {activePanel === "transitLinks" ? <TransitRoutesPanel /> : null}
+          {activePanel === "transitLinks" ? <TransitReadonlyPreflightSimplePanel /> : null}
           {activePanel === "tasks" ? <TaskHistoryPanel /> : null}
           {activePanel === "diagnostics" ? (
             <>
