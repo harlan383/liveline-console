@@ -191,6 +191,12 @@ def result_summary(command: WorkerCommand) -> str | None:
         listen_port = result.get("listen_port") or "-"
         masked_link = result.get("masked_share_link") or "-"
         return f"landing_node_create node_id={node_id} listen_port={listen_port} share_link={masked_link}"
+    if command.command_type == "transit_readonly_preflight":
+        status = result.get("status") or "-"
+        checks = result.get("checks")
+        check_count = len(checks) if isinstance(checks, list) else 0
+        summary = result.get("summary") or "remote readonly preflight returned"
+        return f"transit_readonly_preflight status={status} checks={check_count} summary={summary}"
     return "命令已返回脱敏结果。"
 
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 FORWARDING_METHODS = {"gost", "socat"}
 TRANSIT_ROUTE_STATUSES = {"creating", "active", "disabled", "error"}
@@ -105,3 +105,34 @@ class ReadonlyPreflightPlanResponse(BaseModel):
     checks: list[ReadonlyPreflightPlanCheck]
     safety_boundary: list[str]
     redacted_summary: str
+
+
+class TransitReadonlyPreflightCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transit_resource_id: str = Field(min_length=1, max_length=36)
+    landing_node_id: str = Field(min_length=1, max_length=36)
+    planned_listen_port: int = Field(ge=1, le=65535)
+    landing_target_port: int = Field(ge=1, le=65535)
+    forwarding_method: str = "socat"
+    purpose: str | None = Field(default=None, max_length=120)
+    readonly: bool = False
+
+    @field_validator("forwarding_method")
+    @classmethod
+    def validate_preflight_forwarding_method(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if cleaned not in FORWARDING_METHODS:
+            raise ValueError("forwarding_method 不支持")
+        return cleaned
+
+    @field_validator("purpose")
+    @classmethod
+    def clean_preflight_purpose(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        lowered = cleaned.lower()
+        if "://" in lowered or "private key" in lowered or "token" in lowered or "password" in lowered:
+            raise ValueError("purpose 不能包含链接、token、密码或私钥内容")
+        return cleaned or None

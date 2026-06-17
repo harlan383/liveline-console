@@ -272,6 +272,24 @@ export type ReadonlyPreflightPlanResponse = {
   redacted_summary: string;
 };
 
+export type TransitReadonlyPreflightCommandRequest = {
+  transit_resource_id: string;
+  landing_node_id: string;
+  planned_listen_port: number;
+  landing_target_port: number;
+  forwarding_method: "socat" | "gost";
+  purpose: string | null;
+  readonly: true;
+};
+
+export type TransitReadonlyPreflightCommandResponse = {
+  command: WorkerCommandData;
+  target_worker_id: string;
+  target_worker_version: string | null;
+  minimum_supported_worker_version: string;
+  safety_boundary: string[];
+};
+
 export type LandingNodePlanRequest = {
   listen_port: number;
   protocol: string;
@@ -485,7 +503,13 @@ export type WorkerListResult = {
   workers: WorkerData[];
 };
 
-export type WorkerCommandType = "ping" | "collect_status" | "service_status" | "landing_preflight" | "landing_node_create";
+export type WorkerCommandType =
+  | "ping"
+  | "collect_status"
+  | "service_status"
+  | "landing_preflight"
+  | "landing_node_create"
+  | "transit_readonly_preflight";
 
 export type WorkerCommandData = {
   id: string;
@@ -675,6 +699,17 @@ export async function requestReadonlyPreflightPlan(
 ): Promise<ApiResponse<ReadonlyPreflightPlanResponse>> {
   return apiFetch<ReadonlyPreflightPlanResponse>("/api/transit-routes/readonly-preflight-plan", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createTransitReadonlyPreflightCommand(
+  payload: TransitReadonlyPreflightCommandRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitReadonlyPreflightCommandResponse>> {
+  return apiFetch<TransitReadonlyPreflightCommandResponse>("/api/transit-routes/readonly-preflight-command", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
   });
 }

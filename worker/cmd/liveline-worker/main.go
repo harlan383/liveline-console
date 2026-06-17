@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.6-stage-3.3.37"
+const workerVersion = "0.1.7-stage-3.3.63"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -39,6 +39,13 @@ const managedXrayConfigPath = "/opt/liveline-xray/config/config.json"
 const managedXrayStateDir = "/opt/liveline-xray/state"
 const managedXrayServiceName = "liveline-xray.service"
 const managedXrayServicePath = "/etc/systemd/system/liveline-xray.service"
+
+var protectedTransitListenPorts = map[int]string{
+	22:    "22 is reserved for SSH management",
+	8443:  "8443 is reserved for gost fallback",
+	18443: "18443 is reserved for the current socat formal route",
+	20575: "20575 is a historical unsafe transit port",
+}
 
 type config struct {
 	ConsoleURL               string
@@ -434,9 +441,198 @@ func executeWorkerCommand(cfg config, command workerCommand) (map[string]any, er
 		result["hostname"] = hostname
 		result["timestamp"] = now
 		return result, nil
+	case "transit_readonly_preflight":
+		if cfg.Role != "transit" {
+			return nil, fmt.Errorf("transit_readonly_preflight requires transit worker role")
+		}
+		result, err := collectTransitReadonlyPreflight(cfg, hostname, command.Payload)
+		if err != nil {
+			return nil, err
+		}
+		result["timestamp"] = now
+		return result, nil
 	default:
 		return nil, fmt.Errorf("unsupported command_type %q", command.CommandType)
 	}
+}
+
+type transitReadonlyPreflightRequest struct {
+	TransitResourceID string
+	LandingNodeID     string
+	PlannedListenPort int
+	LandingTargetHost string
+	LandingTargetPort int
+	ForwardingMethod  string
+	Purpose           string
+	Readonly          bool
+}
+
+func collectTransitReadonlyPreflight(cfg config, hostname string, payload map[string]any) (map[string]any, error) {
+	request, err := parseTransitReadonlyPreflightRequest(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	checks := []map[string]any{}
+	addCheck := func(id string, label string, passed bool, status string, detail string) {
+		checks = append(checks, map[string]any{
+			"id":     id,
+			"label":  label,
+			"status": status,
+			"passed": passed,
+			"detail": truncateReadonlyOutput(detail, 600),
+		})
+	}
+
+	addCheck(
+		"worker_identity",
+		"Worker identity / version",
+		true,
+		"passed",
+		fmt.Sprintf("worker_version=%s role=%s interface=%s hostname=%s", workerVersion, cfg.Role, cfg.InterfaceName, hostname),
+	)
+
+	ssOutput, ssErr := readonlyCommandOutput("ss", "-lntup")
+	portRows, _ := listeningPortRows(ssOutput)
+	portChecks := portChecksFromRows(portRows, []int{request.PlannedListenPort})
+	portListening := false
+	portDetail := "planned port is not listening"
+	if ssErr != "" {
+		portDetail = "ss read unavailable: " + ssErr
+	} else if len(portChecks) > 0 {
+		if listening, ok := portChecks[0]["listening"].(bool); ok {
+			portListening = listening
+		}
+		portDetail = fmt.Sprintf("planned port %d listening=%v", request.PlannedListenPort, portListening)
+	}
+	addCheck(
+		"planned_port_available",
+		"Planned listen port availability",
+		ssErr == "" && !portListening,
+		statusFromPassed(ssErr == "" && !portListening),
+		portDetail,
+	)
+
+	socatState := serviceState("socat", "socat")
+	addCheck(
+		"socat_status",
+		"socat service / process status",
+		true,
+		"passed",
+		fmt.Sprintf("binary_present=%v systemd_active=%v", socatState["binary_present"], socatState["systemd_active"]),
+	)
+
+	gostState := serviceState("gost", "gost")
+	addCheck(
+		"gost_status",
+		"gost service / process status",
+		true,
+		"passed",
+		fmt.Sprintf("binary_present=%v systemd_active=%v", gostState["binary_present"], gostState["systemd_active"]),
+	)
+
+	reachable, reachDetail := tcpReachability(request.LandingTargetHost, request.LandingTargetPort)
+	addCheck(
+		"transit_to_landing_tcp_connectivity",
+		"Transit to landing TCP connectivity",
+		reachable,
+		statusFromPassed(reachable),
+		reachDetail,
+	)
+
+	firewall, firewallWarnings := firewallReadonlySummary()
+	firewallDetail := fmt.Sprintf(
+		"ufw=%s firewalld=%s iptables_summary=%s warnings=%d",
+		truncateReadonlyOutput(fmt.Sprint(firewall["ufw_status"]), 120),
+		truncateReadonlyOutput(fmt.Sprint(firewall["firewalld_state"]), 120),
+		truncateReadonlyOutput(fmt.Sprint(firewall["iptables_rules_summary"]), 220),
+		len(firewallWarnings),
+	)
+	addCheck(
+		"firewall_readonly_summary",
+		"Local firewall readonly summary",
+		true,
+		"passed",
+		firewallDetail,
+	)
+
+	passed := true
+	for _, check := range checks {
+		if checkPassed, ok := check["passed"].(bool); ok && !checkPassed {
+			passed = false
+			break
+		}
+	}
+	status := "passed"
+	summary := fmt.Sprintf("Remote readonly preflight passed for planned listen %d to landing target port %d.", request.PlannedListenPort, request.LandingTargetPort)
+	if !passed {
+		status = "blocked"
+		summary = "Remote readonly preflight found blockers. No real forwarding was created."
+	}
+
+	return map[string]any{
+		"passed":              passed,
+		"status":              status,
+		"summary":             summary,
+		"checks":              checks,
+		"worker_version":      workerVersion,
+		"hostname":            hostname,
+		"role":                cfg.Role,
+		"interface_name":      cfg.InterfaceName,
+		"planned_listen_port": request.PlannedListenPort,
+		"landing_target_port": request.LandingTargetPort,
+		"forwarding_method":   request.ForwardingMethod,
+		"redacted_summary": fmt.Sprintf(
+			"transit_readonly_preflight status=%s planned_listen_port=%d landing_target_port=%d method=%s",
+			status,
+			request.PlannedListenPort,
+			request.LandingTargetPort,
+			request.ForwardingMethod,
+		),
+		"safety_boundary": []any{
+			"readonly checks only",
+			"no arbitrary shell accepted",
+			"no socat/gost install, start, stop, or restart",
+			"no listener binding",
+			"no firewall mutation",
+			"no Xray mutation",
+			"no nodes.share_link read or modification",
+			"no cutover",
+		},
+	}, nil
+}
+
+func parseTransitReadonlyPreflightRequest(payload map[string]any) (transitReadonlyPreflightRequest, error) {
+	request := transitReadonlyPreflightRequest{
+		TransitResourceID: stringPayload(payload, "transit_resource_id"),
+		LandingNodeID:     stringPayload(payload, "landing_node_id"),
+		PlannedListenPort: intPayload(payload, "planned_listen_port"),
+		LandingTargetHost: stringPayload(payload, "landing_target_host"),
+		LandingTargetPort: intPayload(payload, "landing_target_port"),
+		ForwardingMethod:  defaultStringPayload(payload, "forwarding_method", "socat"),
+		Purpose:           stringPayload(payload, "purpose"),
+		Readonly:          boolPayload(payload, "readonly"),
+	}
+	if !request.Readonly {
+		return request, errors.New("transit_readonly_preflight requires readonly=true")
+	}
+	if request.TransitResourceID == "" || request.LandingNodeID == "" {
+		return request, errors.New("transit_readonly_preflight missing resource or node id")
+	}
+	if !validTCPPort(request.PlannedListenPort) || !validTCPPort(request.LandingTargetPort) {
+		return request, errors.New("transit_readonly_preflight ports must be 1-65535")
+	}
+	if reason, reserved := protectedTransitListenPorts[request.PlannedListenPort]; reserved {
+		return request, fmt.Errorf("planned listen port is protected: %s", reason)
+	}
+	if request.ForwardingMethod != "socat" && request.ForwardingMethod != "gost" {
+		return request, errors.New("transit_readonly_preflight forwarding_method must be socat or gost")
+	}
+	if !safeDialTargetHost(request.LandingTargetHost) {
+		return request, errors.New("transit_readonly_preflight landing target host is invalid")
+	}
+	_ = request.Purpose
+	return request, nil
 }
 
 type landingNodeCreateRequest struct {
@@ -648,6 +844,57 @@ func intPayload(payload map[string]any, key string) int {
 	default:
 		return 0
 	}
+}
+
+func boolPayload(payload map[string]any, key string) bool {
+	value, _ := payload[key].(bool)
+	return value
+}
+
+func validTCPPort(port int) bool {
+	return port >= 1 && port <= 65535
+}
+
+func statusFromPassed(passed bool) string {
+	if passed {
+		return "passed"
+	}
+	return "blocked"
+}
+
+func safeDialTargetHost(host string) bool {
+	cleaned := strings.TrimSpace(host)
+	if cleaned == "" || len(cleaned) > 255 {
+		return false
+	}
+	if strings.ContainsAny(cleaned, " \t\r\n/\\\"'`$;&|<>") {
+		return false
+	}
+	if ip := net.ParseIP(cleaned); ip != nil {
+		return true
+	}
+	for _, label := range strings.Split(cleaned, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		for _, char := range label {
+			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func tcpReachability(host string, port int) (bool, string) {
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", address, readonlyCommandTimeout)
+	if err != nil {
+		return false, fmt.Sprintf("TCP connect to target port %d failed: %v", port, err)
+	}
+	_ = conn.Close()
+	return true, fmt.Sprintf("TCP connect to target port %d succeeded.", port)
 }
 
 func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
