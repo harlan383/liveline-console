@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestParseDefaultRoute(t *testing.T) {
 	info := parseDefaultRoute("default via 64.90.13.254 dev ens17 proto dhcp src 64.90.13.19 metric 100\n")
@@ -43,5 +48,62 @@ tcp   LISTEN 0      4096          [::]:443          [::]:*        users:(("xray"
 	}
 	if rows[1]["port"] != 443 {
 		t.Fatalf("second port = %#v, want 443", rows[1]["port"])
+	}
+}
+
+func TestValidateManagedXrayBaseDirForPreflightAllowsEmptyPrecreatedDir(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+	if err := os.Mkdir(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateManagedXrayBaseDirForPreflight(baseDir); err != nil {
+		t.Fatalf("validateManagedXrayBaseDirForPreflight returned error for empty dir: %v", err)
+	}
+}
+
+func TestValidateManagedXrayBaseDirForPreflightAllowsEmptyKnownSubdirs(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+	for _, dir := range []string{"bin", "config"} {
+		if err := os.MkdirAll(filepath.Join(baseDir, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateManagedXrayBaseDirForPreflight(baseDir); err != nil {
+		t.Fatalf("validateManagedXrayBaseDirForPreflight returned error for empty known subdirs: %v", err)
+	}
+}
+
+func TestValidateManagedXrayBaseDirForPreflightRejectsUnknownArtifacts(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+	if err := os.Mkdir(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "unknown.txt"), []byte("not managed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := validateManagedXrayBaseDirForPreflight(baseDir)
+	if err == nil {
+		t.Fatal("validateManagedXrayBaseDirForPreflight returned nil for unknown artifact")
+	}
+	if !strings.Contains(err.Error(), "unknown artifact") {
+		t.Fatalf("error = %q, want unknown artifact", err.Error())
+	}
+}
+
+func TestValidateManagedXrayBaseDirForPreflightRejectsNonEmptyKnownSubdir(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+	binDir := filepath.Join(baseDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "xray"), []byte("binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := validateManagedXrayBaseDirForPreflight(baseDir)
+	if err == nil {
+		t.Fatal("validateManagedXrayBaseDirForPreflight returned nil for non-empty known subdir")
+	}
+	if !strings.Contains(err.Error(), "not empty") {
+		t.Fatalf("error = %q, want not empty", err.Error())
 	}
 }

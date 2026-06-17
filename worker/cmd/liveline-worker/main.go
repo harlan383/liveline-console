@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.5-stage-3.3.37"
+const workerVersion = "0.1.6-stage-3.3.37"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -658,10 +658,7 @@ func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
 		return fmt.Errorf("approved TCP port %d is already listening", request.ListenPort)
 	}
 	for _, path := range []string{
-		managedXrayBaseDir,
-		managedXrayBinDir,
 		managedXrayBinaryPath,
-		managedXrayConfigDir,
 		"/usr/bin/xray",
 		managedXrayConfigPath,
 		managedXrayStateDir,
@@ -681,6 +678,9 @@ func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
 			return fmt.Errorf("preflight cannot inspect %s: %w", path, err)
 		}
 	}
+	if err := validateManagedXrayBaseDirForPreflight(managedXrayBaseDir); err != nil {
+		return err
+	}
 	for _, binary := range []string{"xray", "x-ui", "3x-ui"} {
 		if path, err := exec.LookPath(binary); err == nil && path != "" {
 			return fmt.Errorf("preflight refused because %s is already installed at %s", binary, path)
@@ -688,6 +688,50 @@ func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
 	}
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return errors.New("systemctl is required")
+	}
+	return nil
+}
+
+func validateManagedXrayBaseDirForPreflight(baseDir string) error {
+	info, err := os.Lstat(baseDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("preflight cannot inspect %s: %w", baseDir, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("preflight refused because %s is a symlink", baseDir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("preflight refused because %s exists but is not a directory", baseDir)
+	}
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return fmt.Errorf("preflight cannot inspect %s: %w", baseDir, err)
+	}
+	for _, entry := range entries {
+		childPath := filepath.Join(baseDir, entry.Name())
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("preflight refused because %s contains unsupported artifact %s", baseDir, childPath)
+		}
+		if entry.Name() != "bin" && entry.Name() != "config" {
+			return fmt.Errorf("preflight refused because %s contains unknown artifact %s", baseDir, childPath)
+		}
+		childInfo, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("preflight cannot inspect %s: %w", childPath, err)
+		}
+		if !childInfo.IsDir() {
+			return fmt.Errorf("preflight refused because %s contains non-directory artifact %s", baseDir, childPath)
+		}
+		childEntries, err := os.ReadDir(childPath)
+		if err != nil {
+			return fmt.Errorf("preflight cannot inspect %s: %w", childPath, err)
+		}
+		if len(childEntries) > 0 {
+			return fmt.Errorf("preflight refused because %s is not empty", childPath)
+		}
 	}
 	return nil
 }
