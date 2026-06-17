@@ -41,6 +41,21 @@ The result panel shows:
 - structured checks with pass / fail labels,
 - safety boundary reminders.
 
+## Hotfix: Prominent Panel Placement
+
+Stage 3.3.68-hotfix-preflight-panel-prominent moves the simplified readonly
+preflight panel out of the collapsed legacy workbench. It now appears near the
+top of the Transit Links page, directly after the page note and collapsible
+safety explanation, and before the legacy transit route table.
+
+The hotfix keeps the old transit route table and the old advanced readonly
+preflight panel. The old advanced panel remains collapsed for rollback and
+comparison, while the simplified panel becomes the visible primary entry point.
+
+The primary button label is now `开始只读预检` to make the action clearer. The
+panel still states that readonly preflight only creates or refreshes the
+existing safe preflight flow and does not create real transit routes.
+
 ## Safety Boundary
 
 This stage does not:

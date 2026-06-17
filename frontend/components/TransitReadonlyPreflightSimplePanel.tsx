@@ -416,7 +416,7 @@ export function TransitReadonlyPreflightSimplePanel({
           type="button"
           onClick={onRunCommand}
         >
-          {remotePreflightLoading ? "只读预检执行中" : "执行远程只读预检"}
+          {remotePreflightLoading ? "只读预检执行中" : "开始只读预检"}
         </button>
         {remotePreflightCommand ? (
           <button
