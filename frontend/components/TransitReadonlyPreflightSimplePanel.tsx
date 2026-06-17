@@ -296,13 +296,13 @@ export function TransitReadonlyPreflightSimplePanel() {
     }
     const updated = result.data.commands.find((item) => item.id === commandId);
     if (!updated) {
-      setMessage("暂未找到预检命令，请稍后再看。);
+      setMessage("暂未找到预检命令，请稍后再看。");
       return;
     }
     setCommand(updated);
     if (workerCommandTerminalStatuses.has(updated.status)) {
       const status = simpleStatusFromCommand(updated);
-      setMessage(status === "passed" ? "远程只读预检通过。" : "远程只读预检未通过，请查看检查项。);
+      setMessage(status === "passed" ? "远程只读预检通过。" : "远程只读预检未通过，请查看检查项。");
     }
   }
 
