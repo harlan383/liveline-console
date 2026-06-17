@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import {
   apiFetch,
   apiFormFetch,
+  createTransitReadonlyPreflightCommand,
   createWorkerCommand,
   createTransitWorkerBootstrap,
   exportNodeShareLink,
@@ -26,6 +27,7 @@ import {
   type TransitRouteDiagnoseResult,
   type TransitRouteListResult,
   type TransitRouteRestartSocatResult,
+  type TransitReadonlyPreflightCommandRequest,
   type WorkerRole,
   type WorkerCommandData,
   type WorkerTokenCreateResult,
@@ -34,6 +36,7 @@ import {
 import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 
 const terminalStatuses = new Set(["success", "failed", "cancelled", "timeout"]);
+const workerCommandTerminalStatuses = new Set(["succeeded", "failed", "expired", "cancelled"]);
 const SOCAT_RESOURCE_ID = "6d67c275-8ac9-4775-9519-c89b50718157";
 const PROTECTED_LISTEN_PORTS = new Set(["22", "8443", "18443", "20575"]);
 const PROTECTED_LISTEN_PORT_MESSAGES: Record<string, string> = {
@@ -200,6 +203,7 @@ function workerCommandTypeLabel(commandType: string) {
     ping: "Ping",
     collect_status: "状态采集",
     service_status: "服务状态",
+    transit_readonly_preflight: "中转只读预检",
   };
   return labels[commandType] ?? commandType;
 }
@@ -1250,6 +1254,9 @@ export function TransitRoutesPanel() {
   const [readonlyPreflightPlan, setReadonlyPreflightPlan] = useState<ReadonlyPreflightPlanResponse | null>(null);
   const [readonlyPreflightApiMessage, setReadonlyPreflightApiMessage] = useState("");
   const [readonlyPreflightLoading, setReadonlyPreflightLoading] = useState(false);
+  const [remotePreflightCommand, setRemotePreflightCommand] = useState<WorkerCommandData | null>(null);
+  const [remotePreflightMessage, setRemotePreflightMessage] = useState("");
+  const [remotePreflightLoading, setRemotePreflightLoading] = useState(false);
   const [transitModalMode, setTransitModalMode] = useState<TransitModalMode>(null);
   const [selectedTransitResource, setSelectedTransitResource] = useState<TransitResourceData | null>(null);
   const [selectedTransitRoute, setSelectedTransitRoute] = useState<TransitRouteData | null>(null);
@@ -1310,6 +1317,8 @@ export function TransitRoutesPanel() {
   useEffect(() => {
     setReadonlyPreflightPlan(null);
     setReadonlyPreflightApiMessage("");
+    setRemotePreflightCommand(null);
+    setRemotePreflightMessage("");
     setPreflightSummaryCopied(false);
   }, [
     planResourceId,
@@ -1831,6 +1840,82 @@ export function TransitRoutesPanel() {
     }
   }
 
+  function buildTransitReadonlyPreflightCommandPayload(): TransitReadonlyPreflightCommandRequest | null {
+    if (!planResourceId || !planNodeId) {
+      setRemotePreflightMessage("请选择中转服务器和落地节点。");
+      return null;
+    }
+    if (!readonlyPreflightReady) {
+      setRemotePreflightMessage("本地只读预检计划尚未 Ready，不能创建远程只读预检命令。");
+      return null;
+    }
+    const plannedListenPortNumber = parseListenPortInput(planListenPort);
+    if (plannedListenPortNumber === null || planTargetPortNumber === null) {
+      setRemotePreflightMessage("计划监听端口和落地目标端口必须是合法 TCP 端口。");
+      return null;
+    }
+    return {
+      transit_resource_id: planResourceId,
+      landing_node_id: planNodeId,
+      planned_listen_port: plannedListenPortNumber,
+      landing_target_port: planTargetPortNumber,
+      forwarding_method: "socat",
+      purpose: planPurpose.trim() || "中转链路只读预检",
+      readonly: true,
+    };
+  }
+
+  async function runTransitReadonlyPreflightCommand() {
+    const payload = buildTransitReadonlyPreflightCommandPayload();
+    if (!payload) {
+      return;
+    }
+    setRemotePreflightLoading(true);
+    setRemotePreflightMessage("正在创建 transit_readonly_preflight Worker command。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await createTransitReadonlyPreflightCommand(payload, csrfToken);
+      if (!result.success) {
+        setRemotePreflightCommand(null);
+        setRemotePreflightMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setRemotePreflightCommand(result.data.command);
+      setRemotePreflightMessage(result.message);
+    } catch (error) {
+      setRemotePreflightCommand(null);
+      setRemotePreflightMessage(error instanceof Error ? error.message : "创建远程只读预检命令失败。");
+    } finally {
+      setRemotePreflightLoading(false);
+    }
+  }
+
+  async function refreshTransitReadonlyPreflightCommand() {
+    if (!remotePreflightCommand?.target_worker_id) {
+      return;
+    }
+    setRemotePreflightLoading(true);
+    setRemotePreflightMessage("正在刷新 Worker command 状态。");
+    try {
+      const result = await listWorkerCommands(remotePreflightCommand.target_worker_id);
+      if (!result.success) {
+        setRemotePreflightMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      const updated = result.data.commands.find((command) => command.id === remotePreflightCommand.id);
+      if (!updated) {
+        setRemotePreflightMessage("未找到当前远程只读预检命令，请稍后刷新。");
+        return;
+      }
+      setRemotePreflightCommand(updated);
+      setRemotePreflightMessage(workerCommandTerminalStatuses.has(updated.status) ? "远程只读预检命令已返回结果。" : "远程只读预检命令仍在执行或等待。");
+    } catch (error) {
+      setRemotePreflightMessage(error instanceof Error ? error.message : "刷新远程只读预检命令失败。");
+    } finally {
+      setRemotePreflightLoading(false);
+    }
+  }
+
   function transitHostForRoute(route: TransitRouteData) {
     const resource = resources.find((item) => item.id === route.transit_resource_id);
     return resource?.entry_host || resource?.ssh_host || null;
@@ -1892,6 +1977,88 @@ export function TransitRoutesPanel() {
   function checkOutput(check: Record<string, unknown> | null) {
     const output = check?.["raw_output"];
     return typeof output === "string" && output ? redactString(output) : "-";
+  }
+
+  function renderRemoteReadonlyPreflightResult() {
+    if (!remotePreflightCommand) {
+      return null;
+    }
+    const result = objectValue(remotePreflightCommand.result_json);
+    const checks = Array.isArray(result?.["checks"]) ? result["checks"] : [];
+    const status = stringValue(result, "status");
+    const summary = stringValue(result, "summary");
+    const redactedSummary = stringValue(result, "redacted_summary");
+
+    return (
+      <div className="readonly-preflight-api-result">
+        <div className="status-row">
+          <div>
+            <h4>远程只读预检 Worker 结果</h4>
+            <p className="message">
+              command id: {remotePreflightCommand.id} / {workerCommandTypeLabel(remotePreflightCommand.command_type)}
+            </p>
+          </div>
+          <span className={`pill ${remotePreflightCommand.status === "succeeded" ? "ok" : remotePreflightCommand.status === "failed" ? "bad" : "warn"}`}>
+            {workerCommandStatusLabel(remotePreflightCommand.status)}
+          </span>
+        </div>
+        <div className="detail-grid">
+          <span>Worker</span>
+          <strong>{remotePreflightCommand.target_worker_id}</strong>
+          <span>Worker 版本</span>
+          <strong>{remotePreflightCommand.target_worker_version ?? "-"}</strong>
+          <span>命令状态</span>
+          <strong>{workerCommandStatusLabel(remotePreflightCommand.status)}</strong>
+          <span>预检状态</span>
+          <strong>{status}</strong>
+          <span>摘要</span>
+          <strong>{summary}</strong>
+        </div>
+        <div className="warning-box">
+          <strong>只读边界</strong>
+          <span>该命令只执行固定 allowlist 只读检查，不创建真实转发，不安装或重启 socat / gost，不新增监听端口。</span>
+          <span>结果已脱敏；不展示完整客户端链接、Worker token、Worker secret、SSH 私钥或数据库密码。</span>
+        </div>
+        {checks.length > 0 ? (
+          <div className="readonly-preflight-checklist api-check-list">
+            {checks.map((item, index) => {
+              const check = objectValue(item);
+              const checkId = stringValue(check, "id");
+              const checkStatus = stringValue(check, "status");
+              const checkPassed = check?.["passed"] === true;
+              return (
+                <div className="readonly-preflight-item api-check-card" key={`${checkId}-${index}`}>
+                  <div className="status-row">
+                    <div>
+                      <strong>{stringValue(check, "label")}</strong>
+                      <p className="message">{checkId}</p>
+                    </div>
+                    <span className={`pill ${checkPassed ? "ok" : "bad"}`}>{checkStatus}</span>
+                  </div>
+                  <div className="detail-grid compact-detail-grid">
+                    <span>是否通过</span>
+                    <strong>{booleanLabel(checkPassed)}</strong>
+                    <span>脱敏详情</span>
+                    <strong>{stringValue(check, "detail")}</strong>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="warning-box">
+            <strong>尚未返回检查项</strong>
+            <span>如果命令仍在 pending / running，请稍后刷新状态。</span>
+          </div>
+        )}
+        {redactedSummary !== "-" ? (
+          <div>
+            <h4>脱敏结果摘要</h4>
+            <pre className="local-plan-output">{redactedSummary}</pre>
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   function routeBadge(route: TransitRouteData) {
@@ -2730,9 +2897,9 @@ export function TransitRoutesPanel() {
       <div className="local-plan-builder readonly-preflight-plan">
         <div className="status-row">
           <div>
-            <h3>远程只读预检计划 / 仅生成框架</h3>
+            <h3>远程只读预检 / Worker allowlist</h3>
             <p className="message">
-              基于上方本地规划生成未来只读预检清单。本阶段只展示计划，不执行 SSH、不连接远端、不创建真实转发、不新增监听端口、不修改 node.share_link、不做 cutover。
+              基于上方本地规划创建 transit_readonly_preflight Worker command。该命令只执行固定只读检查，不执行 SSH、不创建真实转发、不新增监听端口、不修改 node.share_link、不做 cutover。
             </p>
           </div>
           <span className={`pill ${readonlyPreflightReady ? "ok" : "bad"}`}>
@@ -2740,8 +2907,8 @@ export function TransitRoutesPanel() {
           </span>
         </div>
         <CollapsibleWarning title="查看只读预检安全边界">
-          <span>下面列出的远程项目全部标记为“未来执行”，本阶段不会运行任何 systemd、ss、nc、curl、iptables 或 SSH 命令。</span>
-          <span>真正远程只读预检需要后续 Workbuddy 授权阶段；真正创建远程转发和切换 node.share_link 也必须单独审批。</span>
+          <span>远程只读预检只通过 Worker allowlist 执行固定检查，不接受任意 shell，不安装、不启动、不停止、不重启 socat / gost。</span>
+          <span>真正创建远程转发和切换 node.share_link 必须单独审批；本按钮不会进入创建阶段。</span>
           <span>当前正式链路仍是 socat 18443，回退链路仍是 gost 8443，本计划不会关闭 gost，也不会让 socat 接管 8443。</span>
         </CollapsibleWarning>
         <div className="local-plan-layout">
@@ -2768,6 +2935,24 @@ export function TransitRoutesPanel() {
                 >
                   {readonlyPreflightLoading ? "校验中" : "校验只读预检计划"}
                 </button>
+                <button
+                  className="primary compact"
+                  disabled={!readonlyPreflightReady || remotePreflightLoading}
+                  type="button"
+                  onClick={() => void runTransitReadonlyPreflightCommand()}
+                >
+                  {remotePreflightLoading ? "处理中" : "执行远程只读预检"}
+                </button>
+                {remotePreflightCommand ? (
+                  <button
+                    className="secondary compact"
+                    disabled={remotePreflightLoading}
+                    type="button"
+                    onClick={() => void refreshTransitReadonlyPreflightCommand()}
+                  >
+                    刷新命令状态
+                  </button>
+                ) : null}
                 <button className="secondary compact" type="button" onClick={() => void copyReadonlyPreflightSummary()}>
                   {preflightSummaryCopied ? "已复制" : "复制摘要"}
                 </button>
@@ -2835,6 +3020,7 @@ export function TransitRoutesPanel() {
             )}
             <pre className="local-plan-output">{readonlyPreflightSummaryText}</pre>
             {readonlyPreflightApiMessage ? <p className="message">{readonlyPreflightApiMessage}</p> : null}
+            {remotePreflightMessage ? <p className="message">{remotePreflightMessage}</p> : null}
             {readonlyPreflightPlan ? (
               <div className="readonly-preflight-api-result">
                 <div className="status-row">
@@ -2928,6 +3114,7 @@ export function TransitRoutesPanel() {
                 <span>点击“校验只读预检计划”后，只会生成本地无副作用计划，不会 SSH、不会远程命令、不会连接远程服务器。</span>
               </div>
             )}
+            {renderRemoteReadonlyPreflightResult()}
           </div>
         </div>
       </div>

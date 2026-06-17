@@ -21,11 +21,18 @@ from app.schemas.transit_route import (
     ReadonlyPreflightPlanCheck,
     ReadonlyPreflightPlanRequest,
     ReadonlyPreflightPlanResponse,
+    TransitReadonlyPreflightCommandRequest,
     TransitRouteCreateFields,
 )
 from app.services.auth_service import record_audit
 from app.services.credentials import store_temp_credential
 from app.services.task_logging import add_task_log
+from app.services.worker_commands import create_worker_command, serialize_worker_command
+from app.services.worker_targeting import (
+    WorkerTargetError,
+    minimum_worker_version_for_command,
+    resolve_command_target_worker,
+)
 from app.worker.jobs import (
     create_socat_route_job,
     create_transit_route_job,
@@ -41,6 +48,19 @@ from app.worker.ssh_socat_route import (
 router = APIRouter()
 
 
+TRANSIT_READONLY_PREFLIGHT_COMMAND = "transit_readonly_preflight"
+TRANSIT_READONLY_PREFLIGHT_BOUNDARY = [
+    "remote readonly preflight only",
+    "no arbitrary shell accepted",
+    "no real forwarding route created",
+    "no socat/gost install, start, stop, or restart",
+    "no real listening port added",
+    "no firewall or cloud security group change",
+    "no Xray modification",
+    "no nodes.share_link read or modification",
+    "no full client link export",
+    "no cutover",
+]
 READONLY_PREFLIGHT_SAFETY_BOUNDARY = [
     "readonly preflight plan only",
     "no SSH executed",
@@ -385,6 +405,106 @@ def readonly_preflight_plan(
 
     plan = build_readonly_preflight_plan(payload)
     return success_response(plan.model_dump(), "readonly preflight plan generated locally")
+
+
+@router.post("/readonly-preflight-command")
+def create_transit_readonly_preflight_command(
+    payload: TransitReadonlyPreflightCommandRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    if not payload.readonly:
+        return error_response(
+            400,
+            "READONLY_CONFIRMATION_REQUIRED",
+            "必须明确确认 readonly=true，才允许创建远程只读预检命令。",
+        )
+    if payload.planned_listen_port in PROTECTED_CREATE_PORTS:
+        return error_response(
+            400,
+            "PROTECTED_LISTEN_PORT",
+            PROTECTED_CREATE_PORT_MESSAGES[payload.planned_listen_port],
+        )
+
+    resource = db.get(TransitResource, payload.transit_resource_id)
+    if not resource or resource.deleted_at is not None:
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转服务器记录不存在。")
+    if resource.resource_type != "server":
+        return error_response(400, "TRANSIT_RESOURCE_TYPE_UNSUPPORTED", "只允许 server 类型中转资源执行只读预检。")
+    if resource.status == "disabled":
+        return error_response(400, "TRANSIT_RESOURCE_DISABLED", "已停用的中转资源不能执行只读预检。")
+
+    node = db.get(Node, payload.landing_node_id)
+    if not node or node.deleted_at is not None:
+        return error_response(404, "LANDING_NODE_NOT_FOUND", "落地节点不存在。")
+    if node.status != "active":
+        return error_response(400, "LANDING_NODE_NOT_ACTIVE", "只允许 active 落地节点执行只读预检。")
+    landing_host = node.vps.ip if node.vps else None
+    if not landing_host:
+        return error_response(400, "LANDING_HOST_MISSING", "落地节点缺少目标 IP，不能执行只读预检。")
+    if node.xray_port and payload.landing_target_port != node.xray_port:
+        return error_response(
+            400,
+            "LANDING_TARGET_PORT_MISMATCH",
+            "落地目标端口必须与当前 active 节点端口一致。",
+        )
+
+    try:
+        target = resolve_command_target_worker(
+            db,
+            server_type="transit",
+            server_id=resource.id,
+            role="transit",
+            command_type=TRANSIT_READONLY_PREFLIGHT_COMMAND,
+        )
+    except WorkerTargetError as exc:
+        return error_response(400, exc.code, exc.message)
+
+    target_worker = target.worker
+    if target_worker.role != "transit":
+        return error_response(400, "WORKER_ROLE_MISMATCH", "只允许 transit role Worker 执行中转只读预检。")
+
+    command_payload = {
+        "transit_resource_id": resource.id,
+        "transit_resource_name": resource.name,
+        "landing_node_id": node.id,
+        "landing_node_name": node.node_name,
+        "planned_listen_port": payload.planned_listen_port,
+        "landing_target_host": landing_host,
+        "landing_target_port": payload.landing_target_port,
+        "forwarding_method": payload.forwarding_method,
+        "purpose": payload.purpose,
+        "readonly": True,
+        "safety_boundary": TRANSIT_READONLY_PREFLIGHT_BOUNDARY,
+    }
+    command = create_worker_command(db, target_worker, TRANSIT_READONLY_PREFLIGHT_COMMAND, command_payload)
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="create_transit_readonly_preflight_command",
+        result="success",
+        request=request,
+        resource_type="worker_command",
+        resource_id=command.id,
+    )
+    db.commit()
+    db.refresh(command)
+    return success_response(
+        {
+            "command": serialize_worker_command(command, include_payload=True, worker=target_worker),
+            "target_worker_id": target_worker.id,
+            "target_worker_version": target_worker.worker_version,
+            "minimum_supported_worker_version": minimum_worker_version_for_command(TRANSIT_READONLY_PREFLIGHT_COMMAND),
+            "safety_boundary": TRANSIT_READONLY_PREFLIGHT_BOUNDARY,
+        },
+        "远程只读预检 Worker command 已创建；不会创建真实转发。",
+    )
 
 
 @router.post("/{route_id}/diagnose")

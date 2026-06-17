@@ -1109,6 +1109,23 @@ install `socat` / `gost`, create transit routes, add listening ports, change
 firewall or cloud security group rules, modify Xray, modify `nodes.share_link`,
 export client links, or perform cutover.
 
+## Stage 3.3.63 Transit Worker remote readonly preflight API implementation scope
+
+Stage 3.3.63 adds the first Worker/API execution path for a transit route
+readonly preflight. The backend creates a `transit_readonly_preflight` Worker
+command only after validating the transit server, online transit Worker, active
+landing node, protected ports, and explicit `readonly=true` confirmation.
+
+The Worker implementation is allowlist-only: it reports Worker identity,
+planned port occupancy, `socat` / `gost` readonly state, transit-to-landing TCP
+reachability, and local firewall readonly summary. The frontend adds an
+`执行远程只读预检` action and renders command status, checks, and redacted
+summary.
+
+This stage does not create transit routes, install or restart `socat` / `gost`,
+add listening ports, change firewall or cloud security group rules, modify
+Xray, modify `nodes.share_link`, export client links, or perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2312,6 +2329,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.40 Share-link redaction and export confirmation | Node share links are default-redacted and require confirmed export; no node or environment change |
 | Stage 3.3.41 Node key rotation runbook | Node key rotation / rebuild / old-link retirement runbook documented; no real rotation or node change |
 | Stage 3.3.50 Transit Worker install command regeneration | pending_worker transit servers can regenerate a bound Worker install command; real installation remains manual |
+| Stage 3.3.63 Transit Worker remote readonly preflight API implementation | Worker/API readonly preflight command implemented; real transit creation remains No-Go |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
