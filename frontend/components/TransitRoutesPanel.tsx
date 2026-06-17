@@ -34,6 +34,7 @@ import {
   requestReadonlyPreflightPlan,
 } from "@/lib/api";
 import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
+import { TransitReadonlyPreflightSimplePanel } from "@/components/TransitReadonlyPreflightSimplePanel";
 
 const terminalStatuses = new Set(["success", "failed", "cancelled", "timeout"]);
 const workerCommandTerminalStatuses = new Set(["succeeded", "failed", "expired", "cancelled"]);
@@ -2168,7 +2169,7 @@ export function TransitRoutesPanel() {
       : "请确认这只是只读预检计划，不会执行 SSH、创建真实转发或修改 node.share_link。",
     preflightWorkbuddyBoundaryConfirmed
       ? null
-      : "请确认真正远程只读预检必须后续单独授权 Workbuddy 或等价远程执行方式。",
+      : "请确认远程只读预检只通过 Worker allowlist 执行固定检查，不接受任意 shell。",
   ].filter((item): item is string => Boolean(item));
   const readonlyPreflightReady = readonlyPreflightIssues.length === 0;
   const readonlyPreflightStatusLabel = readonlyPreflightReady
@@ -2188,7 +2189,7 @@ export function TransitRoutesPanel() {
     `本地数据库备份已确认：${planLocalBackupConfirmed ? "是" : "否"}`,
     `本地 health 已确认：${preflightHealthConfirmed ? "是" : "否"}`,
     `只读边界已确认：${preflightBoundaryAcknowledged ? "是" : "否"}`,
-    `后续 Workbuddy 授权边界已确认：${preflightWorkbuddyBoundaryConfirmed ? "是" : "否"}`,
+    `Worker allowlist 只读边界已确认：${preflightWorkbuddyBoundaryConfirmed ? "是" : "否"}`,
     "未来只读检查项：",
     ...readonlyPreflightItemSpecs.map((item) => `- ${item.label}: ${item.scope}`),
     "SSH：本阶段不执行",
@@ -2894,7 +2895,51 @@ export function TransitRoutesPanel() {
         </div>
       </div>
 
-      <div className="local-plan-builder readonly-preflight-plan">
+      <TransitReadonlyPreflightSimplePanel
+        boundaryConfirmed={preflightBoundaryAcknowledged}
+        healthConfirmed={preflightHealthConfirmed}
+        issues={readonlyPreflightIssues}
+        nodeName={planNode?.node_name ?? ""}
+        plannedListenPort={planListenPort}
+        preflightSummaryCopied={preflightSummaryCopied}
+        readonlyPreflightApiMessage={readonlyPreflightApiMessage}
+        readonlyPreflightLoading={readonlyPreflightLoading}
+        readonlyPreflightPlan={readonlyPreflightPlan}
+        ready={readonlyPreflightReady}
+        remotePreflightCommand={remotePreflightCommand}
+        remotePreflightLoading={remotePreflightLoading}
+        remotePreflightMessage={remotePreflightMessage}
+        resourceName={planResource?.name ?? ""}
+        statusLabel={readonlyPreflightStatusLabel}
+        targetPort={planTargetPortNumber ? String(planTargetPortNumber) : ""}
+        workerBoundaryConfirmed={preflightWorkbuddyBoundaryConfirmed}
+        onBoundaryConfirmedChange={(value) => {
+          setPreflightBoundaryAcknowledged(value);
+          setPreflightSummaryCopied(false);
+        }}
+        onCopySummary={() => void copyReadonlyPreflightSummary()}
+        onGeneratePlan={() => void generateReadonlyPreflightPlan()}
+        onHealthConfirmedChange={(value) => {
+          setPreflightHealthConfirmed(value);
+          setPreflightSummaryCopied(false);
+        }}
+        onRefreshCommand={() => void refreshTransitReadonlyPreflightCommand()}
+        onRunCommand={() => void runTransitReadonlyPreflightCommand()}
+        onWorkerBoundaryConfirmedChange={(value) => {
+          setPreflightWorkbuddyBoundaryConfirmed(value);
+          setPreflightSummaryCopied(false);
+        }}
+      />
+
+      <details className="legacy-readonly-preflight-panel">
+        <summary className="collapsible-summary">
+          <strong>查看旧版高级只读预检面板</strong>
+          <span className="notice-toggle-text">
+            <span className="when-closed">查看说明</span>
+            <span className="when-open">收起说明</span>
+          </span>
+        </summary>
+        <div className="local-plan-builder readonly-preflight-plan">
         <div className="status-row">
           <div>
             <h3>远程只读预检 / Worker allowlist</h3>
@@ -2990,7 +3035,7 @@ export function TransitRoutesPanel() {
                     setPreflightSummaryCopied(false);
                   }}
                 />
-                <span>我确认真正远程只读预检必须后续单独授权 Workbuddy 或等价远程执行方式，本阶段不执行</span>
+                <span>我确认远程只读预检只通过 Worker allowlist 执行固定检查，不接受任意 shell</span>
               </label>
             </div>
             <div className="detail-grid">
@@ -3051,7 +3096,7 @@ export function TransitRoutesPanel() {
                   <div className="warning-box">
                     <strong>就绪只代表可进入只读预检审批</strong>
                     <span>远程命令、真实转发创建和 node.share_link 修改仍未授权。</span>
-                    <span>真正远程只读预检必须另开授权阶段，并继续保持 cutover 不通过。</span>
+                    <span>远程只读预检只执行固定 allowlist 检查；真实转发创建和 cutover 仍未授权。</span>
                   </div>
                 ) : (
                   <div className="failure-box">
@@ -3117,7 +3162,8 @@ export function TransitRoutesPanel() {
             {renderRemoteReadonlyPreflightResult()}
           </div>
         </div>
-      </div>
+        </div>
+      </details>
 
       {forwardingMethod === "socat" ? (
         <CollapsibleWarning title="查看 socat 创建阶段边界">
