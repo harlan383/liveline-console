@@ -23,11 +23,15 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.7-stage-3.3.63"
+const workerVersion = "0.1.8-stage-3.3.68"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
 const commandOutputLimit = 12000
+const resultStringLimit = 1000
+const resultListLimit = 50
+const resultPayloadSoftLimit = 64 * 1024
+const responseBodyLogLimit = 1200
 const commandTimeout = 180 * time.Second
 const formalLandingPort = 27939
 const xrayDownloadURL = "https://github.com/XTLS/Xray-core/releases/download/v25.1.1/Xray-linux-64.zip"
@@ -380,13 +384,18 @@ func pollWorkerCommand(cfg config) error {
 	command := *response.Data.Command
 	result, err := executeWorkerCommand(cfg, command)
 	if err != nil {
-		if reportErr := postWorkerCommandFailure(cfg, command.ID, err); reportErr != nil {
+		if reportErr := postWorkerCommandFailure(cfg, command.ID, err, nil); reportErr != nil {
 			return fmt.Errorf("command %s failed: %v; failure report failed: %w", command.ID, err, reportErr)
 		}
 		return fmt.Errorf("command %s failed: %w", command.ID, err)
 	}
-	if err := postWorkerCommandResult(cfg, command.ID, result); err != nil {
-		return err
+	if err := postWorkerCommandResult(cfg, command, result); err != nil {
+		fallback := fallbackCommandResult(command, err)
+		fallbackErr := fmt.Errorf("result submit failed: %w", err)
+		if reportErr := postWorkerCommandFailure(cfg, command.ID, fallbackErr, fallback); reportErr != nil {
+			return fmt.Errorf("command %s result submit failed: %v; fallback failure report failed: %w", command.ID, err, reportErr)
+		}
+		return fmt.Errorf("command %s result submit failed and was marked failed with fallback: %w", command.ID, err)
 	}
 	fmt.Printf("liveline-worker command %s completed type=%s\n", command.ID, command.CommandType)
 	return nil
@@ -1377,14 +1386,18 @@ func runCommand(timeout time.Duration, name string, args ...string) (string, err
 	return trimmed, nil
 }
 
-func postWorkerCommandResult(cfg config, commandID string, result map[string]any) error {
+func postWorkerCommandResult(cfg config, command workerCommand, result map[string]any) error {
 	headers := map[string]string{
 		"X-Worker-Id":     cfg.WorkerID,
 		"X-Worker-Secret": cfg.WorkerSecret,
 	}
 	var response apiResponse[map[string]any]
-	payload := commandResultPayload{Result: result}
-	if err := postJSON(joinURL(cfg.ConsoleURL, "/api/workers/commands/"+commandID+"/result"), headers, payload, &response); err != nil {
+	sanitized := sanitizeCommandResult(command.CommandType, result)
+	payload := commandResultPayload{Result: sanitized}
+	if payloadSize(payload) > resultPayloadSoftLimit {
+		payload.Result = fallbackCommandResult(command, fmt.Errorf("sanitized result payload exceeded %d bytes", resultPayloadSoftLimit))
+	}
+	if err := postJSON(joinURL(cfg.ConsoleURL, "/api/workers/commands/"+command.ID+"/result"), headers, payload, &response); err != nil {
 		return err
 	}
 	if !response.Success {
@@ -1393,13 +1406,16 @@ func postWorkerCommandResult(cfg config, commandID string, result map[string]any
 	return nil
 }
 
-func postWorkerCommandFailure(cfg config, commandID string, commandErr error) error {
+func postWorkerCommandFailure(cfg config, commandID string, commandErr error, result map[string]any) error {
 	headers := map[string]string{
 		"X-Worker-Id":     cfg.WorkerID,
 		"X-Worker-Secret": cfg.WorkerSecret,
 	}
 	var response apiResponse[map[string]any]
-	payload := commandFailurePayload{ErrorMessage: commandErr.Error()}
+	payload := commandFailurePayload{
+		ErrorMessage: truncateResultString(commandErr.Error(), resultStringLimit),
+		Result:       sanitizeResultMap(result),
+	}
 	if err := postJSON(joinURL(cfg.ConsoleURL, "/api/workers/commands/"+commandID+"/fail"), headers, payload, &response); err != nil {
 		return err
 	}
@@ -1407,6 +1423,233 @@ func postWorkerCommandFailure(cfg config, commandID string, commandErr error) er
 		return fmt.Errorf("command failure rejected: %s", response.Message)
 	}
 	return nil
+}
+
+func sanitizeCommandResult(commandType string, result map[string]any) map[string]any {
+	if commandType == "transit_readonly_preflight" {
+		return sanitizeTransitReadonlyPreflightResult(result)
+	}
+	return sanitizeResultMap(result)
+}
+
+func sanitizeTransitReadonlyPreflightResult(result map[string]any) map[string]any {
+	if result == nil {
+		return map[string]any{}
+	}
+	checks := []any{}
+	if rawChecks, ok := result["checks"].([]map[string]any); ok {
+		for _, check := range rawChecks {
+			checks = append(checks, sanitizeTransitReadonlyPreflightCheck(check))
+			if len(checks) >= resultListLimit {
+				break
+			}
+		}
+	} else if rawChecks, ok := result["checks"].([]any); ok {
+		for _, item := range rawChecks {
+			if check, ok := item.(map[string]any); ok {
+				checks = append(checks, sanitizeTransitReadonlyPreflightCheck(check))
+			}
+			if len(checks) >= resultListLimit {
+				break
+			}
+		}
+	}
+	sanitized := map[string]any{
+		"passed":              boolResultValue(result["passed"]),
+		"status":              stringResultValue(result["status"]),
+		"summary":             stringResultValue(result["summary"]),
+		"checks":              checks,
+		"worker_version":      workerVersion,
+		"hostname":            stringResultValue(result["hostname"]),
+		"role":                stringResultValue(result["role"]),
+		"interface_name":      stringResultValue(result["interface_name"]),
+		"planned_listen_port": intResultValue(result["planned_listen_port"]),
+		"landing_target_port": intResultValue(result["landing_target_port"]),
+		"forwarding_method":   stringResultValue(result["forwarding_method"]),
+		"redacted_summary":    stringResultValue(result["redacted_summary"]),
+		"safety_boundary":     sanitizeResultValue(result["safety_boundary"]),
+	}
+	if sanitized["status"] == "" {
+		if passed, _ := sanitized["passed"].(bool); passed {
+			sanitized["status"] = "passed"
+		} else {
+			sanitized["status"] = "blocked"
+		}
+	}
+	if sanitized["summary"] == "" {
+		sanitized["summary"] = "Transit readonly preflight returned a sanitized result."
+	}
+	if sanitized["redacted_summary"] == "" {
+		sanitized["redacted_summary"] = fmt.Sprintf(
+			"transit_readonly_preflight status=%s planned_listen_port=%v landing_target_port=%v method=%s",
+			sanitized["status"],
+			sanitized["planned_listen_port"],
+			sanitized["landing_target_port"],
+			sanitized["forwarding_method"],
+		)
+	}
+	return sanitized
+}
+
+func sanitizeTransitReadonlyPreflightCheck(check map[string]any) map[string]any {
+	if check == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"id":                        stringResultValue(check["id"]),
+		"label":                     stringResultValue(check["label"]),
+		"status":                    stringResultValue(check["status"]),
+		"passed":                    boolResultValue(check["passed"]),
+		"detail":                    stringResultValue(check["detail"]),
+		"category":                  stringResultValue(check["category"]),
+		"evidence_summary":          stringResultValue(check["evidence_summary"]),
+		"next_action":               stringResultValue(check["next_action"]),
+		"sensitive_output_redacted": true,
+	}
+}
+
+func fallbackCommandResult(command workerCommand, submitErr error) map[string]any {
+	return map[string]any{
+		"command_id":     command.ID,
+		"command_type":   command.CommandType,
+		"status":         "failed",
+		"summary":        "Worker could not submit the full readonly preflight result; a minimal failure result was submitted instead.",
+		"redacted_error": truncateResultString(submitErr.Error(), 500),
+		"worker_version": workerVersion,
+		"safety_boundary": []any{
+			"readonly checks only",
+			"no arbitrary shell accepted",
+			"no socat/gost install, start, stop, or restart",
+			"no listener binding",
+			"no firewall mutation",
+			"no Xray mutation",
+			"no nodes.share_link read or modification",
+			"no cutover",
+			"no sensitive output included",
+		},
+	}
+}
+
+func sanitizeResultMap(result map[string]any) map[string]any {
+	if result == nil {
+		return nil
+	}
+	sanitized, ok := sanitizeResultValue(result).(map[string]any)
+	if !ok {
+		return map[string]any{"summary": "result redacted"}
+	}
+	return sanitized
+}
+
+func sanitizeResultValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		result := map[string]any{}
+		count := 0
+		for key, item := range typed {
+			if count >= resultListLimit {
+				result["truncated_keys"] = true
+				break
+			}
+			if sensitiveResultKey(key) {
+				result[key] = "[redacted]"
+			} else {
+				result[key] = sanitizeResultValue(item)
+			}
+			count++
+		}
+		return result
+	case []any:
+		result := []any{}
+		for index, item := range typed {
+			if index >= resultListLimit {
+				result = append(result, "...[truncated]")
+				break
+			}
+			result = append(result, sanitizeResultValue(item))
+		}
+		return result
+	case []map[string]any:
+		result := []any{}
+		for index, item := range typed {
+			if index >= resultListLimit {
+				result = append(result, "...[truncated]")
+				break
+			}
+			result = append(result, sanitizeResultMap(item))
+		}
+		return result
+	case string:
+		return stringResultValue(typed)
+	case fmt.Stringer:
+		return stringResultValue(typed.String())
+	default:
+		return typed
+	}
+}
+
+func sensitiveResultKey(key string) bool {
+	lowered := strings.ToLower(key)
+	for _, marker := range []string{"secret", "token", "password", "passwd", "passphrase", "private_key", "ssh_key", "session", "cookie", "share_link"} {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringResultValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	text := fmt.Sprint(value)
+	text = strings.ReplaceAll(text, "\x00", "")
+	lowered := strings.ToLower(text)
+	for _, marker := range []string{"vless://", "vmess://", "trojan://", "ss://"} {
+		if strings.Contains(lowered, marker) {
+			return "[redacted-link]"
+		}
+	}
+	return truncateResultString(text, resultStringLimit)
+}
+
+func boolResultValue(value any) bool {
+	if typed, ok := value.(bool); ok {
+		return typed
+	}
+	return false
+}
+
+func intResultValue(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func truncateResultString(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...[truncated]"
+}
+
+func payloadSize(payload any) int {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return resultPayloadSoftLimit + 1
+	}
+	return len(body)
 }
 
 func postJSON(url string, headers map[string]string, payload any, out any) error {
@@ -1419,31 +1662,41 @@ func postJSON(url string, headers map[string]string, payload any, out any) error
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Connection", "close")
+	request.Close = true
 	for key, value := range headers {
 		request.Header.Set(key, value)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+		},
+	}
 	response, err := client.Do(request)
 	if err != nil {
-		return err
+		return fmt.Errorf("post %s failed before response: %w", url, err)
 	}
 	defer response.Body.Close()
 
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return err
+		return fmt.Errorf("read console response status=%d failed: %w", response.StatusCode, err)
 	}
 	if err := json.Unmarshal(responseBody, out); err != nil {
-		return fmt.Errorf("invalid console response status=%d", response.StatusCode)
+		return fmt.Errorf("invalid console response status=%d body=%s", response.StatusCode, responseBodySummary(responseBody))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		if envelope, ok := out.(*apiResponse[registerResult]); ok && envelope.Message != "" {
-			return fmt.Errorf("console returned status=%d: %s", response.StatusCode, envelope.Message)
-		}
-		return fmt.Errorf("console returned status=%d", response.StatusCode)
+		return fmt.Errorf("console returned status=%d body=%s", response.StatusCode, responseBodySummary(responseBody))
 	}
 	return nil
+}
+
+func responseBodySummary(body []byte) string {
+	summary := string(body)
+	summary = strings.ReplaceAll(summary, "\x00", "")
+	return truncateResultString(summary, responseBodyLogLimit)
 }
 
 func joinURL(base string, path string) string {

@@ -1157,6 +1157,16 @@ normalizes the readonly preflight result shape, truncates and redacts unexpected
 or oversized fields, and marks malformed or non-persistable results as failed
 instead of leaving commands in `running`.
 
+Stage 3.3.68-hotfix-4-worker-result-submit-eof hardens the Worker-side result
+submit path. Worker version `0.1.8-stage-3.3.68` sanitizes and bounds command
+results before POST, uses non-reused HTTP connections for command result
+submissions, logs HTTP status and response-body summaries on submit failures,
+and attempts a minimal `/fail` fallback if a full result submit fails. The
+backend minimum version for `transit_readonly_preflight` is raised to
+`0.1.8-stage-3.3.68`, so old transit Workers must be upgraded before new remote
+readonly preflight commands can be created. This stage does not auto-upgrade
+remote Workers or retry real commands.
+
 This stage only changes frontend result presentation. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
 backend APIs, add migrations, execute Worker commands during validation, create
@@ -2372,6 +2382,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 Transit readonly preflight result polish | Transit readonly preflight results now show clearer state, failure summaries, manual actions, and safety boundaries |
 | Stage 3.3.68 hotfix preflight panel prominent | Simplified readonly preflight panel moved above the transit route table so the action and result area are visible near the top |
 | Stage 3.3.68 hotfix transit readonly result EOF | Transit readonly preflight result ingestion now normalizes returned results and fails malformed payloads instead of leaving commands running |
+| Stage 3.3.68 hotfix Worker result submit EOF | Worker result submit now sanitizes payloads, reports HTTP diagnostics, uses fallback failure submit, and requires Worker 0.1.8 for transit readonly preflight |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
