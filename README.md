@@ -1151,6 +1151,12 @@ above the transit route table, after the page note and safety explanation. The
 main action is labeled `开始只读预检`, while the page continues to state that
 readonly preflight does not create real transit routes.
 
+Stage 3.3.68-hotfix-3-transit-readonly-result-eof hardens Worker command
+result ingestion for `transit_readonly_preflight`. The backend now accepts and
+normalizes the readonly preflight result shape, truncates and redacts unexpected
+or oversized fields, and marks malformed or non-persistable results as failed
+instead of leaving commands in `running`.
+
 This stage only changes frontend result presentation. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
 backend APIs, add migrations, execute Worker commands during validation, create
@@ -2365,6 +2371,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.67 Transit readonly preflight simple button | Transit Links readonly preflight UI simplified into a button panel; backend and real creation remain unchanged |
 | Stage 3.3.68 Transit readonly preflight result polish | Transit readonly preflight results now show clearer state, failure summaries, manual actions, and safety boundaries |
 | Stage 3.3.68 hotfix preflight panel prominent | Simplified readonly preflight panel moved above the transit route table so the action and result area are visible near the top |
+| Stage 3.3.68 hotfix transit readonly result EOF | Transit readonly preflight result ingestion now normalizes returned results and fails malformed payloads instead of leaving commands running |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

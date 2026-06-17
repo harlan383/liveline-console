@@ -1,3 +1,4 @@
+import logging
 import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,7 +17,7 @@ from app.db.session import get_db
 from app.models.worker import Worker, WorkerToken
 from app.models.worker_command import WorkerCommand
 from app.schemas.common import error_response, success_response
-from app.schemas.worker_commands import WorkerCommandCreate, WorkerCommandFailure, WorkerCommandResult
+from app.schemas.worker_commands import WorkerCommandCreate, WorkerCommandFailure
 from app.schemas.workers import (
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     OFFLINE_THRESHOLD_SECONDS,
@@ -37,6 +38,7 @@ from app.services.worker_commands import (
     complete_worker_command,
     create_worker_command,
     fail_worker_command,
+    normalize_worker_command_result,
     serialize_worker_command,
     serialize_worker_command_for_worker,
 )
@@ -52,6 +54,7 @@ from app.services.worker_targeting import (
 
 router = APIRouter()
 setup_router = APIRouter()
+logger = logging.getLogger(__name__)
 
 SENSITIVE_METADATA_MARKERS = (
     "secret",
@@ -581,10 +584,26 @@ def next_worker_command(
     )
 
 
+def fail_worker_command_result_ingest(
+    db: Session,
+    command: WorkerCommand,
+    worker: Worker,
+    code: str,
+    message: str,
+) -> dict:
+    fail_worker_command(db, command, message, {"code": code, "summary": message})
+    db.commit()
+    db.refresh(command)
+    return success_response(
+        {"command": serialize_worker_command(command, worker=worker)},
+        "Worker 命令结果无法接收，已标记失败。",
+    )
+
+
 @router.post("/workers/commands/{command_id}/result")
-def worker_command_result(
+async def worker_command_result(
     command_id: str,
-    payload: WorkerCommandResult,
+    request: Request,
     x_worker_id: str | None = Header(None, alias="X-Worker-Id"),
     x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
     db: Session = Depends(get_db),
@@ -600,17 +619,87 @@ def worker_command_result(
     if command.status in {"succeeded", "failed", "cancelled", "expired"}:
         return error_response(409, "WORKER_COMMAND_ALREADY_FINISHED", "Worker 命令已结束。")
 
-    result_payload = payload.result
     try:
-        result_payload = persist_successful_landing_node_result(db=db, command=command, result=payload.result)
+        payload = await request.json()
+    except Exception as exc:
+        logger.warning(
+            "Worker command result JSON parse failed command_id=%s command_type=%s worker_id=%s error=%s",
+            command.id,
+            command.command_type,
+            worker.id,
+            type(exc).__name__,
+        )
+        return fail_worker_command_result_ingest(
+            db,
+            command,
+            worker,
+            "WORKER_RESULT_PARSE_ERROR",
+            "Worker 命令结果不是有效 JSON，已标记失败。",
+        )
+
+    if not isinstance(payload, dict):
+        return fail_worker_command_result_ingest(
+            db,
+            command,
+            worker,
+            "WORKER_RESULT_INVALID_PAYLOAD",
+            "Worker 命令结果 payload 必须是 JSON object。",
+        )
+
+    raw_result = payload.get("result")
+    result_payload: dict[str, Any] | None = raw_result if isinstance(raw_result, dict) else None
+    if raw_result is not None and not isinstance(raw_result, dict):
+        return fail_worker_command_result_ingest(
+            db,
+            command,
+            worker,
+            "WORKER_RESULT_INVALID_RESULT",
+            "Worker 命令 result 字段必须是 JSON object。",
+        )
+
+    try:
+        if command.command_type == "landing_node_create":
+            result_payload = persist_successful_landing_node_result(db=db, command=command, result=result_payload)
+        else:
+            result_payload = normalize_worker_command_result(command.command_type, result_payload)
     except LandingNodeCreateError as exc:
         fail_worker_command(db, command, exc.message, {"code": exc.code})
         db.commit()
         db.refresh(command)
         return error_response(400, exc.code, exc.message)
+    except ValueError as exc:
+        return fail_worker_command_result_ingest(
+            db,
+            command,
+            worker,
+            "WORKER_RESULT_SCHEMA_ERROR",
+            str(exc)[:1000],
+        )
 
-    complete_worker_command(db, command, result_payload)
-    db.commit()
+    try:
+        complete_worker_command(db, command, result_payload)
+        db.commit()
+    except Exception as exc:
+        logger.exception(
+            "Worker command result persistence failed command_id=%s command_type=%s worker_id=%s",
+            command.id,
+            command.command_type,
+            worker.id,
+        )
+        db.rollback()
+        command = db.get(WorkerCommand, command_id)
+        if not command:
+            return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在。")
+        if command.status not in {"succeeded", "failed", "cancelled", "expired"}:
+            return fail_worker_command_result_ingest(
+                db,
+                command,
+                worker,
+                "WORKER_RESULT_PERSIST_FAILED",
+                f"Worker 命令结果落库失败，已标记失败：{type(exc).__name__}",
+            )
+        return error_response(500, "WORKER_RESULT_PERSIST_FAILED", "Worker 命令结果落库失败。")
+
     db.refresh(command)
     return success_response(
         {"command": serialize_worker_command(command, worker=worker)},
