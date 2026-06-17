@@ -1,0 +1,74 @@
+# Stage 3.3.68 Transit Readonly Preflight Result Polish
+
+## Goal
+
+Stage 3.3.68 improves the Transit Links readonly preflight result display so an
+operator can quickly understand whether the preflight has not started, is still
+running, passed, failed, or needs manual handling.
+
+This stage is frontend-only result polish. It does not add backend capability
+and does not execute remote actions.
+
+## Implemented Scope
+
+- Improved `TransitReadonlyPreflightSimplePanel` result rendering.
+- Added an overall result state:
+  - not started,
+  - running,
+  - passed,
+  - failed,
+  - manual handling required.
+- Added a clearer check list with pass / fail state per check.
+- Added failure reason summaries derived from the existing redacted Worker
+  command result.
+- Added suggested manual actions for common failure categories.
+- Added a persistent safety boundary block in the result area.
+- Kept the old complex readonly preflight panel collapsed and available for
+  rollback.
+
+## Result Display Rules
+
+The UI uses the existing `transit_readonly_preflight` Worker command response.
+It does not request new backend fields.
+
+The result panel shows:
+
+- Worker command id and status,
+- target Worker id and version,
+- redacted summary,
+- failed check summaries,
+- suggested manual actions,
+- structured checks with pass / fail labels,
+- safety boundary reminders.
+
+## Safety Boundary
+
+This stage does not:
+
+- change backend APIs,
+- add database migrations,
+- execute SSH,
+- execute remote commands,
+- trigger a real Worker command during validation,
+- create transit routes,
+- add listening ports,
+- install, start, stop, or restart `socat` / `gost`,
+- modify firewall, cloud firewall, or cloud security group rules,
+- modify Xray,
+- modify `nodes.share_link`,
+- generate or display real node links,
+- perform cutover.
+
+## Validation Checklist
+
+- `git diff --check`
+- `git diff --cached --check`
+- `python3 -X pycache_prefix=/private/tmp/liveline-pycache -m compileall backend/app`
+- `docker compose exec -T frontend npm run build`
+- `/api/health` returns backend / database / redis / worker ok
+- frontend returns HTTP 200
+- Redis `temp_credential:*` count is 0
+- pending / running tasks count is 0
+- no `transit_readonly_preflight` command is triggered by validation
+- sensitive scan finds no real Worker token, install command, SSH key,
+  database password, full proxy link, or full `nodes.share_link`
