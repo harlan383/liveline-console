@@ -1026,6 +1026,32 @@ transit route or fallback route. Next-stage candidates are
 `Stage 3.3.38-post-acceptance-security-hardening-or-key-rotation-review` or
 `Stage 3.3.38-transit-integration-planning`.
 
+## Stage 3.3.38 Post-acceptance security hardening and key rotation review scope
+
+Stage 3.3.38 records the post-acceptance security review after the formal VLESS
+Reality landing node passed client acceptance. It documents sensitive exposure
+surfaces, risk levels, whether immediate rotation is required, and the
+recommended hardening order.
+
+The review treats any previously pasted complete Worker setup token as
+high-risk and recommends confirming invalidation / one-time-use hardening before
+future onboarding. It treats copied full `node.share_link` values as a
+node-rotation trigger if they were shared externally. UUID, Reality public key,
+and shortId are treated as connection material that should not continue to be
+shown in logs, PRs, chats, or docs. Runtime summaries such as port, protocol,
+service status, and Xray managed paths are lower risk but should not expose full
+config content.
+
+This stage does not rotate keys, recreate the node, stop or restart
+`liveline-xray`, deploy the public console, connect to any VPS, query the real
+database, modify `node.share_link`, generate a real node link, or perform
+cutover. Recommended follow-up stages are
+`Stage 3.3.39-worker-setup-token-one-time-use-hardening`,
+`Stage 3.3.40-share-link-redaction-and-export-confirmation`,
+`Stage 3.3.41-node-key-rotation-runbook`,
+`Stage 3.3.42-formal-node-rotation-execution-approval`, and
+`Stage 3.3.43-transit-integration-planning`.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2225,6 +2251,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.37-c Worker installer ReadWritePaths precreate hotfix | Worker installer precreates /opt/liveline-xray before starting the sandboxed service |
 | Stage 3.3.37-d Allow empty LiveLine Xray directory hotfix | Worker formal-create guard allows an empty precreated /opt/liveline-xray while still rejecting real artifacts |
 | Stage 3.3.37-e Formal create client acceptance record | Formal landing node create completed client acceptance; this record stage is not cutover |
+| Stage 3.3.38 Post-acceptance security hardening and key rotation review | Formal node post-acceptance security review recorded; no rotation or environment change |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
