@@ -56,6 +56,32 @@ The primary button label is now `开始只读预检` to make the action clearer.
 panel still states that readonly preflight only creates or refreshes the
 existing safe preflight flow and does not create real transit routes.
 
+## Hotfix 3: Result EOF / Long Running Commands
+
+Stage 3.3.68-hotfix-3-transit-readonly-result-eof hardens the backend Worker
+command result ingestion path for `transit_readonly_preflight`.
+
+The issue observed in production was that a transit Worker could run the
+readonly checks and then repeatedly fail to post the result with an EOF while
+the command stayed in `running`. The backend now handles this class of failure
+more defensively:
+
+- The result endpoint parses the Worker payload explicitly.
+- `transit_readonly_preflight` results are normalized into the UI contract:
+  `passed`, `status`, `summary`, `checks`, `redacted_summary`, and
+  `safety_boundary`.
+- Oversized strings are truncated and NUL bytes are removed before JSONB
+  persistence.
+- Sensitive keys and proxy-link values are redacted before persistence and API
+  serialization.
+- Malformed result payloads are marked as failed with a clear error instead of
+  remaining in `running`.
+- Result persistence errors are caught, logged without sensitive payload
+  content, and converted into a failed Worker command when possible.
+
+This hotfix does not change the Worker allowlist checks and does not add any
+real transit creation capability.
+
 ## Safety Boundary
 
 This stage does not:

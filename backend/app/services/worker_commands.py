@@ -11,6 +11,8 @@ from app.schemas.worker_commands import WORKER_COMMAND_TYPES
 COMMAND_LEASE_SECONDS = 90
 DEFAULT_NEXT_POLL_SECONDS = 20
 RECENT_COMMAND_LIMIT = 20
+MAX_RESULT_STRING_LENGTH = 1000
+MAX_TRANSIT_PREFLIGHT_CHECKS = 50
 SENSITIVE_MARKERS = (
     "secret",
     "token",
@@ -56,12 +58,135 @@ def sanitize_value(value: Any) -> Any:
     if isinstance(value, list):
         return [sanitize_value(item) for item in value[:50]]
     if isinstance(value, str):
+        value = value.replace("\x00", "")
         lowered_value = value.lower()
         if any(marker in lowered_value for marker in ("vless://", "vmess://", "ss://")):
             return "[redacted-link]"
-        if len(value) > 1000:
-            return value[:1000] + "...[truncated]"
+        if len(value) > MAX_RESULT_STRING_LENGTH:
+            return value[:MAX_RESULT_STRING_LENGTH] + "...[truncated]"
     return value
+
+
+def normalize_worker_command_result(command_type: str, result: Any) -> dict[str, Any]:
+    if result is None:
+        return {}
+    if not isinstance(result, dict):
+        raise ValueError("Worker command result must be a JSON object.")
+    if command_type == "transit_readonly_preflight":
+        return normalize_transit_readonly_preflight_result(result)
+    normalized = sanitize_value(result)
+    if not isinstance(normalized, dict):
+        raise ValueError("Worker command result normalization returned a non-object.")
+    return normalized
+
+
+def normalize_transit_readonly_preflight_result(result: dict[str, Any]) -> dict[str, Any]:
+    checks = _normalize_transit_preflight_checks(result.get("checks"))
+    passed = result.get("passed")
+    if not isinstance(passed, bool):
+        passed = all(bool(check.get("passed")) for check in checks) if checks else False
+
+    status = _safe_result_text(result.get("status")) or ("passed" if passed else "blocked")
+    summary = _safe_result_text(result.get("summary")) or (
+        "Remote readonly preflight passed." if passed else "Remote readonly preflight returned blockers."
+    )
+
+    normalized: dict[str, Any] = {
+        "passed": passed,
+        "status": status,
+        "summary": summary,
+        "checks": checks,
+        "worker_version": _safe_result_text(result.get("worker_version")),
+        "hostname": _safe_result_text(result.get("hostname")),
+        "role": _safe_result_text(result.get("role")),
+        "interface_name": _safe_result_text(result.get("interface_name")),
+        "planned_listen_port": _safe_result_int(result.get("planned_listen_port")),
+        "landing_target_port": _safe_result_int(result.get("landing_target_port")),
+        "forwarding_method": _safe_result_text(result.get("forwarding_method")),
+        "redacted_summary": _safe_result_text(result.get("redacted_summary")) or summary,
+        "safety_boundary": _normalize_text_list(result.get("safety_boundary")),
+    }
+
+    extra: dict[str, Any] = {}
+    for key, value in result.items():
+        if key in normalized:
+            continue
+        if key == "checks":
+            continue
+        extra[str(key)] = sanitize_value(value)
+    if extra:
+        normalized["extra"] = extra
+    return sanitize_value(normalized)
+
+
+def _normalize_transit_preflight_checks(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    checks: list[dict[str, Any]] = []
+    for index, item in enumerate(value[:MAX_TRANSIT_PREFLIGHT_CHECKS]):
+        if not isinstance(item, dict):
+            checks.append(
+                {
+                    "id": f"check_{index + 1}",
+                    "label": f"Check {index + 1}",
+                    "status": "unknown",
+                    "passed": False,
+                    "detail": _safe_result_text(item) or "Malformed check item.",
+                }
+            )
+            continue
+        passed = item.get("passed")
+        status = _safe_result_text(item.get("status"))
+        if not isinstance(passed, bool):
+            passed = status in {"passed", "ok", "success"}
+        checks.append(
+            {
+                "id": _safe_result_text(item.get("id")) or f"check_{index + 1}",
+                "label": _safe_result_text(item.get("label")) or f"Check {index + 1}",
+                "status": status or ("passed" if passed else "failed"),
+                "passed": passed,
+                "detail": _safe_result_text(item.get("detail") or item.get("message") or item.get("summary")),
+                "category": _safe_result_text(item.get("category")),
+                "evidence_summary": _safe_result_text(item.get("evidence_summary")),
+                "next_action": _safe_result_text(item.get("next_action")),
+                "sensitive_output_redacted": True,
+            }
+        )
+    return checks
+
+
+def _safe_result_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    sanitized = sanitize_value(str(value))
+    if not isinstance(sanitized, str):
+        return "[redacted]"
+    return sanitized
+
+
+def _safe_result_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned.isdigit():
+            return int(cleaned)
+    return None
+
+
+def _normalize_text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value[:MAX_TRANSIT_PREFLIGHT_CHECKS]:
+        text = _safe_result_text(item)
+        if text:
+            result.append(text)
+    return result
 
 
 def create_worker_command(
