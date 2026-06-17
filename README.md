@@ -1073,6 +1073,24 @@ connect to any VPS, deploy the public console, or perform cutover. Recommended
 follow-up stages remain `Stage 3.3.41-node-key-rotation-runbook` and
 `Stage 3.3.43-transit-integration-planning`.
 
+## Stage 3.3.41 Node key rotation runbook scope
+
+Stage 3.3.41 adds the node key rotation / node rebuild / old-link retirement
+runbook after formal landing-node acceptance and share-link redaction
+hardening. It documents why rotation may be needed, rotation levels, recommended
+default strategies, safety pre-checks, future execution-stage splits, rollback
+rules, and database / link-handling safety principles.
+
+The runbook keeps the accepted `liveline-reality-27939` node unchanged. It does
+not rotate keys, rebuild the node, create or delete nodes, restart or stop
+`liveline-xray`, add listening ports, modify firewall or cloud security group
+rules, query the real database, modify `node.share_link`, generate real node
+links, connect to any VPS, deploy the public console, or perform cutover.
+
+Recommended follow-up stages are
+`Stage 3.3.42-formal-node-rotation-execution-approval` or
+`Stage 3.3.43-transit-integration-planning`.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2274,6 +2292,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.37-e Formal create client acceptance record | Formal landing node create completed client acceptance; this record stage is not cutover |
 | Stage 3.3.38 Post-acceptance security hardening and key rotation review | Formal node post-acceptance security review recorded; no rotation or environment change |
 | Stage 3.3.40 Share-link redaction and export confirmation | Node share links are default-redacted and require confirmed export; no node or environment change |
+| Stage 3.3.41 Node key rotation runbook | Node key rotation / rebuild / old-link retirement runbook documented; no real rotation or node change |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
