@@ -490,6 +490,19 @@ function transitResourceStatusClass(resource: TransitResourceData) {
   return resource.status === "disabled" ? "muted" : "warn";
 }
 
+function isPlanningSelectableTransitResource(resource: TransitResourceData) {
+  if (resource.resource_type !== "server") {
+    return false;
+  }
+  const displayStatus = resource.display_status || resource.status;
+  return (
+    resource.status === "active" ||
+    resource.worker_online === true ||
+    displayStatus === "online" ||
+    displayStatus === "worker_online"
+  );
+}
+
 function transitHostLabel(resource: TransitResourceData) {
   return resource.entry_host || resource.ssh_host || "-";
 }
@@ -1278,13 +1291,14 @@ export function TransitRoutesPanel() {
 
     const serverResources = resourceResult.data.resources.filter((resource) => resource.resource_type === "server");
     const activeResources = serverResources.filter((resource) => resource.status === "active");
+    const planningResources = serverResources.filter(isPlanningSelectableTransitResource);
     const activeNodes = nodeResult.data.nodes.filter((node) => node.status === "active");
     setResources(serverResources);
     setNodes(activeNodes);
     setRoutes(routeResult.data.routes);
     setSelectedResourceId((current) => current || activeResources[0]?.id || "");
     setSelectedNodeId((current) => current || activeNodes[0]?.id || "");
-    setPlanResourceId((current) => current || activeResources[0]?.id || "");
+    setPlanResourceId((current) => current || planningResources[0]?.id || "");
     setPlanNodeId((current) => current || activeNodes[0]?.id || "");
     setLoadingResources(false);
   }
@@ -1492,8 +1506,11 @@ export function TransitRoutesPanel() {
   }
 
   function openAddTransitRoute(resource?: TransitResourceData) {
+    const planningSelectableServerResources = resources.filter(isPlanningSelectableTransitResource);
     const defaultResource =
-      resource ?? resources.find((candidate) => candidate.status === "active") ?? resources[0] ?? null;
+      resource && isPlanningSelectableTransitResource(resource)
+        ? resource
+        : planningSelectableServerResources[0] ?? null;
     const defaultNode = nodes[0] ?? null;
     setSelectedTransitResource(defaultResource);
     setTransitRouteDraft({
@@ -1907,6 +1924,7 @@ export function TransitRoutesPanel() {
   }
 
   const activeServerResources = resources.filter((resource) => resource.status === "active");
+  const planningSelectableServerResources = resources.filter(isPlanningSelectableTransitResource);
   const routesByResourceId = routes.reduce<Record<string, TransitRouteData[]>>((accumulator, route) => {
     const bucket = accumulator[route.transit_resource_id] ?? [];
     bucket.push(route);
@@ -2232,8 +2250,8 @@ export function TransitRoutesPanel() {
                   }));
                 }}
               >
-                {activeServerResources.length === 0 ? <option value="">暂无 active 中转服务器</option> : null}
-                {activeServerResources.map((resource) => (
+                {planningSelectableServerResources.length === 0 ? <option value="">暂无可用于本地规划的中转服务器</option> : null}
+                {planningSelectableServerResources.map((resource) => (
                   <option key={resource.id} value={resource.id}>
                     {resource.name} / {transitHostLabel(resource)}
                   </option>
@@ -2551,8 +2569,8 @@ export function TransitRoutesPanel() {
                   setPreflightSummaryCopied(false);
                 }}
               >
-                {activeServerResources.length === 0 ? <option value="">暂无可用 active server 资源</option> : null}
-                {activeServerResources.map((resource) => (
+                {planningSelectableServerResources.length === 0 ? <option value="">暂无可用于本地规划的中转服务器</option> : null}
+                {planningSelectableServerResources.map((resource) => (
                   <option key={resource.id} value={resource.id}>
                     {resource.name} / {displayValue(resource.entry_host)}
                   </option>
