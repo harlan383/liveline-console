@@ -2597,6 +2597,46 @@ export function TransitRoutesPanel() {
     return null;
   }
 
+  function renderTransitReadonlyPreflightPanel() {
+    return (
+      <TransitReadonlyPreflightSimplePanel
+        boundaryConfirmed={preflightBoundaryAcknowledged}
+        healthConfirmed={preflightHealthConfirmed}
+        issues={readonlyPreflightIssues}
+        nodeName={planNode?.node_name ?? ""}
+        plannedListenPort={planListenPort}
+        preflightSummaryCopied={preflightSummaryCopied}
+        readonlyPreflightApiMessage={readonlyPreflightApiMessage}
+        readonlyPreflightLoading={readonlyPreflightLoading}
+        readonlyPreflightPlan={readonlyPreflightPlan}
+        ready={readonlyPreflightReady}
+        remotePreflightCommand={remotePreflightCommand}
+        remotePreflightLoading={remotePreflightLoading}
+        remotePreflightMessage={remotePreflightMessage}
+        resourceName={planResource?.name ?? ""}
+        statusLabel={readonlyPreflightStatusLabel}
+        targetPort={planTargetPortNumber ? String(planTargetPortNumber) : ""}
+        workerBoundaryConfirmed={preflightWorkbuddyBoundaryConfirmed}
+        onBoundaryConfirmedChange={(value) => {
+          setPreflightBoundaryAcknowledged(value);
+          setPreflightSummaryCopied(false);
+        }}
+        onCopySummary={() => void copyReadonlyPreflightSummary()}
+        onGeneratePlan={() => void generateReadonlyPreflightPlan()}
+        onHealthConfirmedChange={(value) => {
+          setPreflightHealthConfirmed(value);
+          setPreflightSummaryCopied(false);
+        }}
+        onRefreshCommand={() => void refreshTransitReadonlyPreflightCommand()}
+        onRunCommand={() => void runTransitReadonlyPreflightCommand()}
+        onWorkerBoundaryConfirmedChange={(value) => {
+          setPreflightWorkbuddyBoundaryConfirmed(value);
+          setPreflightSummaryCopied(false);
+        }}
+      />
+    );
+  }
+
   return (
     <section className="panel wide server-management-panel transit-link-management-panel">
       <div className="server-management-header">
@@ -2634,6 +2674,8 @@ export function TransitRoutesPanel() {
           </ul>
         </div>
       </details>
+
+      {renderTransitReadonlyPreflightPanel()}
 
       <div className="transit-link-table-scroll">
         <div className="server-table transit-link-table">
@@ -2894,42 +2936,6 @@ export function TransitRoutesPanel() {
           </div>
         </div>
       </div>
-
-      <TransitReadonlyPreflightSimplePanel
-        boundaryConfirmed={preflightBoundaryAcknowledged}
-        healthConfirmed={preflightHealthConfirmed}
-        issues={readonlyPreflightIssues}
-        nodeName={planNode?.node_name ?? ""}
-        plannedListenPort={planListenPort}
-        preflightSummaryCopied={preflightSummaryCopied}
-        readonlyPreflightApiMessage={readonlyPreflightApiMessage}
-        readonlyPreflightLoading={readonlyPreflightLoading}
-        readonlyPreflightPlan={readonlyPreflightPlan}
-        ready={readonlyPreflightReady}
-        remotePreflightCommand={remotePreflightCommand}
-        remotePreflightLoading={remotePreflightLoading}
-        remotePreflightMessage={remotePreflightMessage}
-        resourceName={planResource?.name ?? ""}
-        statusLabel={readonlyPreflightStatusLabel}
-        targetPort={planTargetPortNumber ? String(planTargetPortNumber) : ""}
-        workerBoundaryConfirmed={preflightWorkbuddyBoundaryConfirmed}
-        onBoundaryConfirmedChange={(value) => {
-          setPreflightBoundaryAcknowledged(value);
-          setPreflightSummaryCopied(false);
-        }}
-        onCopySummary={() => void copyReadonlyPreflightSummary()}
-        onGeneratePlan={() => void generateReadonlyPreflightPlan()}
-        onHealthConfirmedChange={(value) => {
-          setPreflightHealthConfirmed(value);
-          setPreflightSummaryCopied(false);
-        }}
-        onRefreshCommand={() => void refreshTransitReadonlyPreflightCommand()}
-        onRunCommand={() => void runTransitReadonlyPreflightCommand()}
-        onWorkerBoundaryConfirmedChange={(value) => {
-          setPreflightWorkbuddyBoundaryConfirmed(value);
-          setPreflightSummaryCopied(false);
-        }}
-      />
 
       <details className="legacy-readonly-preflight-panel">
         <summary className="collapsible-summary">

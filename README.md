@@ -1145,6 +1145,12 @@ Stage 3.3.68 improves the Transit Links readonly preflight result display. The
 simplified panel now separates overall state, check results, failure summaries,
 suggested manual actions, redacted summary, and safety boundary reminders.
 
+Stage 3.3.68-hotfix-preflight-panel-prominent moves the simplified readonly
+preflight panel out of the collapsed legacy workbench and places it directly
+above the transit route table, after the page note and safety explanation. The
+main action is labeled `开始只读预检`, while the page continues to state that
+readonly preflight does not create real transit routes.
+
 This stage only changes frontend result presentation. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
 backend APIs, add migrations, execute Worker commands during validation, create
@@ -2358,6 +2364,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.63 Transit Worker remote readonly preflight API implementation | Worker/API readonly preflight command implemented; real transit creation remains No-Go |
 | Stage 3.3.67 Transit readonly preflight simple button | Transit Links readonly preflight UI simplified into a button panel; backend and real creation remain unchanged |
 | Stage 3.3.68 Transit readonly preflight result polish | Transit readonly preflight results now show clearer state, failure summaries, manual actions, and safety boundaries |
+| Stage 3.3.68 hotfix preflight panel prominent | Simplified readonly preflight panel moved above the transit route table so the action and result area are visible near the top |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
