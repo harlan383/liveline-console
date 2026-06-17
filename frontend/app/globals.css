@@ -1931,6 +1931,53 @@ details[open] .when-closed {
   font-size: 13px;
 }
 
+.readonly-result-panel {
+  background: rgba(5, 11, 17, 0.42);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.readonly-result-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.readonly-result-header h4 {
+  margin: 0;
+}
+
+.readonly-result-header span:not(.pill),
+.readonly-result-box span,
+.readonly-result-boundary span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.readonly-result-columns {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.readonly-result-box,
+.readonly-result-boundary {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.readonly-result-boundary {
+  background: rgba(253, 176, 34, 0.06);
+}
+
 .legacy-readonly-preflight-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2523,6 +2570,7 @@ button.compact {
   .task-history-row,
   .local-plan-layout,
   .readonly-simple-grid,
+  .readonly-result-columns,
   .route-layout,
   .cutover-boundary-grid,
   .route-flow,
