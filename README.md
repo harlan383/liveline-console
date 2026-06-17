@@ -1126,6 +1126,19 @@ This stage does not create transit routes, install or restart `socat` / `gost`,
 add listening ports, change firewall or cloud security group rules, modify
 Xray, modify `nodes.share_link`, export client links, or perform cutover.
 
+## Stage 3.3.67 Transit readonly preflight simple button scope
+
+Stage 3.3.67 simplifies the Transit Links page readonly preflight experience
+into a button-oriented panel. The page now shows a concise plan summary,
+required confirmations, a primary `执行远程只读预检` action, and redacted Worker
+command results.
+
+The previous advanced readonly preflight panel remains available in a collapsed
+legacy section for rollback. This stage is frontend-only: it does not change
+backend APIs, create transit routes, execute Worker commands during validation,
+add listening ports, modify firewall or cloud security group rules, modify
+Xray, modify `nodes.share_link`, export client links, or perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2330,6 +2343,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.41 Node key rotation runbook | Node key rotation / rebuild / old-link retirement runbook documented; no real rotation or node change |
 | Stage 3.3.50 Transit Worker install command regeneration | pending_worker transit servers can regenerate a bound Worker install command; real installation remains manual |
 | Stage 3.3.63 Transit Worker remote readonly preflight API implementation | Worker/API readonly preflight command implemented; real transit creation remains No-Go |
+| Stage 3.3.67 Transit readonly preflight simple button | Transit Links readonly preflight UI simplified into a button panel; backend and real creation remain unchanged |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

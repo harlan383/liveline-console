@@ -1260,7 +1260,7 @@ textarea {
 }
 
 .task-log-row {
-  align-items: start;
+  align-items: flex-start;
 }
 
 .task-log-output {
@@ -1839,6 +1839,103 @@ details[open] .when-closed {
   display: grid;
   gap: 12px;
   padding-top: 12px;
+}
+
+.readonly-simple-panel {
+  background:
+    linear-gradient(135deg, rgba(24, 182, 164, 0.1), rgba(77, 139, 255, 0.06)),
+    var(--panel);
+  border: 1px solid rgba(24, 182, 164, 0.22);
+  border-radius: 10px;
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.readonly-simple-hero {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.readonly-simple-hero h3,
+.readonly-simple-card h4 {
+  margin: 0;
+}
+
+.readonly-simple-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.7fr);
+}
+
+.readonly-simple-card,
+.readonly-simple-result,
+.readonly-simple-empty {
+  background: rgba(5, 11, 17, 0.38);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.readonly-simple-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.readonly-simple-main-button {
+  min-width: 190px;
+}
+
+.readonly-simple-status {
+  display: grid;
+  gap: 6px;
+}
+
+.simple-checks {
+  background: transparent;
+  padding: 0;
+}
+
+.readonly-simple-checks {
+  display: grid;
+  gap: 8px;
+}
+
+.readonly-simple-check {
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.readonly-simple-check p {
+  color: var(--muted);
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.readonly-simple-check span:not(.pill),
+.readonly-simple-empty span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.legacy-readonly-preflight-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 14px;
+  padding: 12px;
 }
 
 .api-check-list {
@@ -2425,6 +2522,7 @@ button.compact {
   .task-history-layout,
   .task-history-row,
   .local-plan-layout,
+  .readonly-simple-grid,
   .route-layout,
   .cutover-boundary-grid,
   .route-flow,
