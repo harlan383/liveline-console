@@ -982,6 +982,28 @@ commands, deploy the public console, reinstall Worker on any VPS, install Xray,
 create nodes, add listening ports, modify firewall / cloud security groups,
 generate real node links, modify `node.share_link`, or perform cutover.
 
+## Stage 3.3.37-d Allow empty LiveLine Xray directory hotfix scope
+
+Stage 3.3.37-d fixes the formal landing-node create Worker preflight after
+Stage 3.3.37-c intentionally started pre-creating `/opt/liveline-xray` for the
+Worker systemd sandbox. The old guard treated the empty directory as a conflict
+and refused execution before any real create command could proceed.
+
+The Worker now allows `/opt/liveline-xray` only when it is a directory and is
+empty, or contains only empty known subdirectories such as `bin` and `config`.
+It still refuses real Xray artifacts and unknown files, including
+`/opt/liveline-xray/bin/xray`, `/opt/liveline-xray/config/config.json`,
+`/opt/liveline-xray/state`, `liveline-xray.service`, legacy Xray paths, and
+unknown files under `/opt/liveline-xray`.
+
+The Worker version is raised to `0.1.6-stage-3.3.37`, and the backend minimum
+version for `landing_node_create` is raised to the same version so older Workers
+continue to be rejected for formal creation. This stage does not trigger
+`landing_node_create`, deploy the public console, reinstall Worker, install
+Xray, create nodes, add listening ports, modify firewall / cloud security
+groups, generate real node links, modify `node.share_link`, execute SSH or
+remote commands, or perform cutover.
+
 ## Stage 3.3.14 C cutover decision pack scope
 
 Stage 3.3.14 documents the C-plan formal cutover decision pack / pre-review.
@@ -2179,6 +2201,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.37-a Formal create Worker targeting hotfix | Formal create now targets the latest eligible online ens17 landing Worker; no real execution |
 | Stage 3.3.37-b Xray install path and Worker sandbox hotfix | Xray path moved to /opt/liveline-xray and Worker sandbox write paths narrowed |
 | Stage 3.3.37-c Worker installer ReadWritePaths precreate hotfix | Worker installer precreates /opt/liveline-xray before starting the sandboxed service |
+| Stage 3.3.37-d Allow empty LiveLine Xray directory hotfix | Worker formal-create guard allows an empty precreated /opt/liveline-xray while still rejecting real artifacts |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
