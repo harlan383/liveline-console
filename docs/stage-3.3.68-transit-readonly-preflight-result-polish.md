@@ -333,6 +333,53 @@ transit routes, does not add listening ports, does not modify firewall rules,
 does not modify Xray, does not read or modify `nodes.share_link`, and does not
 perform cutover.
 
+## Hotfix 10: Worker Result EOF Curl Fallback
+
+Stage 3.3.68-hotfix-10-worker-result-eof-curl-fallback keeps the hotfix-9
+curl-compatible submit path and extends its trigger conditions. The decisive
+production diagnosis showed that Worker `0.1.11-stage-3.3.68` still received a
+Go `net/http` pre-response `request_error: EOF` while submitting the full
+`transit_readonly_preflight` `/result` payload. The Worker then successfully
+submitted the smaller `/fail` payload, so commands no longer remained
+indefinitely running, but the complete readonly preflight result was still not
+stored.
+
+Worker `0.1.12-stage-3.3.68` therefore attempts the same constrained curl
+fallback for these pre-response submit failures:
+
+- `response_headers_timeout`,
+- `request_error: EOF`,
+- `unexpected EOF`,
+- connection reset by peer,
+- broken pipe,
+- server closed idle connection,
+- closed network connection.
+
+The fallback remains tightly scoped:
+
+- it is still used only by Worker command result/fail submission,
+- it accepts only fixed
+  `/api/workers/commands/{command_id}/result` and
+  `/api/workers/commands/{command_id}/fail` paths,
+- it rejects query strings, fragments, unsupported schemes, and non-result/fail
+  paths,
+- it submits the same JSON body that Go `net/http` attempted to submit,
+- it uses `exec.CommandContext` without invoking a shell,
+- it keeps Worker secret values out of process arguments,
+- it does not print Worker secrets, Worker tokens, request bodies, complete
+  client links, or `nodes.share_link`,
+- if curl fallback succeeds, the Worker treats the result submission as
+  successful instead of immediately downgrading to the minimal `/fail` payload.
+
+This hotfix does not change the console `/result` or `/fail` main logic, does
+not change `transit_readonly_preflight` collection logic, does not add transit
+creation capability, does not install, start, stop, or restart `socat` /
+`gost`, does not create transit routes, does not add listening ports, does not
+modify firewall rules, does not modify Xray, does not read or modify
+`nodes.share_link`, and does not perform cutover. The rebuilt Linux amd64
+Worker binary is committed for a later separately authorized Worker
+replacement; this stage does not automatically deploy it.
+
 ## Safety Boundary
 
 This stage does not:

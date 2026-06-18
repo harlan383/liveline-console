@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.11-stage-3.3.68"
+const workerVersion = "0.1.12-stage-3.3.68"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -47,6 +47,8 @@ const managedXrayServiceName = "liveline-xray.service"
 const managedXrayServicePath = "/etc/systemd/system/liveline-xray.service"
 
 var postJSONHTTPClient = &http.Client{Timeout: postJSONTimeout}
+var postJSONFunc = postJSON
+var postJSONViaCurlFunc = postJSONViaCurl
 
 var protectedTransitListenPorts = map[int]string{
 	22:    "22 is reserved for SSH management",
@@ -1713,42 +1715,80 @@ func payloadSize(payload any) int {
 }
 
 func postJSONWithCurlFallback(endpointURL string, headers map[string]string, payload any, out any) error {
-	err := postJSON(endpointURL, headers, payload, out)
+	err := postJSONFunc(endpointURL, headers, payload, out)
 	if err == nil {
 		return nil
 	}
-	if !isResponseHeadersTimeoutError(err) {
+	triggerReason, shouldFallback := curlFallbackTriggerReason(err)
+	if !shouldFallback {
 		return err
 	}
 	if validateCurlFallbackEndpoint(endpointURL) != nil {
 		return err
 	}
 	traceLog(
-		"http_json_curl_fallback_begin endpoint=%s body_size=%d reason=response_headers_timeout header_keys=%s",
+		"go_http_submit_failed endpoint=%s body_size=%d fallback_trigger_reason=%s error=%s",
 		safeEndpointLabel(endpointURL),
 		payloadSize(payload),
+		triggerReason,
+		truncateResultString(err.Error(), responseBodyLogLimit),
+	)
+	traceLog(
+		"http_json_curl_fallback_begin endpoint=%s body_size=%d reason=%s header_keys=%s",
+		safeEndpointLabel(endpointURL),
+		payloadSize(payload),
+		triggerReason,
 		strings.Join(sortedHeaderKeys(headers), ","),
 	)
-	if fallbackErr := postJSONViaCurl(endpointURL, headers, payload, out); fallbackErr != nil {
+	curlStartedAt := time.Now()
+	if fallbackErr := postJSONViaCurlFunc(endpointURL, headers, payload, out); fallbackErr != nil {
 		traceLog(
-			"http_json_curl_fallback_end endpoint=%s success=false error=%s",
+			"http_json_curl_fallback_end endpoint=%s success=false reason=%s elapsed_ms=%d error=%s",
 			safeEndpointLabel(endpointURL),
+			triggerReason,
+			time.Since(curlStartedAt).Milliseconds(),
 			truncateResultString(fallbackErr.Error(), responseBodyLogLimit),
 		)
 		return fmt.Errorf("go net/http submit failed: %w; curl fallback failed: %v", err, fallbackErr)
 	}
 	traceLog(
-		"http_json_curl_fallback_end endpoint=%s success=true",
+		"http_json_curl_fallback_end endpoint=%s success=true reason=%s elapsed_ms=%d",
 		safeEndpointLabel(endpointURL),
+		triggerReason,
+		time.Since(curlStartedAt).Milliseconds(),
 	)
 	return nil
 }
 
-func isResponseHeadersTimeoutError(err error) bool {
+func curlFallbackTriggerReason(err error) (string, bool) {
 	if err == nil {
-		return false
+		return "", false
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "response_headers_timeout")
+	lowered := strings.ToLower(err.Error())
+	if strings.Contains(lowered, "read console response") {
+		return "", false
+	}
+	triggers := []struct {
+		marker string
+		reason string
+	}{
+		{"response_headers_timeout", "response_headers_timeout"},
+		{"request_error: eof", "pre_response_eof"},
+		{"unexpected eof", "unexpected_eof"},
+		{"connection reset by peer", "connection_reset_by_peer"},
+		{"broken pipe", "broken_pipe"},
+		{"server closed idle connection", "server_closed_idle_connection"},
+		{"use of closed network connection", "closed_network_connection"},
+	}
+	for _, trigger := range triggers {
+		if strings.Contains(lowered, trigger.marker) {
+			return trigger.reason, true
+		}
+	}
+	if strings.Contains(lowered, "failed before response") && strings.Contains(lowered, ": eof") {
+		return "pre_response_eof", true
+	}
+	return "", false
 }
 
 func validateCurlFallbackEndpoint(rawURL string) error {
@@ -1837,6 +1877,12 @@ func postJSONViaCurl(endpointURL string, headers map[string]string, payload any,
 	if err := json.Unmarshal(responseBody, out); err != nil {
 		return fmt.Errorf("invalid curl fallback response status=%d body=%s", statusCode, responseBodySummary(responseBody))
 	}
+	traceLog(
+		"http_json_curl_fallback_response endpoint=%s response_status=%d response_body_size=%d",
+		safeEndpointLabel(endpointURL),
+		statusCode,
+		len(responseBody),
+	)
 	if statusCode < 200 || statusCode >= 300 {
 		return fmt.Errorf("curl fallback returned status=%d body=%s", statusCode, responseBodySummary(responseBody))
 	}
