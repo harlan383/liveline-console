@@ -335,39 +335,73 @@ func TestValidateCurlFallbackEndpointAllowsOnlyResultAndFail(t *testing.T) {
 	}
 }
 
-func TestBuildCurlConfigDoesNotExposeSecretInArgsModel(t *testing.T) {
-	config := buildCurlConfig(
-		"http://console.example:8200/api/workers/commands/abc/result",
-		map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"},
-		"/tmp/body.json",
-		"/tmp/response.json",
-	)
-	if !strings.Contains(config, "X-Worker-Secret: "+"secret-value") {
-		t.Fatalf("curl config should contain the secret header for temp-file curl config")
+func TestBuildCurlHeaderFileDoesNotExposeSecretInArgsModel(t *testing.T) {
+	headerText := buildCurlHeaderFile(map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"})
+	if !strings.Contains(headerText, "X-Worker-Secret: "+"secret-value") {
+		t.Fatalf("curl header file should contain the secret header")
 	}
-	args := []string{"curl", "--config", "/tmp/liveline-worker-curl-config-example.conf"}
+	args := buildCurlFallbackArgs(
+		"http://console.example:8200/api/workers/commands/abc/result",
+		"/tmp/liveline-worker-curl-headers-example.txt",
+		"/tmp/liveline-worker-curl-body-example.json",
+		"/tmp/liveline-worker-curl-response-example.json",
+	)
 	joinedArgs := strings.Join(args, " ")
+	if strings.Contains(joinedArgs, "--config") {
+		t.Fatalf("curl args still contain --config: %q", joinedArgs)
+	}
 	if strings.Contains(joinedArgs, "secret-value") || strings.Contains(joinedArgs, "worker-id") {
 		t.Fatalf("curl process args leaked header values: %q", joinedArgs)
 	}
 }
 
-func TestPostJSONViaCurlUsesReadableTempConfigAndCleansFiles(t *testing.T) {
+func TestPostJSONViaCurlUsesReadableTempHeaderBodyAndCleansFiles(t *testing.T) {
 	fakeBin := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "fake-curl.log")
 	fakeCurl := filepath.Join(fakeBin, "curl")
 	script := `#!/bin/sh
-if [ "$1" != "--config" ]; then
-  echo "bad args: $*" >&2
-  exit 11
-fi
-CONFIG="$2"
-if [ ! -f "$CONFIG" ]; then
-  echo "missing config" >&2
+HEADER=""
+BODY=""
+OUT=""
+URL=""
+ARGS="$*"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --config)
+      echo "unexpected --config" >&2
+      exit 11
+      ;;
+    --header)
+      HEADER="${2#@}"
+      shift 2
+      ;;
+    --data-binary)
+      BODY="${2#@}"
+      shift 2
+      ;;
+    --output)
+      OUT="$2"
+      shift 2
+      ;;
+    --write-out|--request|--max-time)
+      shift 2
+      ;;
+    --silent|--show-error)
+      shift
+      ;;
+    http://*|https://*)
+      URL="$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+if [ ! -f "$HEADER" ]; then
+  echo "missing header" >&2
   exit 12
 fi
-BODY=$(sed -n 's/^data-binary = "@\(.*\)"$/\1/p' "$CONFIG")
-OUT=$(sed -n 's/^output = "\(.*\)"$/\1/p' "$CONFIG")
 if [ ! -f "$BODY" ]; then
   echo "missing body" >&2
   exit 13
@@ -377,10 +411,11 @@ if [ -z "$OUT" ]; then
   exit 14
 fi
 {
-  printf 'config=%s\n' "$CONFIG"
+  printf 'header=%s\n' "$HEADER"
   printf 'body=%s\n' "$BODY"
   printf 'out=%s\n' "$OUT"
-  printf 'args=%s\n' "$*"
+  printf 'url=%s\n' "$URL"
+  printf 'args=%s\n' "$ARGS"
 } > "$LIVELINE_FAKE_CURL_LOG"
 printf '{"success":true,"message":"ok"}' > "$OUT"
 printf '200'
@@ -409,7 +444,7 @@ printf '200'
 		t.Fatal(err)
 	}
 	logFields := parseTestKeyValueLines(string(logTextBytes))
-	for _, key := range []string{"config", "body", "out"} {
+	for _, key := range []string{"header", "body", "out"} {
 		if logFields[key] == "" {
 			t.Fatalf("fake curl log missing %s: %s", key, logTextBytes)
 		}
@@ -420,9 +455,12 @@ printf '200'
 	if strings.Contains(logFields["args"], "secret-value") || strings.Contains(logFields["args"], "worker-id") {
 		t.Fatalf("curl args leaked header values: %q", logFields["args"])
 	}
+	if strings.Contains(logFields["args"], "--config") {
+		t.Fatalf("curl args unexpectedly used --config: %q", logFields["args"])
+	}
 }
 
-func TestPostJSONViaCurlRoundTripWithRealCurlConfig(t *testing.T) {
+func TestPostJSONViaCurlRoundTripWithRealCurlHeaderFile(t *testing.T) {
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Skip("curl is not available")
 	}
