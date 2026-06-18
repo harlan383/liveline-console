@@ -1253,6 +1253,18 @@ header temp file only and never appear in process arguments or logs. The fixed
 result/fail endpoint allowlist, no-query rule, no-shell execution, redacted
 trace boundaries, and no auto-deploy boundary remain unchanged.
 
+Stage 3.3.68-hotfix-13-worker-curl-fallback-manual-compatible aligns the
+Worker curl fallback with the exact manual command shape that succeeded on the
+transit Worker host. Worker `0.1.15-stage-3.3.68` now invokes curl with
+`-i --max-time ... --request POST --header @<header-file> --data-binary
+@<body-file> <fixed-url>`, parses the HTTP status and JSON body from stdout,
+and avoids `--output` / `--write-out`. Header and body temp files are synced
+and closed before curl starts. Worker secrets remain confined to the temporary
+header file and never appear in process arguments or logs. This stage changes
+only Worker result/fail fallback transport behavior; it does not change backend
+result/fail logic, readonly collection, route creation behavior, or deploy the
+rebuilt Worker automatically.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change

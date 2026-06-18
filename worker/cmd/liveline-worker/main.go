@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.14-stage-3.3.68"
+const workerVersion = "0.1.15-stage-3.3.68"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -1835,12 +1835,6 @@ func postJSONViaCurl(endpointURL string, headers map[string]string, payload any,
 	}
 	defer cleanupBody()
 
-	responsePath, cleanupResponse, err := writeCurlFallbackTempFile("liveline-worker-curl-response-*.json", nil)
-	if err != nil {
-		return err
-	}
-	defer cleanupResponse()
-
 	headerText := buildCurlHeaderFile(headers)
 	headerPath, cleanupHeader, err := writeCurlFallbackTempFile("liveline-worker-curl-headers-*.txt", []byte(headerText))
 	if err != nil {
@@ -1850,24 +1844,19 @@ func postJSONViaCurl(endpointURL string, headers map[string]string, payload any,
 
 	ctx, cancel := context.WithTimeout(context.Background(), postJSONTimeout+2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "curl", buildCurlFallbackArgs(endpointURL, headerPath, bodyPath, responsePath)...)
+	cmd := exec.CommandContext(ctx, "curl", buildCurlFallbackArgs(endpointURL, headerPath, bodyPath)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	statusOutput, err := cmd.Output()
+	output, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("curl fallback timed out endpoint=%s", safeEndpointLabel(endpointURL))
 	}
-	statusText := strings.TrimSpace(string(statusOutput))
 	if err != nil {
-		return fmt.Errorf("curl fallback command failed endpoint=%s exit_code=%d status_output=%s stderr=%s", safeEndpointLabel(endpointURL), curlExitCode(err), truncateResultString(redactSensitiveLogText(statusText, headers), 80), truncateResultString(redactSensitiveLogText(stderr.String(), headers), responseBodyLogLimit))
+		return fmt.Errorf("curl fallback command failed endpoint=%s exit_code=%d stdout=%s stderr=%s", safeEndpointLabel(endpointURL), curlExitCode(err), responseBodySummary(output), truncateResultString(redactSensitiveLogText(stderr.String(), headers), responseBodyLogLimit))
 	}
-	statusCode, err := strconv.Atoi(statusText)
+	statusCode, responseBody, err := parseCurlIncludeOutput(output)
 	if err != nil {
-		return fmt.Errorf("curl fallback returned invalid status endpoint=%s status_output=%s stderr=%s", safeEndpointLabel(endpointURL), truncateResultString(redactSensitiveLogText(statusText, headers), 80), truncateResultString(redactSensitiveLogText(stderr.String(), headers), responseBodyLogLimit))
-	}
-	responseBody, err := os.ReadFile(responsePath)
-	if err != nil {
-		return err
+		return fmt.Errorf("curl fallback returned invalid response endpoint=%s stdout=%s stderr=%s", safeEndpointLabel(endpointURL), responseBodySummary(output), truncateResultString(redactSensitiveLogText(stderr.String(), headers), responseBodyLogLimit))
 	}
 	if err := json.Unmarshal(responseBody, out); err != nil {
 		return fmt.Errorf("invalid curl fallback response status=%d body=%s", statusCode, responseBodySummary(responseBody))
@@ -1905,6 +1894,11 @@ func writeCurlFallbackTempFile(pattern string, contents []byte) (string, func(),
 			return "", nil, err
 		}
 	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		cleanup()
+		return "", nil, err
+	}
 	if err := file.Close(); err != nil {
 		cleanup()
 		return "", nil, err
@@ -1920,10 +1914,9 @@ func buildCurlHeaderFile(headers map[string]string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func buildCurlFallbackArgs(endpointURL string, headerPath string, bodyPath string, responsePath string) []string {
+func buildCurlFallbackArgs(endpointURL string, headerPath string, bodyPath string) []string {
 	return []string{
-		"--silent",
-		"--show-error",
+		"-i",
 		"--max-time",
 		fmt.Sprintf("%d", int(postJSONTimeout.Seconds())),
 		"--request",
@@ -1932,12 +1925,78 @@ func buildCurlFallbackArgs(endpointURL string, headerPath string, bodyPath strin
 		"@" + headerPath,
 		"--data-binary",
 		"@" + bodyPath,
-		"--output",
-		responsePath,
-		"--write-out",
-		"%{http_code}",
 		endpointURL,
 	}
+}
+
+func parseCurlIncludeOutput(output []byte) (int, []byte, error) {
+	if len(output) == 0 {
+		return 0, nil, fmt.Errorf("empty curl response")
+	}
+	position := 0
+	for position < len(output) {
+		headerStart := findHTTPHeaderStart(output[position:])
+		if headerStart < 0 {
+			return 0, nil, fmt.Errorf("missing HTTP status line")
+		}
+		position += headerStart
+		statusLineEnd := bytes.IndexByte(output[position:], '\n')
+		if statusLineEnd < 0 {
+			return 0, nil, fmt.Errorf("missing HTTP status line terminator")
+		}
+		statusLine := strings.TrimSpace(string(output[position : position+statusLineEnd]))
+		statusCode, err := parseHTTPStatusCode(statusLine)
+		if err != nil {
+			return 0, nil, err
+		}
+		headerEndOffset, separatorLen := findHTTPHeaderEnd(output[position:])
+		if headerEndOffset < 0 {
+			return 0, nil, fmt.Errorf("missing HTTP header terminator")
+		}
+		bodyStart := position + headerEndOffset + separatorLen
+		body := output[bodyStart:]
+		if statusCode >= 100 && statusCode < 200 && bytes.HasPrefix(body, []byte("HTTP/")) {
+			position = bodyStart
+			continue
+		}
+		return statusCode, body, nil
+	}
+	return 0, nil, fmt.Errorf("missing final HTTP response")
+}
+
+func findHTTPHeaderStart(output []byte) int {
+	if bytes.HasPrefix(output, []byte("HTTP/")) {
+		return 0
+	}
+	if index := bytes.Index(output, []byte("\r\nHTTP/")); index >= 0 {
+		return index + 2
+	}
+	if index := bytes.Index(output, []byte("\nHTTP/")); index >= 0 {
+		return index + 1
+	}
+	return -1
+}
+
+func findHTTPHeaderEnd(output []byte) (int, int) {
+	if index := bytes.Index(output, []byte("\r\n\r\n")); index >= 0 {
+		return index, 4
+	}
+	if index := bytes.Index(output, []byte("\n\n")); index >= 0 {
+		return index, 2
+	}
+	return -1, 0
+}
+
+func parseHTTPStatusCode(statusLine string) (int, error) {
+	parts := strings.Fields(statusLine)
+	if len(parts) < 2 || !strings.HasPrefix(parts[0], "HTTP/") {
+		return 0, fmt.Errorf("invalid HTTP status line")
+	}
+	statusCode, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, fmt.Errorf("invalid HTTP status code")
+	}
+	return statusCode, nil
 }
 
 func curlExitCode(err error) int {

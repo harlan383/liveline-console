@@ -451,6 +451,34 @@ The fallback remains tightly scoped:
 - no complete result body logging,
 - no client link or `nodes.share_link` output.
 
+## Hotfix 13: Worker Curl Fallback Manual-Compatible Mode
+
+Stage 3.3.68-hotfix-13-worker-curl-fallback-manual-compatible responds to the
+next production diagnosis: Worker `0.1.14-stage-3.3.68` correctly triggered
+curl fallback and no longer failed on `--config`, but its automatic fallback
+still timed out while a manually run command using `curl -i --max-time ...
+--request POST --header @<header-file> --data-binary @<body-file>
+<fixed-url>` succeeded immediately for the same command, headers, body, token,
+and endpoint.
+
+Worker `0.1.15-stage-3.3.68` therefore aligns the fallback with the manual
+command form:
+
+- curl is invoked with `-i`, `--max-time`, `--request POST`,
+  `--header @<header-file>`, and `--data-binary @<body-file>`,
+- `--output` and `--write-out` are no longer used,
+- the HTTP status and JSON body are parsed from stdout,
+- header and body temporary files are synced and closed before curl starts,
+- the fixed result/fail endpoint allowlist and no-query rule remain enforced,
+- Worker secrets stay in the 0600 temporary header file and are not printed in
+  process arguments, logs, README, docs, or PR output.
+
+This hotfix does not change backend result/fail main logic, does not change
+`transit_readonly_preflight` collection logic, and does not add any real
+transit creation capability. The rebuilt Worker binary is committed for a
+later separately authorized Worker replacement; this stage does not deploy or
+restart the remote Worker.
+
 This hotfix does not change the console `/result` or `/fail` main logic, does
 not change `transit_readonly_preflight` collection logic, does not add transit
 creation capability, does not install, start, stop, or restart `socat` /
