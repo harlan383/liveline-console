@@ -1287,6 +1287,18 @@ transit route is created, no listener or firewall is changed, Xray is not
 modified, `nodes.share_link` is not read or modified, no real client link is
 generated or displayed, and no cutover is performed.
 
+Stage 3.3.70-transit-route-create-approval records the formal approval packet
+for a future Hong Kong transit route creation after the successful production
+UI readonly preflight. It records the proposed transit resource, landing node,
+planned TCP listen port `23843`, forwarding method `socat`, preflight evidence,
+and the manual firewall / cloud security group confirmations required before
+execution. This stage is documentation only: it does not trigger Worker
+commands, create a transit route, bind a listener, modify firewall rules,
+modify Xray, read or modify `nodes.share_link`, display a real client link, or
+perform cutover. The next possible execution stage is
+`Stage 3.3.71-transit-route-create-execution`, and it requires explicit user
+authorization before any real action.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2516,6 +2528,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 hotfix Worker curl fallback manual compatible | Worker curl fallback now matches the manually successful curl -i header/body-file command shape |
 | Stage 3.3.68 hotfix Worker compact result payload | Transit readonly preflight Worker result payload is compacted below the small-body target before submission |
 | Stage 3.3.69 Transit readonly UI validation record | Production UI readonly preflight validation passed with Worker 0.1.16 compact result submission; no real route creation or cutover |
+| Stage 3.3.70 Transit route create approval | Formal pre-execution approval packet recorded for the planned Hong Kong socat transit route; no real creation, listener, firewall change, or cutover |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
