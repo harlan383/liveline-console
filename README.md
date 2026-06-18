@@ -1311,6 +1311,19 @@ start `socat`, does not modify firewall rules, does not read or modify
 `nodes.share_link`, and does not perform cutover. Real creation is reserved for
 `Stage 3.3.72-transit-route-create-execution` with fresh explicit approval.
 
+Stage 3.3.72a-legacy-ssh-rq-flow-removal removes the old SSH private-key /
+Redis temporary credential / RQ job operation surface from active backend and
+frontend code. Node direct SSH actions, transit resource SSH read/install
+actions, legacy transit route create/diagnose/restart actions, and VPS SSH
+backup/check endpoints are removed or downlined. Worker registration,
+bootstrap, heartbeat, command polling, readonly preflight, `transit_route_create`
+dry-run planning, node redaction/export confirmation, transit resource records,
+and transit route read APIs remain. This stage does not add migrations, does not
+delete historical database rows, does not deploy the public console, does not
+upgrade Worker, does not trigger Worker commands, does not create routes, does
+not bind listeners, does not modify firewall/Xray/`nodes.share_link`, and does
+not perform cutover.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2542,6 +2555,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.69 Transit readonly UI validation record | Production UI readonly preflight validation passed with Worker 0.1.16 compact result submission; no real route creation or cutover |
 | Stage 3.3.70 Transit route create approval | Formal pre-execution approval packet recorded for the planned Hong Kong socat transit route; no real creation, listener, firewall change, or cutover |
 | Stage 3.3.71 Transit route Worker create path | Controlled Worker dry-run create path added for the approved Hong Kong socat route; real route creation remains deferred |
+| Stage 3.3.72a Legacy SSH/RQ flow removal | Old SSH private-key / Redis temp credential / RQ operation paths removed from active code; Worker command model remains the supported remote path |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

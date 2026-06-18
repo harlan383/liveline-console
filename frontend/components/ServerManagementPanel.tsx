@@ -5,7 +5,6 @@ import QRCode from "react-qr-code";
 
 import {
   apiFetch,
-  apiFormFetch,
   createLandingNodeExecution,
   createLandingNodePlan,
   createWorkerCommand,
@@ -20,14 +19,13 @@ import {
   type VpsServerData,
   type VpsServerDeleteResult,
   type VpsServerListResult,
-  type VpsServerTaskResult,
   type VpsServerUpdateResult,
   type WorkerCommandData,
   type WorkerRole,
   type WorkerTokenCreateResult,
 } from "@/lib/api";
 
-type ModalMode = "add" | "recheck" | "edit" | "delete" | "nodePlan" | "workerCommand" | null;
+type ModalMode = "add" | "edit" | "delete" | "nodePlan" | "workerCommand" | null;
 
 type ServerFormState = {
   name: string;
@@ -35,8 +33,6 @@ type ServerFormState = {
   sshPort: string;
   sshUser: string;
   notes: string;
-  privateKeyText: string;
-  passphrase: string;
 };
 
 type NodePlanFormState = {
@@ -102,8 +98,6 @@ const emptyServerForm: ServerFormState = {
   sshPort: "22",
   sshUser: "root",
   notes: "",
-  privateKeyText: "",
-  passphrase: "",
 };
 
 function createEmptyNodePlanForm(): NodePlanFormState {
@@ -273,7 +267,6 @@ async function copyTextWithFallback(text: string, textArea: HTMLTextAreaElement 
 }
 
 export function ServerManagementPanel() {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const workerInstallCommandRef = useRef<HTMLTextAreaElement | null>(null);
   const [servers, setServers] = useState<VpsServerData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -326,12 +319,6 @@ export function ServerManagementPanel() {
     void loadServers();
   }, []);
 
-  function clearFileInput() {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  }
-
   function closeModal() {
     setModalMode(null);
     setSelectedServer(null);
@@ -342,7 +329,6 @@ export function ServerManagementPanel() {
     setFormalCreateResult(null);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
-    clearFileInput();
   }
 
   function closeNodeDetail() {
@@ -371,19 +357,6 @@ export function ServerManagementPanel() {
     setModalMode("workerCommand");
   }
 
-  function openRecheck(server: VpsServerData) {
-    setSelectedServer(server);
-    setServerForm({
-      ...emptyServerForm,
-      name: server.name,
-      ip: server.ip,
-      sshPort: String(server.ssh_port),
-      sshUser: server.ssh_user || server.ssh_username || "root",
-      notes: server.notes ?? "",
-    });
-    setModalMode("recheck");
-  }
-
   function openEdit(server: VpsServerData) {
     setSelectedServer(server);
     setServerForm({
@@ -409,18 +382,6 @@ export function ServerManagementPanel() {
     setFormalCreateConfirm(createEmptyFormalCreateConfirm());
     setFormalCreateResult(null);
     setModalMode("nodePlan");
-  }
-
-  function appendPrivateKey(formData: FormData, text: string, passphrase: string) {
-    if (text.trim()) {
-      formData.append("private_key_text", text);
-    }
-    const file = fileInputRef.current?.files?.[0];
-    if (file) {
-      formData.append("private_key_file", file);
-    }
-    formData.append("ssh_key_passphrase", passphrase);
-    formData.append("private_key_passphrase", passphrase);
   }
 
   async function fetchNodeDetail(nodeId: string) {
@@ -708,72 +669,6 @@ export function ServerManagementPanel() {
     await exportSelectedNodeShareLink(node.id, "client_import", { copy: true });
   }
 
-  async function submitAddServer(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
-    setMessage("正在添加服务器并创建 SSH 只读握手任务。");
-    try {
-      const csrfToken = await ensureCsrfToken();
-      const formData = new FormData();
-      formData.append("name", serverForm.name);
-      formData.append("ip", serverForm.ip);
-      formData.append("ssh_port", serverForm.sshPort);
-      formData.append("ssh_user", serverForm.sshUser);
-      formData.append("notes", serverForm.notes);
-      appendPrivateKey(formData, serverForm.privateKeyText, serverForm.passphrase);
-
-      const result = await apiFormFetch<VpsServerTaskResult>("/api/vps", formData, {
-        headers: { "X-CSRF-Token": csrfToken },
-      });
-
-      if (!result.success) {
-        setMessage(`${result.error_code}: ${result.message}`);
-        return;
-      }
-
-      setMessage(`服务器记录已创建，SSH 检测任务 ${result.data.task_id} 已排队。`);
-      closeModal();
-      await loadServers();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "添加服务器失败。");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitRecheck(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedServer) {
-      return;
-    }
-    setSubmitting(true);
-    setMessage("正在创建服务器重新检测任务。");
-    try {
-      const csrfToken = await ensureCsrfToken();
-      const formData = new FormData();
-      formData.append("ssh_port", serverForm.sshPort);
-      formData.append("ssh_user", serverForm.sshUser);
-      appendPrivateKey(formData, serverForm.privateKeyText, serverForm.passphrase);
-
-      const result = await apiFormFetch<VpsServerTaskResult>(`/api/vps/${selectedServer.id}/recheck`, formData, {
-        headers: { "X-CSRF-Token": csrfToken },
-      });
-
-      if (!result.success) {
-        setMessage(`${result.error_code}: ${result.message}`);
-        return;
-      }
-
-      setMessage(`重新检测任务 ${result.data.task_id} 已排队。`);
-      closeModal();
-      await loadServers();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "重新检测失败。");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   async function submitEdit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedServer) {
@@ -1018,15 +913,9 @@ export function ServerManagementPanel() {
                     >
                       创建节点计划
                     </button>
-                    {server.connection_mode === "worker" ? (
-                      <button className="secondary" type="button" onClick={() => openWorkerCommand(server)}>
-                        安装命令
-                      </button>
-                    ) : (
-                      <button className="secondary" type="button" onClick={() => openRecheck(server)}>
-                        重新检测
-                      </button>
-                    )}
+                    <button className="secondary" type="button" onClick={() => openWorkerCommand(server)}>
+                      安装命令
+                    </button>
                     <button className="secondary" type="button" onClick={() => openEdit(server)}>
                       编辑
                     </button>
@@ -1131,7 +1020,6 @@ export function ServerManagementPanel() {
     }
     const titleMap: Record<Exclude<ModalMode, null>, string> = {
       add: "添加落地服务器",
-      recheck: "重新检测落地服务器",
       edit: "编辑落地服务器",
       delete: "删除落地服务器",
       nodePlan: "创建落地节点计划",
@@ -1147,8 +1035,7 @@ export function ServerManagementPanel() {
             </button>
           </div>
           {mode === "add" || mode === "workerCommand" ? renderWorkerBootstrapForm("landing") : null}
-          {mode === "recheck" ? renderServerForm(submitRecheck, true, true) : null}
-          {mode === "edit" ? renderServerForm(submitEdit, false) : null}
+          {mode === "edit" ? renderServerForm(submitEdit) : null}
           {mode === "delete" ? renderDeleteConfirm() : null}
           {mode === "nodePlan" ? renderNodePlanForm() : null}
         </div>
@@ -1251,25 +1138,17 @@ export function ServerManagementPanel() {
     );
   }
 
-  function renderServerForm(
-    onSubmit: (event: React.FormEvent<HTMLFormElement>) => void,
-    includeKeyFields: boolean,
-    recheckOnly = false,
-  ) {
+  function renderServerForm(onSubmit: (event: React.FormEvent<HTMLFormElement>) => void) {
     return (
       <form className="form server-modal-form" onSubmit={onSubmit}>
-        {!recheckOnly ? (
-          <label>
-            落地服务器名称
-            <input value={serverForm.name} onChange={(event) => setServerForm({ ...serverForm, name: event.target.value })} />
-          </label>
-        ) : null}
-        {!recheckOnly ? (
-          <label>
-            落地服务器 IP
-            <input value={serverForm.ip} onChange={(event) => setServerForm({ ...serverForm, ip: event.target.value })} />
-          </label>
-        ) : null}
+        <label>
+          落地服务器名称
+          <input value={serverForm.name} onChange={(event) => setServerForm({ ...serverForm, name: event.target.value })} />
+        </label>
+        <label>
+          落地服务器 IP
+          <input value={serverForm.ip} onChange={(event) => setServerForm({ ...serverForm, ip: event.target.value })} />
+        </label>
         <label>
           SSH 端口
           <input
@@ -1282,35 +1161,11 @@ export function ServerManagementPanel() {
           SSH 用户名
           <input value={serverForm.sshUser} onChange={(event) => setServerForm({ ...serverForm, sshUser: event.target.value })} />
         </label>
-        {!recheckOnly ? (
-          <label className="wide-field">
-            备注
-            <textarea value={serverForm.notes} onChange={(event) => setServerForm({ ...serverForm, notes: event.target.value })} />
-          </label>
-        ) : null}
-        {includeKeyFields ? (
-          <>
-            <label>
-              上传 SSH 私钥
-              <input ref={fileInputRef} type="file" />
-            </label>
-            <label className="wide-field">
-              粘贴 SSH 私钥
-              <textarea
-                value={serverForm.privateKeyText}
-                onChange={(event) => setServerForm({ ...serverForm, privateKeyText: event.target.value })}
-              />
-            </label>
-            <label>
-              私钥密码，可选
-              <input
-                type="password"
-                value={serverForm.passphrase}
-                onChange={(event) => setServerForm({ ...serverForm, passphrase: event.target.value })}
-              />
-            </label>
-          </>
-        ) : null}
+        <label className="wide-field">
+          备注
+          <textarea value={serverForm.notes} onChange={(event) => setServerForm({ ...serverForm, notes: event.target.value })} />
+        </label>
+        <p className="message wide-field">服务器远程检测和执行统一通过已注册 Worker；本页不再接收私钥或创建 SSH/RQ 任务。</p>
         <div className="modal-actions wide-field">
           <button disabled={submitting} type="submit">
             确认
