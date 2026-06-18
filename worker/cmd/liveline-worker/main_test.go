@@ -344,25 +344,32 @@ func TestBuildCurlHeaderFileDoesNotExposeSecretInArgsModel(t *testing.T) {
 		"http://console.example:8200/api/workers/commands/abc/result",
 		"/tmp/liveline-worker-curl-headers-example.txt",
 		"/tmp/liveline-worker-curl-body-example.json",
-		"/tmp/liveline-worker-curl-response-example.json",
 	)
 	joinedArgs := strings.Join(args, " ")
 	if strings.Contains(joinedArgs, "--config") {
 		t.Fatalf("curl args still contain --config: %q", joinedArgs)
+	}
+	if strings.Contains(joinedArgs, "--output") || strings.Contains(joinedArgs, "--write-out") {
+		t.Fatalf("curl args still contain non-manual output capture flags: %q", joinedArgs)
+	}
+	if !strings.Contains(joinedArgs, "-i") {
+		t.Fatalf("curl args do not include -i manual-compatible response capture: %q", joinedArgs)
+	}
+	if !strings.HasPrefix(args[len(args)-1], "http://") && !strings.HasPrefix(args[len(args)-1], "https://") {
+		t.Fatalf("curl fixed URL lacks scheme: %q", args[len(args)-1])
 	}
 	if strings.Contains(joinedArgs, "secret-value") || strings.Contains(joinedArgs, "worker-id") {
 		t.Fatalf("curl process args leaked header values: %q", joinedArgs)
 	}
 }
 
-func TestPostJSONViaCurlUsesReadableTempHeaderBodyAndCleansFiles(t *testing.T) {
+func TestPostJSONViaCurlUsesManualCompatibleTempHeaderBodyAndCleansFiles(t *testing.T) {
 	fakeBin := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "fake-curl.log")
 	fakeCurl := filepath.Join(fakeBin, "curl")
 	script := `#!/bin/sh
 HEADER=""
 BODY=""
-OUT=""
 URL=""
 ARGS="$*"
 while [ "$#" -gt 0 ]; do
@@ -379,14 +386,14 @@ while [ "$#" -gt 0 ]; do
       BODY="${2#@}"
       shift 2
       ;;
-    --output)
-      OUT="$2"
+    --output|--write-out)
+      echo "unexpected output capture flag" >&2
+      exit 14
+      ;;
+    --request|--max-time)
       shift 2
       ;;
-    --write-out|--request|--max-time)
-      shift 2
-      ;;
-    --silent|--show-error)
+    -i)
       shift
       ;;
     http://*|https://*)
@@ -406,19 +413,15 @@ if [ ! -f "$BODY" ]; then
   echo "missing body" >&2
   exit 13
 fi
-if [ -z "$OUT" ]; then
-  echo "missing output" >&2
-  exit 14
-fi
 {
   printf 'header=%s\n' "$HEADER"
   printf 'body=%s\n' "$BODY"
-  printf 'out=%s\n' "$OUT"
   printf 'url=%s\n' "$URL"
   printf 'args=%s\n' "$ARGS"
+  printf 'header_content=%s\n' "$(cat "$HEADER")"
+  printf 'body_content=%s\n' "$(cat "$BODY")"
 } > "$LIVELINE_FAKE_CURL_LOG"
-printf '{"success":true,"message":"ok"}' > "$OUT"
-printf '200'
+printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"success":true,"message":"ok"}'
 `
 	if err := os.WriteFile(fakeCurl, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -444,7 +447,7 @@ printf '200'
 		t.Fatal(err)
 	}
 	logFields := parseTestKeyValueLines(string(logTextBytes))
-	for _, key := range []string{"header", "body", "out"} {
+	for _, key := range []string{"header", "body"} {
 		if logFields[key] == "" {
 			t.Fatalf("fake curl log missing %s: %s", key, logTextBytes)
 		}
@@ -457,6 +460,18 @@ printf '200'
 	}
 	if strings.Contains(logFields["args"], "--config") {
 		t.Fatalf("curl args unexpectedly used --config: %q", logFields["args"])
+	}
+	if strings.Contains(logFields["args"], "--output") || strings.Contains(logFields["args"], "--write-out") {
+		t.Fatalf("curl args unexpectedly used output capture flags: %q", logFields["args"])
+	}
+	if !strings.Contains(logFields["args"], "-i") {
+		t.Fatalf("curl args did not use -i: %q", logFields["args"])
+	}
+	if !strings.Contains(logFields["header_content"], "Content-Type: application/json") {
+		t.Fatalf("header file content missing content type: %q", logFields["header_content"])
+	}
+	if !strings.Contains(logFields["body_content"], `"summary":"ok"`) {
+		t.Fatalf("body file content missing JSON payload: %q", logFields["body_content"])
 	}
 }
 
@@ -518,6 +533,61 @@ func TestWriteCurlFallbackTempFileUses0600(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("temp file mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestParseCurlIncludeOutputParses2xxAndBody(t *testing.T) {
+	status, body, err := parseCurlIncludeOutput([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"success\":true}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != 200 {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if string(body) != `{"success":true}` {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestParseCurlIncludeOutputParsesNon2xx(t *testing.T) {
+	status, body, err := parseCurlIncludeOutput([]byte("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n\r\n{\"success\":false}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != 500 {
+		t.Fatalf("status = %d, want 500", status)
+	}
+	if string(body) != `{"success":false}` {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestPostJSONViaCurlTreatsNon2xxAsFailure(t *testing.T) {
+	fakeBin := t.TempDir()
+	fakeCurl := filepath.Join(fakeBin, "curl")
+	script := `#!/bin/sh
+printf 'HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n\r\n{"success":false,"message":"nope"}'
+`
+	if err := os.WriteFile(fakeCurl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var response apiResponse[map[string]any]
+	err := postJSONViaCurl(
+		"http://console.example:8200/api/workers/commands/abc/result",
+		map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"},
+		map[string]any{"result": map[string]any{"summary": "ok"}},
+		&response,
+	)
+	if err == nil {
+		t.Fatal("postJSONViaCurl returned nil, want non-2xx error")
+	}
+	if !strings.Contains(err.Error(), "status=500") {
+		t.Fatalf("error = %v, want status=500", err)
+	}
+	if strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("error leaked secret: %v", err)
 	}
 }
 
