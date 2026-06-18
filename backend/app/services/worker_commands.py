@@ -74,6 +74,8 @@ def normalize_worker_command_result(command_type: str, result: Any) -> dict[str,
         raise ValueError("Worker command result must be a JSON object.")
     if command_type == "transit_readonly_preflight":
         return normalize_transit_readonly_preflight_result(result)
+    if command_type == "transit_route_create":
+        return normalize_transit_route_create_result(result)
     normalized = sanitize_value(result)
     if not isinstance(normalized, dict):
         raise ValueError("Worker command result normalization returned a non-object.")
@@ -117,6 +119,71 @@ def normalize_transit_readonly_preflight_result(result: dict[str, Any]) -> dict[
     if extra:
         normalized["extra"] = extra
     return sanitize_value(normalized)
+
+
+def normalize_transit_route_create_result(result: dict[str, Any]) -> dict[str, Any]:
+    status = _safe_result_text(result.get("status")) or "approval_required"
+    execution_mode = _safe_result_text(result.get("execution_mode")) or "dry_run"
+    summary = _safe_result_text(result.get("summary")) or "Transit route create dry-run returned a result."
+    checks = _normalize_transit_route_create_checks(result.get("checks"))
+
+    normalized: dict[str, Any] = {
+        "execution_mode": execution_mode,
+        "real_execution": result.get("real_execution") is True,
+        "status": status,
+        "summary": summary,
+        "worker_version": _safe_result_text(result.get("worker_version")),
+        "hostname": _safe_result_text(result.get("hostname")),
+        "role": _safe_result_text(result.get("role")),
+        "interface_name": _safe_result_text(result.get("interface_name")),
+        "planned_listen_port": _safe_result_int(result.get("planned_listen_port")),
+        "landing_target_host": _safe_result_text(result.get("landing_target_host")),
+        "landing_target_port": _safe_result_int(result.get("landing_target_port")),
+        "forwarding_method": _safe_result_text(result.get("forwarding_method")),
+        "route_name": _safe_result_text(result.get("route_name")),
+        "planned_service_name": _safe_result_text(result.get("planned_service_name")),
+        "checks_count": _safe_result_int(result.get("checks_count")) or len(checks),
+        "planned_actions_count": _safe_result_int(result.get("planned_actions_count")),
+        "safety_boundary": _normalize_text_list(result.get("safety_boundary"))[:5],
+    }
+    if checks:
+        normalized["checks"] = checks
+
+    failed_names = _normalize_text_list(result.get("failed_check_names"))[:MAX_TRANSIT_PREFLIGHT_CHECKS]
+    if failed_names:
+        normalized["failed_check_names"] = failed_names
+
+    return sanitize_value(normalized)
+
+
+def _normalize_transit_route_create_checks(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    checks: list[dict[str, Any]] = []
+    for index, item in enumerate(value[:MAX_TRANSIT_PREFLIGHT_CHECKS]):
+        if not isinstance(item, dict):
+            checks.append(
+                {
+                    "name": f"check_{index + 1}",
+                    "passed": False,
+                    "detail": _safe_result_text(item) or "Malformed check item.",
+                }
+            )
+            continue
+        passed = item.get("passed")
+        if not isinstance(passed, bool):
+            status = _safe_result_text(item.get("status"))
+            passed = status in {"passed", "ok", "success"}
+        check = {
+            "name": _safe_result_text(item.get("name") or item.get("label") or item.get("id"))
+            or f"check_{index + 1}",
+            "passed": passed,
+        }
+        detail = _safe_result_text(item.get("detail") or item.get("summary") or item.get("message"))
+        if detail:
+            check["detail"] = detail
+        checks.append(check)
+    return checks
 
 
 def _normalize_transit_preflight_checks(value: Any) -> list[dict[str, Any]]:

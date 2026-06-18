@@ -95,8 +95,50 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertEqual(command.command_type, "transit_route_create")
         self.assertEqual(
             minimum_worker_version_for_command("transit_route_create"),
-            "0.1.17-stage-3.3.71",
+            "0.1.18-stage-3.3.72",
         )
+
+    def test_transit_route_create_result_is_normalized_as_compact_dry_run(self):
+        result = normalize_worker_command_result(
+            "transit_route_create",
+            {
+                "execution_mode": "dry_run",
+                "real_execution": False,
+                "status": "approval_required",
+                "summary": "x" * 1200,
+                "worker_version": "0.1.18-stage-3.3.72",
+                "hostname": "WEPC202605221223335",
+                "role": "transit",
+                "interface_name": "eth0",
+                "planned_listen_port": 23843,
+                "landing_target_host": "64.90.13.19",
+                "landing_target_port": 27939,
+                "forwarding_method": "socat",
+                "route_name": "hk-socat-live-23843",
+                "planned_service_name": "liveline-socat-safe.service",
+                "checks_count": 2,
+                "planned_actions_count": 4,
+                "checks": [
+                    {"name": "dry_run_required", "passed": True, "detail": "safe dry-run"},
+                    {"name": "no_listener_created", "passed": True},
+                ],
+                "planned_service": {
+                    "exec_start": "this long service template must not be kept",
+                },
+                "worker_token": "fake-token-that-must-not-survive",
+            },
+        )
+
+        self.assertEqual(result["execution_mode"], "dry_run")
+        self.assertFalse(result["real_execution"])
+        self.assertEqual(result["planned_listen_port"], 23843)
+        self.assertEqual(result["landing_target_port"], 27939)
+        self.assertEqual(result["forwarding_method"], "socat")
+        self.assertEqual(result["checks_count"], 2)
+        self.assertNotIn("planned_service", result)
+        self.assertNotIn("worker_token", result)
+        self.assertEqual(result["checks"][0]["name"], "dry_run_required")
+        self.assertTrue(str(result["summary"]).endswith("...[truncated]"))
 
     def test_transit_route_worker_create_plan_schema_requires_current_stage(self):
         payload = {

@@ -368,6 +368,116 @@ func TestPrepareTransitReadonlyPreflightCompactPayloadDropsDetailsWhenNeeded(t *
 	}
 }
 
+func TestPrepareTransitRouteCreateCompactPayloadUnderTarget(t *testing.T) {
+	result := largeTransitRouteCreateDryRunResult()
+	sanitized := sanitizeCommandResult("transit_route_create", result)
+
+	submitResult, info := prepareCommandResultForSubmit("transit_route_create", sanitized)
+	submitPayloadSize := payloadSize(commandResultPayload{Result: submitResult})
+	if submitPayloadSize > transitRouteCreateCompactPayloadTarget {
+		t.Fatalf("compact submit payload size = %d, want <= %d; payload=%#v", submitPayloadSize, transitRouteCreateCompactPayloadTarget, submitResult)
+	}
+	if !info.CompactApplied {
+		t.Fatal("CompactApplied = false, want true")
+	}
+	for _, key := range []string{
+		"execution_mode",
+		"real_execution",
+		"status",
+		"summary",
+		"checks_count",
+		"worker_version",
+		"planned_listen_port",
+		"landing_target_port",
+		"forwarding_method",
+		"route_name",
+	} {
+		if _, ok := submitResult[key]; !ok {
+			t.Fatalf("compact transit route create payload missing key %q: %#v", key, submitResult)
+		}
+	}
+	if stringResultValue(submitResult["execution_mode"]) != "dry_run" {
+		t.Fatalf("execution_mode = %#v, want dry_run", submitResult["execution_mode"])
+	}
+	if boolResultValue(submitResult["real_execution"]) {
+		t.Fatalf("real_execution = true, want false")
+	}
+	if intResultValue(submitResult["planned_listen_port"]) != approvedTransitListenPort {
+		t.Fatalf("planned_listen_port = %#v, want %d", submitResult["planned_listen_port"], approvedTransitListenPort)
+	}
+	if intResultValue(submitResult["landing_target_port"]) != approvedTransitLandingTargetPort {
+		t.Fatalf("landing_target_port = %#v, want %d", submitResult["landing_target_port"], approvedTransitLandingTargetPort)
+	}
+	if _, exists := submitResult["planned_actions"]; exists {
+		t.Fatalf("compact payload retained planned_actions: %#v", submitResult)
+	}
+	if service, exists := submitResult["planned_service"]; exists {
+		t.Fatalf("compact payload retained full planned_service: %#v", service)
+	}
+	if checks, ok := submitResult["checks"].([]any); ok {
+		for _, item := range checks {
+			check := item.(map[string]any)
+			if detail := stringResultValue(check["detail"]); len(detail) > transitRouteCreateCompactCheckDetailLimit+len("...[truncated]") {
+				t.Fatalf("compact route detail length = %d, want truncated detail: %#v", len(detail), check)
+			}
+		}
+	}
+}
+
+func TestPrepareTransitRouteCreateCompactPayloadDropsDetailsWhenNeeded(t *testing.T) {
+	result := largeTransitRouteCreateDryRunResult()
+	checks := result["checks"].([]any)
+	for index := range checks {
+		check := checks[index].(map[string]any)
+		check["name"] = strings.Repeat("route-check-name-", 20)
+		check["detail"] = strings.Repeat("route dry-run detail ", 500)
+		check["passed"] = index%2 == 0
+	}
+	result["summary"] = strings.Repeat("summary ", 200)
+
+	submitResult, info := prepareCommandResultForSubmit("transit_route_create", sanitizeCommandResult("transit_route_create", result))
+	submitPayloadSize := payloadSize(commandResultPayload{Result: submitResult})
+	if submitPayloadSize > transitRouteCreateCompactPayloadTarget {
+		t.Fatalf("detail-free compact submit payload size = %d, want <= %d; payload=%#v", submitPayloadSize, transitRouteCreateCompactPayloadTarget, submitResult)
+	}
+	if !info.DetailsRemoved {
+		t.Fatalf("DetailsRemoved = false, want true for oversized detail payload; info=%#v", info)
+	}
+	if _, ok := submitResult["checks"]; ok {
+		t.Fatalf("detail-free compact payload should remove checks: %#v", submitResult)
+	}
+	if failedNames, ok := submitResult["failed_check_names"].([]any); !ok || len(failedNames) == 0 {
+		t.Fatalf("failed_check_names missing: %#v", submitResult)
+	}
+}
+
+func TestPrepareFailureResultForSubmitCompactsTransitRouteCreatePayload(t *testing.T) {
+	result := fallbackCommandResult(
+		workerCommand{ID: "route-command", CommandType: "transit_route_create"},
+		errors.New(strings.Repeat("submit failed ", 100)),
+	)
+	result["checks"] = largeTransitRouteCreateDryRunResult()["checks"]
+	result["planned_actions"] = largeTransitRouteCreateDryRunResult()["planned_actions"]
+	result["planned_service"] = largeTransitRouteCreateDryRunResult()["planned_service"]
+
+	payload := commandFailurePayload{
+		ErrorMessage: compactWorkerFailureMessage(errors.New(strings.Repeat("submit failed ", 100))),
+		Result:       prepareFailureResultForSubmit("transit_route_create", result, errors.New(strings.Repeat("submit failed ", 100))),
+	}
+	if payloadSize(payload) > workerFailurePayloadTarget {
+		t.Fatalf("failure payload size = %d, want <= %d; payload=%#v", payloadSize(payload), workerFailurePayloadTarget, payload)
+	}
+	text, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"X-Worker-Secret", "full-body-value", "vless://"} {
+		if strings.Contains(string(text), forbidden) {
+			t.Fatalf("failure payload leaked %q: %s", forbidden, string(text))
+		}
+	}
+}
+
 func TestPrepareCommandResultForSubmitLeavesNonTransitUntouched(t *testing.T) {
 	sanitized := map[string]any{"summary": "ok", "checks": []any{map[string]any{"detail": strings.Repeat("x", 200)}}}
 	submitResult, info := prepareCommandResultForSubmit("ping", sanitized)
@@ -979,6 +1089,59 @@ func largeTransitReadonlyPreflightResult() map[string]any {
 		"safety_boundary": []any{
 			"readonly checks only",
 			"no arbitrary shell accepted",
+			"no socat/gost install, start, stop, or restart",
+			"no listener binding",
+			"no firewall mutation",
+			"no Xray mutation",
+			"no nodes.share_link read or modification",
+			"no cutover",
+		},
+	}
+}
+
+func largeTransitRouteCreateDryRunResult() map[string]any {
+	checks := []any{}
+	for index := 0; index < 5; index++ {
+		checks = append(checks, map[string]any{
+			"name":   fmt.Sprintf("route_create_check_%d", index),
+			"passed": true,
+			"detail": strings.Repeat("route create dry-run detail ", 30),
+		})
+	}
+	return map[string]any{
+		"status":              "approval_required",
+		"execution_mode":      "dry_run",
+		"real_execution":      false,
+		"summary":             strings.Repeat("Transit route create dry-run accepted. ", 12),
+		"worker_version":      workerVersion,
+		"hostname":            "WEPC202605221223335",
+		"role":                "transit",
+		"interface_name":      "eth0",
+		"transit_resource_id": approvedTransitResourceID,
+		"landing_node_id":     approvedTransitLandingNodeID,
+		"planned_listen_port": approvedTransitListenPort,
+		"landing_target_host": approvedTransitLandingTargetHost,
+		"landing_target_port": approvedTransitLandingTargetPort,
+		"forwarding_method":   approvedTransitForwardingMethod,
+		"purpose":             "直播",
+		"approval_stage":      approvedTransitCreateStage,
+		"route_name":          "hk-socat-live-23843",
+		"planned_service": map[string]any{
+			"name":       "liveline-socat-12345678123412341234123456789abc.service",
+			"path":       "/etc/systemd/system/liveline-socat-12345678123412341234123456789abc.service",
+			"exec_start": "fixed template: socat TCP-LISTEN:23843,fork,reuseaddr TCP:64.90.13.19:27939",
+		},
+		"planned_actions": []any{
+			"validate approved Stage 3.3.70 parameters",
+			"recheck planned listen port before real execution",
+			"write LiveLine-managed socat systemd service in the later execution stage",
+			"start and verify the service only after a future explicit authorization",
+		},
+		"checks": checks,
+		"safety_boundary": []any{
+			"dry-run plan only",
+			"no arbitrary shell accepted",
+			"no systemd unit content accepted from API",
 			"no socat/gost install, start, stop, or restart",
 			"no listener binding",
 			"no firewall mutation",
