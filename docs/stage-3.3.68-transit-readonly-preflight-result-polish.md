@@ -511,6 +511,56 @@ or cutover behavior. The rebuilt Worker binary is committed for a later
 separately authorized Worker replacement; this stage does not deploy or restart
 the remote Worker.
 
+## Stage 3.3.69 UI Validation Record
+
+Stage 3.3.69 records the production validation after hotfix-14 was deployed by
+the operator and the Hong Kong transit Worker was upgraded to
+`0.1.16-stage-3.3.68`.
+
+The command-line controlled readonly preflight command completed successfully:
+
+- command id: `bbbbbbbb-cccc-dddd-eeee-ffffffffffff`,
+- command type: `transit_readonly_preflight`,
+- status: `succeeded`,
+- attempts: `1`,
+- result status: `passed`,
+- Worker version: `0.1.16-stage-3.3.68`,
+- checks count: `6`,
+- failed check names: `[]`,
+- planned listen port: `23843`,
+- landing target port: `27939`,
+- forwarding method: `socat`.
+
+The transit Worker logs confirmed compact result submission:
+
+- original submit payload size: `2306`,
+- compact submit payload size: `622`,
+- compact applied: `true`,
+- details removed: `true`,
+- submitted body size: `622`,
+- response status: `200`,
+- command completed.
+
+The real UI-triggered readonly preflight command also completed successfully:
+
+- command id: `50055a0a-8bd1-416b-84ce-c101df4c2cd7`,
+- command type: `transit_readonly_preflight`,
+- status: `succeeded`,
+- attempts: `1`,
+- result status: `passed`,
+- Worker version: `0.1.16-stage-3.3.68`,
+- checks count: `6`,
+- failed check names: `[]`,
+- summary: `Remote readonly preflight passed for planned listen 23843 to landing target port 27939.`
+
+Conclusion: the real UI readonly preflight flow is restored, the Worker
+result/fail stuck-running class is resolved for this flow, and the hotfix-14
+compact result strategy has passed production validation. This validation
+record is documentation only and does not create a transit route, add a
+listener, modify firewall or cloud security group rules, modify Xray, read or
+modify `nodes.share_link`, generate or display a real client link, or perform
+cutover.
+
 This hotfix does not change the console `/result` or `/fail` main logic, does
 not change `transit_readonly_preflight` collection logic, does not add transit
 creation capability, does not install, start, stop, or restart `socat` /
