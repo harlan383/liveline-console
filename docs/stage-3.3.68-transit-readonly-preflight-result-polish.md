@@ -380,6 +380,46 @@ modify firewall rules, does not modify Xray, does not read or modify
 Worker binary is committed for a later separately authorized Worker
 replacement; this stage does not automatically deploy it.
 
+## Hotfix 11: Worker Curl Fallback Config Fix
+
+Stage 3.3.68-hotfix-11-worker-curl-fallback-config-fix keeps the hotfix-10 EOF
+fallback trigger behavior and fixes the curl fallback execution path. Production
+logs showed that Worker `0.1.12-stage-3.3.68` correctly entered curl fallback
+for a full `/result` submit after Go `net/http` returned `request_error: EOF`,
+but curl itself failed with an error while reading its `--config` input.
+
+Worker `0.1.13-stage-3.3.68` now uses concrete 0600 temporary files for the
+fallback:
+
+- a JSON body file used by `data-binary`,
+- a curl config file passed as `curl --config <config-path>`,
+- a response file used by curl `output`.
+
+Those files are created before curl starts, stay present for the full curl
+process lifetime, and are removed after curl exits. The JSON body is still not
+placed in command arguments. Worker secret values remain in the temporary curl
+config file only, with 0600 permissions, and are not printed to logs or placed
+in process arguments.
+
+The fallback safety boundary remains unchanged:
+
+- fixed result/fail endpoint allowlist only,
+- no query strings or fragments,
+- no arbitrary shell,
+- no arbitrary URL,
+- no Worker token or secret logging,
+- no complete result body logging,
+- no client link or `nodes.share_link` output.
+
+This hotfix does not change the console `/result` or `/fail` main logic, does
+not change `transit_readonly_preflight` collection logic, does not add transit
+creation capability, does not install, start, stop, or restart `socat` /
+`gost`, does not create transit routes, does not add listening ports, does not
+modify firewall rules, does not modify Xray, does not read or modify
+`nodes.share_link`, and does not perform cutover. The rebuilt Linux amd64
+Worker binary is committed for a later separately authorized Worker
+replacement; this stage does not automatically deploy it.
+
 ## Safety Boundary
 
 This stage does not:
