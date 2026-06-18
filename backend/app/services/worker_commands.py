@@ -129,8 +129,16 @@ def normalize_transit_readonly_preflight_result(result: dict[str, Any]) -> dict[
 
 def normalize_transit_route_create_result(result: dict[str, Any]) -> dict[str, Any]:
     status = _safe_result_text(result.get("status")) or "approval_required"
-    execution_mode = _safe_result_text(result.get("execution_mode")) or "dry_run"
-    summary = _safe_result_text(result.get("summary")) or "Transit route create dry-run returned a result."
+    execution_mode = _safe_result_text(result.get("execution_mode"))
+    if not execution_mode:
+        execution_mode = "real_create" if result.get("real_execution") is True else "dry_run"
+    summary = _safe_result_text(result.get("summary"))
+    if not summary:
+        summary = (
+            "Transit route create real execution returned a result."
+            if execution_mode == "real_create"
+            else "Transit route create dry-run returned a result."
+        )
     checks = _normalize_transit_route_create_checks(result.get("checks"))
 
     normalized: dict[str, Any] = {
@@ -138,6 +146,7 @@ def normalize_transit_route_create_result(result: dict[str, Any]) -> dict[str, A
         "real_execution": result.get("real_execution") is True,
         "status": status,
         "summary": summary,
+        "redacted_error": _safe_result_text(result.get("redacted_error")),
         "worker_version": _safe_result_text(result.get("worker_version")),
         "hostname": _safe_result_text(result.get("hostname")),
         "role": _safe_result_text(result.get("role")),
@@ -152,16 +161,81 @@ def normalize_transit_route_create_result(result: dict[str, Any]) -> dict[str, A
         "service_path": _safe_result_text(result.get("service_path")),
         "checks_count": _safe_result_int(result.get("checks_count")) or len(checks),
         "planned_actions_count": _safe_result_int(result.get("planned_actions_count")),
+        "listen_attempts_count": _safe_result_int(result.get("listen_attempts_count")),
+        "rollback_attempted": result.get("rollback_attempted") is True,
         "safety_boundary": _normalize_text_list(result.get("safety_boundary"))[:5],
     }
     if checks:
         normalized["checks"] = checks
+
+    diagnostics = _normalize_transit_route_create_diagnostics(result.get("diagnostics"))
+    if diagnostics:
+        normalized["diagnostics"] = diagnostics
+
+    listen_attempts = _normalize_transit_route_listen_attempts(result.get("listen_verification_attempts"))
+    if listen_attempts:
+        normalized["listen_verification_attempts"] = listen_attempts
+
+    last_listen_attempt = _normalize_transit_route_listen_attempt(result.get("last_listen_attempt"))
+    if last_listen_attempt:
+        normalized["last_listen_attempt"] = last_listen_attempt
 
     failed_names = _normalize_text_list(result.get("failed_check_names"))[:MAX_TRANSIT_PREFLIGHT_CHECKS]
     if failed_names:
         normalized["failed_check_names"] = failed_names
 
     return sanitize_value(normalized)
+
+
+def _normalize_transit_route_create_diagnostics(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    diagnostics: dict[str, Any] = {}
+    for key in ("systemctl_is_active", "systemctl_status", "journal", "listen_socket"):
+        item = value.get(key)
+        if isinstance(item, dict):
+            diagnostics[key] = {
+                "status": _safe_result_text(item.get("status")),
+                "detail": _safe_result_text(item.get("detail")),
+                "error": _safe_result_text(item.get("error")),
+            }
+    service_file = value.get("service_file")
+    if isinstance(service_file, dict):
+        diagnostics["service_file"] = {
+            "exists": service_file.get("exists") is True,
+            "size_bytes": _safe_result_int(service_file.get("size_bytes")),
+            "contains_fixed_exec": service_file.get("contains_fixed_exec") is True,
+            "contains_approved_name": service_file.get("contains_approved_name") is True,
+            "error": _safe_result_text(service_file.get("error")),
+        }
+    return diagnostics
+
+
+def _normalize_transit_route_listen_attempts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    attempts: list[dict[str, Any]] = []
+    for item in value[:10]:
+        if not isinstance(item, dict):
+            continue
+        attempts.append(
+            {
+                "attempt": _safe_result_int(item.get("attempt")),
+                "service_active": _safe_result_text(item.get("service_active")),
+                "listener_detected": item.get("listener_detected") is True,
+            }
+        )
+    return attempts
+
+
+def _normalize_transit_route_listen_attempt(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "attempt": _safe_result_int(value.get("attempt")),
+        "service_active": _safe_result_text(value.get("service_active")),
+        "listener_detected": value.get("listener_detected") is True,
+    }
 
 
 def _normalize_transit_route_create_checks(value: Any) -> list[dict[str, Any]]:

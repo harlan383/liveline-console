@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.19-stage-3.3.73"
+const workerVersion = "0.1.20-stage-3.3.73"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -35,7 +35,7 @@ const resultPayloadSoftLimit = 64 * 1024
 const transitReadonlyCompactPayloadTarget = 1200
 const transitReadonlyCompactSummaryLimit = 160
 const transitReadonlyCompactCheckDetailLimit = 48
-const transitRouteCreateCompactPayloadTarget = 1100
+const transitRouteCreateCompactPayloadTarget = 1400
 const transitRouteCreateCompactSummaryLimit = 160
 const transitRouteCreateCompactCheckDetailLimit = 48
 const workerFailurePayloadTarget = 1100
@@ -472,7 +472,7 @@ func pollWorkerCommand(cfg config) error {
 	command := *response.Data.Command
 	result, err := executeWorkerCommand(cfg, command)
 	if err != nil {
-		if reportErr := postWorkerCommandFailure(cfg, command.ID, err, nil); reportErr != nil {
+		if reportErr := postWorkerCommandFailure(cfg, command, err, result); reportErr != nil {
 			return fmt.Errorf("command %s failed: %v; failure report failed: %w", command.ID, err, reportErr)
 		}
 		return fmt.Errorf("command %s failed: %w", command.ID, err)
@@ -480,7 +480,7 @@ func pollWorkerCommand(cfg config) error {
 	if err := postWorkerCommandResult(cfg, command, result); err != nil {
 		fallback := fallbackCommandResult(command, err)
 		fallbackErr := fmt.Errorf("result submit failed: %w", err)
-		if reportErr := postWorkerCommandFailure(cfg, command.ID, fallbackErr, fallback); reportErr != nil {
+		if reportErr := postWorkerCommandFailure(cfg, command, fallbackErr, fallback); reportErr != nil {
 			return fmt.Errorf("command %s result submit failed: %v; fallback failure report failed: %w", command.ID, err, reportErr)
 		}
 		return fmt.Errorf("command %s result submit failed and was marked failed with fallback: %w", command.ID, err)
@@ -692,26 +692,28 @@ func executeTransitRouteCreateReal(cfg config, hostname string, request transitR
 	}
 
 	artifacts := &transitRouteCreateArtifacts{}
-	rollbackOnError := func(err error) (map[string]any, error) {
+	failWithRollback := func(err error, listenAttempts []any) (map[string]any, error) {
+		diagnostics := collectApprovedTransitSocatDiagnostics()
 		rollbackTransitRouteCreate(artifacts)
-		return nil, err
+		return transitRouteCreateFailureResult(cfg, hostname, request, err, diagnostics, listenAttempts, true), err
 	}
 
 	if err := writeApprovedTransitSocatService(); err != nil {
-		return rollbackOnError(fmt.Errorf("transit_route_create failed to write systemd service: %w", err))
+		return failWithRollback(fmt.Errorf("transit_route_create failed to write systemd service: %w", err), nil)
 	}
 	artifacts.ServiceWritten = true
 	if _, err := runCommand(30*time.Second, "systemctl", "daemon-reload"); err != nil {
-		return rollbackOnError(fmt.Errorf("transit_route_create daemon-reload failed: %w", err))
+		return failWithRollback(fmt.Errorf("transit_route_create daemon-reload failed: %w", err), nil)
 	}
 	artifacts.DaemonReloaded = true
 	if _, err := runCommand(45*time.Second, "systemctl", "enable", "--now", approvedTransitSocatServiceName); err != nil {
-		return rollbackOnError(fmt.Errorf("transit_route_create enable/start failed: %w", err))
+		return failWithRollback(fmt.Errorf("transit_route_create enable/start failed: %w", err), nil)
 	}
 	artifacts.ServiceEnabled = true
 	artifacts.ServiceStarted = true
-	if err := verifyApprovedTransitSocatActiveAndListening(); err != nil {
-		return rollbackOnError(err)
+	listenAttempts, err := verifyApprovedTransitSocatActiveAndListening()
+	if err != nil {
+		return failWithRollback(err, listenAttempts)
 	}
 
 	return map[string]any{
@@ -742,6 +744,7 @@ func executeTransitRouteCreateReal(cfg config, hostname string, request transitR
 			map[string]any{"name": "listener_verified", "passed": true},
 			map[string]any{"name": "no_node_share_link_read_or_modified", "passed": true},
 		},
+		"listen_verification_attempts": listenAttempts,
 		"safety_boundary": []any{
 			"approved real create only",
 			"fixed socat template only",
@@ -887,18 +890,163 @@ func writeApprovedTransitSocatService() error {
 	return os.WriteFile(approvedTransitSocatServicePath, []byte(approvedTransitSocatServiceContent()), 0o644)
 }
 
-func verifyApprovedTransitSocatActiveAndListening() error {
-	output, err := runCommand(30*time.Second, "systemctl", "is-active", approvedTransitSocatServiceName)
+func verifyApprovedTransitSocatActiveAndListening() ([]any, error) {
+	attempts := []any{}
+	var lastActive string
+	var lastListener bool
+	var lastErr error
+	for index := 1; index <= 8; index++ {
+		output, err := runCommand(8*time.Second, "systemctl", "is-active", approvedTransitSocatServiceName)
+		active := strings.TrimSpace(output)
+		if active == "" && err != nil {
+			active = "unknown"
+		}
+		listener := portListening(approvedTransitListenPort)
+		attempts = append(attempts, map[string]any{
+			"attempt":           index,
+			"service_active":    active,
+			"listener_detected": listener,
+		})
+		fmt.Printf("transit_route_create listen_verification attempt=%d service_active=%s listener_detected=%v\n", index, active, listener)
+		lastActive = active
+		lastListener = listener
+		lastErr = err
+		if err == nil && active == "active" && listener {
+			return attempts, nil
+		}
+		if index < 8 {
+			time.Sleep(1 * time.Second)
+		}
+	}
+	if lastErr != nil {
+		return attempts, fmt.Errorf("transit_route_create service did not become verifiably active/listening: active=%s listener=%v error=%w", lastActive, lastListener, lastErr)
+	}
+	if lastActive != "active" {
+		return attempts, fmt.Errorf("%s is not active after retry: %s", approvedTransitSocatServiceName, lastActive)
+	}
+	return attempts, fmt.Errorf("approved TCP port %d is not listening after socat start retries", approvedTransitListenPort)
+}
+
+func transitRouteCreateFailureResult(cfg config, hostname string, request transitRouteCreateRequest, commandErr error, diagnostics map[string]any, listenAttempts []any, rollbackAttempted bool) map[string]any {
+	summary := "Approved socat transit route creation failed; rollback was attempted before reporting."
+	return map[string]any{
+		"command_type":                 "transit_route_create",
+		"status":                       "failed",
+		"execution_mode":               "real_create",
+		"real_execution":               true,
+		"summary":                      summary,
+		"redacted_error":               compactWorkerFailureMessage(commandErr),
+		"worker_version":               workerVersion,
+		"hostname":                     hostname,
+		"role":                         cfg.Role,
+		"interface_name":               cfg.InterfaceName,
+		"transit_resource_id":          request.TransitResourceID,
+		"landing_node_id":              request.LandingNodeID,
+		"planned_listen_port":          approvedTransitListenPort,
+		"landing_target_host":          approvedTransitLandingTargetHost,
+		"landing_target_port":          approvedTransitLandingTargetPort,
+		"forwarding_method":            approvedTransitForwardingMethod,
+		"purpose":                      request.Purpose,
+		"approval_stage":               request.ApprovalStage,
+		"route_name":                   approvedTransitRouteName,
+		"service_name":                 approvedTransitSocatServiceName,
+		"service_path":                 approvedTransitSocatServicePath,
+		"diagnostics":                  diagnostics,
+		"listen_verification_attempts": listenAttempts,
+		"rollback_attempted":           rollbackAttempted,
+		"checks": []any{
+			map[string]any{"name": "approved_parameters_match", "passed": true},
+			map[string]any{"name": "fixed_socat_template_only", "passed": true},
+			map[string]any{"name": "listener_verified", "passed": false, "detail": "23843 was not confirmed listening before rollback"},
+			map[string]any{"name": "rollback_attempted", "passed": rollbackAttempted},
+			map[string]any{"name": "no_node_share_link_read_or_modified", "passed": true},
+		},
+		"safety_boundary": []any{
+			"approved real create only",
+			"fixed socat template only",
+			"no firewall mutation",
+			"no Xray mutation",
+			"no nodes.share_link read or modification",
+			"no full client link export",
+			"no cutover",
+		},
+	}
+}
+
+func collectApprovedTransitSocatDiagnostics() map[string]any {
+	diagnostics := map[string]any{}
+	if output, err := runCommand(8*time.Second, "systemctl", "is-active", approvedTransitSocatServiceName); err != nil {
+		diagnostics["systemctl_is_active"] = compactDiagnosticOutput(output, err)
+	} else {
+		diagnostics["systemctl_is_active"] = compactDiagnosticOutput(output, nil)
+	}
+	if output, err := runCommand(12*time.Second, "systemctl", "status", "--no-pager", "-l", approvedTransitSocatServiceName); err != nil {
+		diagnostics["systemctl_status"] = compactDiagnosticOutput(output, err)
+	} else {
+		diagnostics["systemctl_status"] = compactDiagnosticOutput(output, nil)
+	}
+	if output, err := runCommand(12*time.Second, "journalctl", "-u", approvedTransitSocatServiceName, "-n", "80", "--no-pager"); err != nil {
+		diagnostics["journal"] = compactDiagnosticOutput(output, err)
+	} else {
+		diagnostics["journal"] = compactDiagnosticOutput(output, nil)
+	}
+	if output, err := runCommand(8*time.Second, "ss", "-lntp"); err != nil {
+		diagnostics["listen_socket"] = compactDiagnosticOutput(filterApprovedTransitListenSocket(output), err)
+	} else {
+		diagnostics["listen_socket"] = compactDiagnosticOutput(filterApprovedTransitListenSocket(output), nil)
+	}
+	diagnostics["service_file"] = approvedTransitSocatServiceFileSummary()
+	return diagnostics
+}
+
+func filterApprovedTransitListenSocket(output string) string {
+	lines := []string{}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, ":23843 ") || strings.Contains(line, ":23843\t") {
+			lines = append(lines, strings.TrimSpace(line))
+		}
+	}
+	if len(lines) == 0 {
+		return "no listener line for :23843"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func compactDiagnosticOutput(output string, err error) map[string]any {
+	status := "ok"
 	if err != nil {
-		return err
+		status = "error"
 	}
-	if strings.TrimSpace(output) != "active" {
-		return fmt.Errorf("%s is not active", approvedTransitSocatServiceName)
+	return map[string]any{
+		"status": status,
+		"detail": truncateCompactString(strings.TrimSpace(output), 360),
+		"error":  truncateCompactString(errorString(err), 180),
 	}
-	if !portListening(approvedTransitListenPort) {
-		return fmt.Errorf("approved TCP port %d is not listening after socat start", approvedTransitListenPort)
+}
+
+func approvedTransitSocatServiceFileSummary() map[string]any {
+	content, err := os.ReadFile(approvedTransitSocatServicePath)
+	if err != nil {
+		return map[string]any{
+			"exists": false,
+			"error":  truncateCompactString(err.Error(), 180),
+		}
 	}
-	return nil
+	text := string(content)
+	expectedExec := fmt.Sprintf("ExecStart=/usr/bin/socat TCP-LISTEN:%d,fork,reuseaddr TCP:%s:%d", approvedTransitListenPort, approvedTransitLandingTargetHost, approvedTransitLandingTargetPort)
+	return map[string]any{
+		"exists":                 true,
+		"size_bytes":             len(content),
+		"contains_fixed_exec":    strings.Contains(text, expectedExec),
+		"contains_approved_name": strings.Contains(text, "LiveLine approved socat transit route 23843"),
+	}
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func rollbackTransitRouteCreate(artifacts *transitRouteCreateArtifacts) {
@@ -1910,14 +2058,17 @@ func postWorkerCommandResult(cfg config, command workerCommand, result map[strin
 	return nil
 }
 
-func postWorkerCommandFailure(cfg config, commandID string, commandErr error, result map[string]any) error {
+func postWorkerCommandFailure(cfg config, command workerCommand, commandErr error, result map[string]any) error {
 	headers := map[string]string{
 		"X-Worker-Id":     cfg.WorkerID,
 		"X-Worker-Secret": cfg.WorkerSecret,
 	}
 	var response apiResponse[map[string]any]
-	commandType := commandTypeFromFailureResult(result)
+	commandType := commandTypeForFailure(command, result)
 	submitResult := prepareFailureResultForSubmit(commandType, result, commandErr)
+	if submitResult == nil && commandType != "" {
+		submitResult = minimalFailureCommandResult(commandType, commandErr)
+	}
 	payload := commandFailurePayload{
 		ErrorMessage: compactWorkerFailureMessage(commandErr),
 		Result:       submitResult,
@@ -1926,8 +2077,8 @@ func postWorkerCommandFailure(cfg config, commandID string, commandErr error, re
 		payload.ErrorMessage = truncateCompactString(compactWorkerFailureMessage(commandErr), 160)
 		payload.Result = minimalFailureCommandResult(commandType, commandErr)
 	}
-	endpointURL := joinURL(cfg.ConsoleURL, "/api/workers/commands/"+commandID+"/fail")
-	traceWorkerCommandFailureSubmit(commandID, endpointURL, headers, payload)
+	endpointURL := joinURL(cfg.ConsoleURL, "/api/workers/commands/"+command.ID+"/fail")
+	traceWorkerCommandFailureSubmit(command.ID, endpointURL, headers, payload)
 	if err := postJSONWithCurlFallback(endpointURL, headers, payload, &response); err != nil {
 		return err
 	}
@@ -2158,6 +2309,9 @@ func failedTransitReadonlyCheckNames(value any) []any {
 
 func compactTransitRouteCreateResult(result map[string]any, includeDetails bool) map[string]any {
 	compacted := compactTransitRouteCreateResultBase(result)
+	if isRealCreateFailedResult(compacted) {
+		return compacted
+	}
 	if includeDetails {
 		compacted["checks"] = compactTransitRouteCreateChecks(result["checks"], true)
 	} else {
@@ -2168,7 +2322,9 @@ func compactTransitRouteCreateResult(result map[string]any, includeDetails bool)
 
 func compactTransitRouteCreateResultMinimal(result map[string]any) map[string]any {
 	compacted := compactTransitRouteCreateResultBase(result)
-	compacted["failed_check_names"] = failedTransitReadonlyCheckNames(result["checks"])
+	if !isRealCreateFailedResult(compacted) {
+		compacted["failed_check_names"] = failedTransitReadonlyCheckNames(result["checks"])
+	}
 	return compacted
 }
 
@@ -2185,6 +2341,9 @@ func compactTransitRouteCreateResultBase(result map[string]any) map[string]any {
 	if executionMode == "" {
 		executionMode = "dry_run"
 	}
+	if executionMode == "real_create" && status == "failed" {
+		summary = truncateCompactString(summary, 96)
+	}
 	safetyBoundary := []any{
 		"dry_run_only",
 		"no_listener_binding",
@@ -2196,34 +2355,138 @@ func compactTransitRouteCreateResultBase(result map[string]any) map[string]any {
 		safetyBoundary = []any{
 			"approved_real_create_only",
 			"fixed_socat_template_only",
-			"no_firewall_mutation",
-			"no_xray_mutation",
 			"no_nodes_share_link_change",
 			"no_cutover",
 		}
 	}
 	compacted := map[string]any{
-		"execution_mode":        executionMode,
-		"real_execution":        boolResultValue(result["real_execution"]),
-		"status":                status,
-		"summary":               summary,
-		"worker_version":        workerVersion,
-		"hostname":              truncateCompactString(stringResultValue(result["hostname"]), 80),
-		"role":                  truncateCompactString(stringResultValue(result["role"]), 32),
-		"interface_name":        truncateCompactString(stringResultValue(result["interface_name"]), 32),
-		"planned_listen_port":   intResultValue(result["planned_listen_port"]),
-		"landing_target_host":   truncateCompactString(stringResultValue(result["landing_target_host"]), 80),
-		"landing_target_port":   intResultValue(result["landing_target_port"]),
-		"forwarding_method":     truncateCompactString(stringResultValue(result["forwarding_method"]), 16),
-		"route_name":            truncateCompactString(stringResultValue(result["route_name"]), 120),
-		"planned_service_name":  truncateCompactString(plannedServiceField(result["planned_service"], "name"), 120),
-		"service_name":          truncateCompactString(stringResultValue(result["service_name"]), 120),
-		"service_path":          truncateCompactString(stringResultValue(result["service_path"]), 160),
-		"checks_count":          checksCount(result["checks"]),
-		"planned_actions_count": listCount(result["planned_actions"]),
-		"safety_boundary":       safetyBoundary,
+		"execution_mode":      executionMode,
+		"real_execution":      boolResultValue(result["real_execution"]),
+		"status":              status,
+		"summary":             summary,
+		"worker_version":      workerVersion,
+		"hostname":            truncateCompactString(stringResultValue(result["hostname"]), 80),
+		"role":                truncateCompactString(stringResultValue(result["role"]), 32),
+		"interface_name":      truncateCompactString(stringResultValue(result["interface_name"]), 32),
+		"planned_listen_port": intResultValue(result["planned_listen_port"]),
+		"landing_target_host": truncateCompactString(stringResultValue(result["landing_target_host"]), 80),
+		"landing_target_port": intResultValue(result["landing_target_port"]),
+		"forwarding_method":   truncateCompactString(stringResultValue(result["forwarding_method"]), 16),
+		"route_name":          truncateCompactString(stringResultValue(result["route_name"]), 120),
+		"safety_boundary":     safetyBoundary,
+	}
+	if executionMode != "real_create" || status != "failed" {
+		compacted["checks_count"] = checksCount(result["checks"])
+	}
+	if redactedError := truncateCompactString(stringResultValue(result["redacted_error"]), 120); redactedError != "" {
+		compacted["redacted_error"] = redactedError
+	}
+	if plannedServiceName := truncateCompactString(plannedServiceField(result["planned_service"], "name"), 80); plannedServiceName != "" && executionMode != "real_create" {
+		compacted["planned_service_name"] = plannedServiceName
+	}
+	if serviceName := truncateCompactString(stringResultValue(result["service_name"]), 80); serviceName != "" {
+		compacted["service_name"] = serviceName
+	}
+	if servicePath := truncateCompactString(stringResultValue(result["service_path"]), 120); servicePath != "" {
+		compacted["service_path"] = servicePath
+	}
+	if plannedActionsCount := listCount(result["planned_actions"]); plannedActionsCount > 0 && executionMode != "real_create" {
+		compacted["planned_actions_count"] = plannedActionsCount
+	}
+	if listenAttemptsCount := listCount(result["listen_verification_attempts"]); listenAttemptsCount > 0 {
+		compacted["listen_attempts_count"] = listenAttemptsCount
+	}
+	if rollbackAttempted := boolResultValue(result["rollback_attempted"]); rollbackAttempted {
+		compacted["rollback_attempted"] = rollbackAttempted
+	}
+	if executionMode == "real_create" && status == "failed" {
+		compacted["diagnostics"] = compactTransitRouteCreateDiagnostics(result["diagnostics"])
+		if lastAttempt := compactTransitRouteLastListenAttempt(result["listen_verification_attempts"]); len(lastAttempt) > 0 {
+			compacted["last_listen_attempt"] = lastAttempt
+		}
 	}
 	return compacted
+}
+
+func isRealCreateFailedResult(result map[string]any) bool {
+	return stringResultValue(result["execution_mode"]) == "real_create" && stringResultValue(result["status"]) == "failed"
+}
+
+func compactTransitRouteCreateDiagnostics(value any) map[string]any {
+	source, ok := value.(map[string]any)
+	if !ok || source == nil {
+		return map[string]any{}
+	}
+	compact := map[string]any{}
+	for _, key := range []string{"systemctl_is_active", "systemctl_status", "journal", "listen_socket"} {
+		if item, ok := source[key].(map[string]any); ok {
+			entry := map[string]any{
+				"status": truncateCompactString(stringResultValue(item["status"]), 24),
+			}
+			if detail := truncateCompactString(stringResultValue(item["detail"]), 48); detail != "" {
+				entry["detail"] = detail
+			}
+			if itemErr := truncateCompactString(stringResultValue(item["error"]), 60); itemErr != "" {
+				entry["error"] = itemErr
+			}
+			compact[key] = entry
+		}
+	}
+	if item, ok := source["service_file"].(map[string]any); ok {
+		serviceFile := map[string]any{
+			"exists":                 boolResultValue(item["exists"]),
+			"size_bytes":             intResultValue(item["size_bytes"]),
+			"contains_fixed_exec":    boolResultValue(item["contains_fixed_exec"]),
+			"contains_approved_name": boolResultValue(item["contains_approved_name"]),
+		}
+		if itemErr := truncateCompactString(stringResultValue(item["error"]), 60); itemErr != "" {
+			serviceFile["error"] = itemErr
+		}
+		compact["service_file"] = serviceFile
+	}
+	return compact
+}
+
+func compactTransitRouteLastListenAttempt(value any) map[string]any {
+	items, ok := value.([]any)
+	if !ok {
+		return map[string]any{}
+	}
+	for index := len(items) - 1; index >= 0; index-- {
+		attempt, ok := items[index].(map[string]any)
+		if !ok {
+			continue
+		}
+		return map[string]any{
+			"attempt":           intResultValue(attempt["attempt"]),
+			"service_active":    truncateCompactString(stringResultValue(attempt["service_active"]), 24),
+			"listener_detected": boolResultValue(attempt["listener_detected"]),
+		}
+	}
+	return map[string]any{}
+}
+
+func compactTransitRouteListenAttempts(value any) []any {
+	attempts := []any{}
+	items, ok := value.([]any)
+	if !ok {
+		return attempts
+	}
+	for _, item := range items {
+		attempt, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		attempts = append(attempts, map[string]any{
+			"attempt":           intResultValue(attempt["attempt"]),
+			"service_active":    truncateCompactString(stringResultValue(attempt["service_active"]), 24),
+			"listener_detected": boolResultValue(attempt["listener_detected"]),
+		})
+		if len(attempts) >= 8 {
+			break
+		}
+	}
+	return attempts
 }
 
 func compactTransitRouteCreateChecks(value any, includeDetails bool) []any {
@@ -2326,6 +2589,13 @@ func commandTypeFromFailureResult(result map[string]any) string {
 		return ""
 	}
 	return stringResultValue(result["command_type"])
+}
+
+func commandTypeForFailure(command workerCommand, result map[string]any) string {
+	if commandType := commandTypeFromFailureResult(result); commandType != "" {
+		return commandType
+	}
+	return command.CommandType
 }
 
 func prepareFailureResultForSubmit(commandType string, result map[string]any, commandErr error) map[string]any {

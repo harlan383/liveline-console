@@ -478,6 +478,53 @@ func TestPrepareFailureResultForSubmitCompactsTransitRouteCreatePayload(t *testi
 	}
 }
 
+func TestPrepareTransitRouteCreateRealFailurePayloadPreservesDiagnostics(t *testing.T) {
+	result := largeTransitRouteCreateRealFailedResult()
+	submitResult, info := prepareCommandResultForSubmit("transit_route_create", sanitizeCommandResult("transit_route_create", result))
+	submitPayloadSize := payloadSize(commandResultPayload{Result: submitResult})
+	if submitPayloadSize > transitRouteCreateCompactPayloadTarget {
+		t.Fatalf("real failure compact submit payload size = %d, want <= %d; payload=%#v", submitPayloadSize, transitRouteCreateCompactPayloadTarget, submitResult)
+	}
+	if !info.CompactApplied {
+		t.Fatal("CompactApplied = false, want true for real-create failed result")
+	}
+	if stringResultValue(submitResult["execution_mode"]) != "real_create" {
+		t.Fatalf("execution_mode = %#v, want real_create", submitResult["execution_mode"])
+	}
+	if !boolResultValue(submitResult["real_execution"]) {
+		t.Fatalf("real_execution = %#v, want true", submitResult["real_execution"])
+	}
+	if stringResultValue(submitResult["status"]) != "failed" {
+		t.Fatalf("status = %#v, want failed", submitResult["status"])
+	}
+	if !boolResultValue(submitResult["rollback_attempted"]) {
+		t.Fatalf("rollback_attempted = %#v, want true", submitResult["rollback_attempted"])
+	}
+	diagnostics, ok := submitResult["diagnostics"].(map[string]any)
+	if !ok {
+		t.Fatalf("diagnostics missing: %#v", submitResult)
+	}
+	if _, ok := diagnostics["journal"]; !ok {
+		t.Fatalf("journal diagnostics missing: %#v", diagnostics)
+	}
+	lastAttempt, ok := submitResult["last_listen_attempt"].(map[string]any)
+	if !ok || intResultValue(lastAttempt["attempt"]) == 0 {
+		t.Fatalf("last listen attempt missing: %#v", submitResult)
+	}
+}
+
+func TestCommandTypeForFailureFallsBackToCommandWhenResultOmitsIt(t *testing.T) {
+	command := workerCommand{ID: "route-command", CommandType: "transit_route_create"}
+	result := largeTransitRouteCreateRealFailedResult()
+	delete(result, "command_type")
+	if got := commandTypeForFailure(command, result); got != "transit_route_create" {
+		t.Fatalf("commandTypeForFailure = %q, want transit_route_create", got)
+	}
+	if got := commandTypeForFailure(command, map[string]any{"command_type": "ping"}); got != "ping" {
+		t.Fatalf("commandTypeForFailure = %q, want ping", got)
+	}
+}
+
 func TestPrepareCommandResultForSubmitLeavesNonTransitUntouched(t *testing.T) {
 	sanitized := map[string]any{"summary": "ok", "checks": []any{map[string]any{"detail": strings.Repeat("x", 200)}}}
 	submitResult, info := prepareCommandResultForSubmit("ping", sanitized)
@@ -1261,4 +1308,42 @@ func largeTransitRouteCreateDryRunResult() map[string]any {
 			"no cutover",
 		},
 	}
+}
+
+func largeTransitRouteCreateRealFailedResult() map[string]any {
+	result := largeTransitRouteCreateDryRunResult()
+	result["command_type"] = "transit_route_create"
+	result["status"] = "failed"
+	result["execution_mode"] = "real_create"
+	result["real_execution"] = true
+	result["summary"] = strings.Repeat("Approved socat transit route creation failed after listener verification. ", 8)
+	result["redacted_error"] = "approved TCP port 23843 is not listening after socat start retries"
+	result["approval_stage"] = approvedTransitRealCreateStage
+	result["service_name"] = approvedTransitSocatServiceName
+	result["service_path"] = approvedTransitSocatServicePath
+	result["rollback_attempted"] = true
+	result["listen_verification_attempts"] = []any{
+		map[string]any{"attempt": 1, "service_active": "activating", "listener_detected": false},
+		map[string]any{"attempt": 2, "service_active": "active", "listener_detected": false},
+		map[string]any{"attempt": 3, "service_active": "active", "listener_detected": false},
+	}
+	result["diagnostics"] = map[string]any{
+		"systemctl_is_active": map[string]any{"status": "ok", "detail": "active", "error": ""},
+		"systemctl_status":    map[string]any{"status": "ok", "detail": strings.Repeat("status output ", 80), "error": ""},
+		"journal":             map[string]any{"status": "ok", "detail": strings.Repeat("journal output ", 80), "error": ""},
+		"listen_socket":       map[string]any{"status": "ok", "detail": "no listener line for :23843", "error": ""},
+		"service_file": map[string]any{
+			"exists":                 true,
+			"size_bytes":             280,
+			"contains_fixed_exec":    true,
+			"contains_approved_name": true,
+		},
+	}
+	result["checks"] = []any{
+		map[string]any{"name": "approved_parameters_match", "passed": true},
+		map[string]any{"name": "fixed_socat_template_only", "passed": true},
+		map[string]any{"name": "listener_verified", "passed": false, "detail": "23843 was not confirmed listening before rollback"},
+		map[string]any{"name": "rollback_attempted", "passed": true},
+	}
+	return result
 }

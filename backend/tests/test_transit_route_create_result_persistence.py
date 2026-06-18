@@ -63,7 +63,7 @@ def successful_result() -> dict:
         "real_execution": True,
         "status": "succeeded",
         "summary": "Approved socat transit route created.",
-        "worker_version": "0.1.19-stage-3.3.73",
+        "worker_version": "0.1.20-stage-3.3.73",
         "hostname": "WEPC202605221223335",
         "role": "transit",
         "interface_name": "eth0",

@@ -2568,6 +2568,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.72a Legacy SSH/RQ flow removal | Old SSH private-key / Redis temp credential / RQ operation paths removed from active code; Worker command model remains the supported remote path |
 | Stage 3.3.72d Worker result large POST timeout hotfix | `transit_route_create` Worker dry-run result/fail payloads are compacted to avoid large POST timeout/EOF; no real route creation or cutover |
 | Stage 3.3.73d Transit route real create code path | Controlled Worker/API real-create path added for the approved Hong Kong socat 23843 route; no command triggered, no route created, no cutover |
+| Stage 3.3.73f Transit route real create listen verification hotfix | Worker real-create verification now retries service/listener checks and reports compact diagnostics before rollback; no command triggered, no route created, no cutover |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
