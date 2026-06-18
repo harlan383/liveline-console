@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.15-stage-3.3.68"
+const workerVersion = "0.1.16-stage-3.3.68"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -32,6 +32,9 @@ const commandOutputLimit = 12000
 const resultStringLimit = 1000
 const resultListLimit = 50
 const resultPayloadSoftLimit = 64 * 1024
+const transitReadonlyCompactPayloadTarget = 1200
+const transitReadonlyCompactSummaryLimit = 160
+const transitReadonlyCompactCheckDetailLimit = 48
 const responseBodyLogLimit = 1200
 const postJSONTimeout = 15 * time.Second
 const commandTimeout = 180 * time.Second
@@ -132,6 +135,15 @@ type commandResultPayload struct {
 type commandFailurePayload struct {
 	ErrorMessage string         `json:"error_message"`
 	Result       map[string]any `json:"result,omitempty"`
+}
+
+type compactResultInfo struct {
+	OriginalSubmitPayloadSize int
+	CompactSubmitPayloadSize  int
+	CompactApplied            bool
+	ChecksCount               int
+	MaxDetailLength           int
+	DetailsRemoved            bool
 }
 
 func main() {
@@ -1449,13 +1461,17 @@ func postWorkerCommandResult(cfg config, command workerCommand, result map[strin
 	}
 	var response apiResponse[map[string]any]
 	sanitized := sanitizeCommandResult(command.CommandType, result)
-	payload := commandResultPayload{Result: sanitized}
+	submitResult, compactInfo := prepareCommandResultForSubmit(command.CommandType, sanitized)
+	payload := commandResultPayload{Result: submitResult}
 	summary := buildResultSubmitDebugSummary(command.CommandType, result)
 	fallbackWouldBeTriggered := payloadSize(payload) > resultPayloadSoftLimit
 	if fallbackWouldBeTriggered {
 		payload.Result = fallbackCommandResult(command, fmt.Errorf("sanitized result payload exceeded %d bytes", resultPayloadSoftLimit))
 	}
 	endpointURL := joinURL(cfg.ConsoleURL, "/api/workers/commands/"+command.ID+"/result")
+	if command.CommandType == "transit_readonly_preflight" {
+		traceTransitReadonlyCompactResult(command, endpointURL, compactInfo)
+	}
 	traceWorkerCommandResultSubmit(command, endpointURL, headers, summary, payloadSize(payload), fallbackWouldBeTriggered)
 	if err := postJSONWithCurlFallback(endpointURL, headers, payload, &response); err != nil {
 		return err
@@ -1551,6 +1567,145 @@ func sanitizeTransitReadonlyPreflightResult(result map[string]any) map[string]an
 		)
 	}
 	return sanitized
+}
+
+func prepareCommandResultForSubmit(commandType string, sanitized map[string]any) (map[string]any, compactResultInfo) {
+	originalSize := payloadSize(commandResultPayload{Result: sanitized})
+	info := compactResultInfo{
+		OriginalSubmitPayloadSize: originalSize,
+		CompactSubmitPayloadSize:  originalSize,
+		CompactApplied:            false,
+		ChecksCount:               checksCount(sanitized["checks"]),
+		MaxDetailLength:           maxCheckDetailLength(sanitized["checks"]),
+	}
+	if commandType != "transit_readonly_preflight" {
+		return sanitized, info
+	}
+	compacted := compactTransitReadonlyPreflightResult(sanitized, true)
+	compactSize := payloadSize(commandResultPayload{Result: compacted})
+	if compactSize > transitReadonlyCompactPayloadTarget {
+		compacted = compactTransitReadonlyPreflightResult(sanitized, false)
+		info.DetailsRemoved = true
+		compactSize = payloadSize(commandResultPayload{Result: compacted})
+	}
+	info.CompactSubmitPayloadSize = compactSize
+	info.CompactApplied = true
+	info.ChecksCount = intResultValue(compacted["checks_count"])
+	info.MaxDetailLength = maxCheckDetailLength(compacted["checks"])
+	return compacted, info
+}
+
+func compactTransitReadonlyPreflightResult(result map[string]any, includeDetails bool) map[string]any {
+	checksCountValue := checksCount(result["checks"])
+	compacted := map[string]any{
+		"passed":              boolResultValue(result["passed"]),
+		"status":              truncateCompactString(stringResultValue(result["status"]), 48),
+		"summary":             truncateCompactString(stringResultValue(result["summary"]), transitReadonlyCompactSummaryLimit),
+		"worker_version":      workerVersion,
+		"hostname":            truncateCompactString(stringResultValue(result["hostname"]), 80),
+		"role":                truncateCompactString(stringResultValue(result["role"]), 32),
+		"interface_name":      truncateCompactString(stringResultValue(result["interface_name"]), 32),
+		"planned_listen_port": intResultValue(result["planned_listen_port"]),
+		"landing_target_port": intResultValue(result["landing_target_port"]),
+		"forwarding_method":   truncateCompactString(stringResultValue(result["forwarding_method"]), 16),
+		"checks_count":        checksCountValue,
+		"redacted_summary":    truncateCompactString(stringResultValue(result["redacted_summary"]), transitReadonlyCompactSummaryLimit),
+		"safety_boundary": []any{
+			"readonly_only",
+			"no_listener_binding",
+			"no_firewall_mutation",
+			"no_xray_mutation",
+			"no_cutover",
+		},
+	}
+	if compacted["status"] == "" {
+		if boolResultValue(compacted["passed"]) {
+			compacted["status"] = "passed"
+		} else {
+			compacted["status"] = "blocked"
+		}
+	}
+	if compacted["summary"] == "" {
+		compacted["summary"] = "Transit readonly preflight compact result."
+	}
+	if compacted["redacted_summary"] == "" {
+		compacted["redacted_summary"] = fmt.Sprintf(
+			"transit_readonly_preflight status=%s planned_listen_port=%v landing_target_port=%v method=%s",
+			compacted["status"],
+			compacted["planned_listen_port"],
+			compacted["landing_target_port"],
+			compacted["forwarding_method"],
+		)
+	}
+	if includeDetails {
+		compacted["checks"] = compactTransitReadonlyChecks(result["checks"], true)
+	} else {
+		compacted["failed_check_names"] = failedTransitReadonlyCheckNames(result["checks"])
+	}
+	return compacted
+}
+
+func compactTransitReadonlyChecks(value any, includeDetails bool) []any {
+	checks := []any{}
+	appendCheck := func(check map[string]any) {
+		name := stringResultValue(check["label"])
+		if name == "" {
+			name = stringResultValue(check["id"])
+		}
+		compacted := map[string]any{
+			"name":   truncateCompactString(name, 80),
+			"passed": boolResultValue(check["passed"]),
+		}
+		if includeDetails {
+			detail := truncateCompactString(stringResultValue(check["detail"]), transitReadonlyCompactCheckDetailLimit)
+			if detail != "" {
+				compacted["detail"] = detail
+			}
+		}
+		checks = append(checks, compacted)
+	}
+	switch typed := value.(type) {
+	case []map[string]any:
+		for _, check := range typed {
+			appendCheck(check)
+		}
+	case []any:
+		for _, item := range typed {
+			if check, ok := item.(map[string]any); ok {
+				appendCheck(check)
+			}
+		}
+	}
+	return checks
+}
+
+func failedTransitReadonlyCheckNames(value any) []any {
+	names := []any{}
+	appendFailed := func(check map[string]any) {
+		if boolResultValue(check["passed"]) {
+			return
+		}
+		name := stringResultValue(check["label"])
+		if name == "" {
+			name = stringResultValue(check["id"])
+		}
+		if name != "" {
+			names = append(names, truncateCompactString(name, 80))
+		}
+	}
+	switch typed := value.(type) {
+	case []map[string]any:
+		for _, check := range typed {
+			appendFailed(check)
+		}
+	case []any:
+		for _, item := range typed {
+			if check, ok := item.(map[string]any); ok {
+				appendFailed(check)
+			}
+		}
+	}
+	return names
 }
 
 func sanitizeTransitReadonlyPreflightCheck(check map[string]any) map[string]any {
@@ -1704,6 +1859,20 @@ func truncateResultString(value string, limit int) string {
 		return value
 	}
 	return value[:limit] + "...[truncated]"
+}
+
+func truncateCompactString(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	if limit <= 0 {
+		return ""
+	}
+	suffix := "..."
+	if limit <= len(suffix) {
+		return value[:limit]
+	}
+	return value[:limit-len(suffix)] + suffix
 }
 
 func payloadSize(payload any) int {
@@ -2108,6 +2277,21 @@ func traceWorkerCommandResultSubmit(command workerCommand, endpointURL string, h
 	)
 }
 
+func traceTransitReadonlyCompactResult(command workerCommand, endpointURL string, info compactResultInfo) {
+	traceLog(
+		"worker_command_result_compact command_id=%s command_type=%s endpoint=result original_submit_payload_size=%d compact_submit_payload_size=%d compact_applied=%v checks_count=%d max_detail_length=%d details_removed=%v endpoint=%s",
+		command.ID,
+		command.CommandType,
+		info.OriginalSubmitPayloadSize,
+		info.CompactSubmitPayloadSize,
+		info.CompactApplied,
+		info.ChecksCount,
+		info.MaxDetailLength,
+		info.DetailsRemoved,
+		safeEndpointLabel(endpointURL),
+	)
+}
+
 func traceWorkerCommandFailureSubmit(commandID string, endpointURL string, headers map[string]string, payload commandFailurePayload) {
 	resultPresent := payload.Result != nil
 	resultKeys := []string{}
@@ -2201,6 +2385,28 @@ func checksCount(value any) int {
 	default:
 		return 0
 	}
+}
+
+func maxCheckDetailLength(value any) int {
+	maxLength := 0
+	checkLength := func(check map[string]any) {
+		if length := len(stringResultValue(check["detail"])); length > maxLength {
+			maxLength = length
+		}
+	}
+	switch typed := value.(type) {
+	case []map[string]any:
+		for _, check := range typed {
+			checkLength(check)
+		}
+	case []any:
+		for _, item := range typed {
+			if check, ok := item.(map[string]any); ok {
+				checkLength(check)
+			}
+		}
+	}
+	return maxLength
 }
 
 func summarizeResultChecks(value any) []resultCheckDebugSummary {

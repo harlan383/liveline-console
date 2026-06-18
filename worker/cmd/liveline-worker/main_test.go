@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -283,6 +284,139 @@ func TestBuildResultSubmitDebugSummaryNonJSONFriendlyTypes(t *testing.T) {
 	}
 	if summary.SubmitPayloadSize <= 0 {
 		t.Fatalf("SubmitPayloadSize = %d, want positive sanitized payload size", summary.SubmitPayloadSize)
+	}
+}
+
+func TestPrepareTransitReadonlyPreflightCompactPayloadUnderTarget(t *testing.T) {
+	result := largeTransitReadonlyPreflightResult()
+	sanitized := sanitizeCommandResult("transit_readonly_preflight", result)
+
+	submitResult, info := prepareCommandResultForSubmit("transit_readonly_preflight", sanitized)
+	submitPayloadSize := payloadSize(commandResultPayload{Result: submitResult})
+	if submitPayloadSize > transitReadonlyCompactPayloadTarget {
+		t.Fatalf("compact submit payload size = %d, want <= %d; payload=%#v", submitPayloadSize, transitReadonlyCompactPayloadTarget, submitResult)
+	}
+	if !info.CompactApplied {
+		t.Fatal("CompactApplied = false, want true")
+	}
+	if info.OriginalSubmitPayloadSize <= info.CompactSubmitPayloadSize {
+		t.Fatalf("compact did not shrink payload: original=%d compact=%d", info.OriginalSubmitPayloadSize, info.CompactSubmitPayloadSize)
+	}
+	if intResultValue(submitResult["checks_count"]) != 6 {
+		t.Fatalf("checks_count = %#v, want 6", submitResult["checks_count"])
+	}
+	for _, key := range []string{"passed", "status", "summary", "checks_count", "worker_version", "planned_listen_port", "landing_target_port", "forwarding_method"} {
+		if _, ok := submitResult[key]; !ok {
+			t.Fatalf("compact payload missing key %q: %#v", key, submitResult)
+		}
+	}
+	if stringResultValue(submitResult["worker_version"]) != workerVersion {
+		t.Fatalf("worker_version = %#v, want %q", submitResult["worker_version"], workerVersion)
+	}
+	if intResultValue(submitResult["planned_listen_port"]) != 23843 {
+		t.Fatalf("planned_listen_port = %#v, want 23843", submitResult["planned_listen_port"])
+	}
+	if intResultValue(submitResult["landing_target_port"]) != 27939 {
+		t.Fatalf("landing_target_port = %#v, want 27939", submitResult["landing_target_port"])
+	}
+	if len(stringResultValue(submitResult["summary"])) > transitReadonlyCompactSummaryLimit {
+		t.Fatalf("summary length = %d, want <= %d", len(stringResultValue(submitResult["summary"])), transitReadonlyCompactSummaryLimit)
+	}
+	if checks, ok := submitResult["checks"].([]any); ok {
+		for _, item := range checks {
+			check := item.(map[string]any)
+			if _, exists := check["status"]; exists {
+				t.Fatalf("compact check retained status: %#v", check)
+			}
+			if _, exists := check["id"]; exists {
+				t.Fatalf("compact check retained id: %#v", check)
+			}
+			if detail := stringResultValue(check["detail"]); len(detail) > transitReadonlyCompactCheckDetailLimit+len("...[truncated]") {
+				t.Fatalf("compact detail length = %d, want truncated detail: %#v", len(detail), check)
+			}
+		}
+	} else if _, ok := submitResult["failed_check_names"]; !ok {
+		t.Fatalf("compact payload has neither checks nor failed_check_names: %#v", submitResult)
+	}
+}
+
+func TestPrepareTransitReadonlyPreflightCompactPayloadDropsDetailsWhenNeeded(t *testing.T) {
+	result := largeTransitReadonlyPreflightResult()
+	checks := result["checks"].([]any)
+	for index := range checks {
+		check := checks[index].(map[string]any)
+		check["label"] = strings.Repeat("check-name-", 20) + string(rune('a'+index))
+		check["detail"] = strings.Repeat("detail-", 500)
+		check["passed"] = index%2 == 0
+	}
+	sanitized := sanitizeCommandResult("transit_readonly_preflight", result)
+
+	submitResult, info := prepareCommandResultForSubmit("transit_readonly_preflight", sanitized)
+	submitPayloadSize := payloadSize(commandResultPayload{Result: submitResult})
+	if submitPayloadSize > transitReadonlyCompactPayloadTarget {
+		t.Fatalf("detail-free compact submit payload size = %d, want <= %d; payload=%#v", submitPayloadSize, transitReadonlyCompactPayloadTarget, submitResult)
+	}
+	if !info.DetailsRemoved {
+		t.Fatalf("DetailsRemoved = false, want true for oversized detail payload; info=%#v", info)
+	}
+	if _, ok := submitResult["checks"]; ok {
+		t.Fatalf("detail-free compact payload should remove checks: %#v", submitResult)
+	}
+	failedNames, ok := submitResult["failed_check_names"].([]any)
+	if !ok || len(failedNames) == 0 {
+		t.Fatalf("failed_check_names missing: %#v", submitResult)
+	}
+}
+
+func TestPrepareCommandResultForSubmitLeavesNonTransitUntouched(t *testing.T) {
+	sanitized := map[string]any{"summary": "ok", "checks": []any{map[string]any{"detail": strings.Repeat("x", 200)}}}
+	submitResult, info := prepareCommandResultForSubmit("ping", sanitized)
+	if info.CompactApplied {
+		t.Fatal("CompactApplied = true for non-transit command")
+	}
+	if payloadSize(commandResultPayload{Result: submitResult}) != payloadSize(commandResultPayload{Result: sanitized}) {
+		t.Fatalf("non-transit payload size changed")
+	}
+	if submitResult["summary"] != "ok" {
+		t.Fatalf("non-transit result changed: %#v", submitResult)
+	}
+}
+
+func TestTraceTransitReadonlyCompactResultRedactsBodyAndSecret(t *testing.T) {
+	oldStderr := os.Stderr
+	defer func() {
+		os.Stderr = oldStderr
+	}()
+
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = writePipe
+	traceTransitReadonlyCompactResult(
+		workerCommand{ID: "abc", CommandType: "transit_readonly_preflight"},
+		"http://console.example:8200/api/workers/commands/abc/result",
+		compactResultInfo{
+			OriginalSubmitPayloadSize: 2306,
+			CompactSubmitPayloadSize:  988,
+			CompactApplied:            true,
+			ChecksCount:               6,
+			MaxDetailLength:           48,
+		},
+	)
+	writePipe.Close()
+	output, err := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(output)
+	for _, forbidden := range []string{"secret-value", "full-body-value", "X-Worker-Secret"} {
+		if strings.Contains(logText, forbidden) {
+			t.Fatalf("compact trace leaked %q: %s", forbidden, logText)
+		}
+	}
+	if !strings.Contains(logText, "compact_submit_payload_size=988") {
+		t.Fatalf("compact trace missing payload size: %s", logText)
 	}
 }
 
@@ -715,4 +849,44 @@ func parseTestKeyValueLines(text string) map[string]string {
 		values[parts[0]] = parts[1]
 	}
 	return values
+}
+
+func largeTransitReadonlyPreflightResult() map[string]any {
+	checks := []any{}
+	for index := 0; index < 6; index++ {
+		checks = append(checks, map[string]any{
+			"id":               fmt.Sprintf("check_%d", index),
+			"label":            fmt.Sprintf("Readonly check %d", index),
+			"status":           "passed",
+			"passed":           true,
+			"detail":           strings.Repeat("detail text ", 40),
+			"category":         "readonly",
+			"evidence_summary": strings.Repeat("evidence ", 30),
+			"next_action":      strings.Repeat("next action ", 30),
+		})
+	}
+	return map[string]any{
+		"passed":              true,
+		"status":              "passed",
+		"summary":             strings.Repeat("Remote readonly preflight passed. ", 12),
+		"checks":              checks,
+		"worker_version":      workerVersion,
+		"hostname":            "hk-transit-worker",
+		"role":                "transit",
+		"interface_name":      "ens17",
+		"planned_listen_port": 23843,
+		"landing_target_port": 27939,
+		"forwarding_method":   "socat",
+		"redacted_summary":    strings.Repeat("transit readonly preflight redacted summary ", 8),
+		"safety_boundary": []any{
+			"readonly checks only",
+			"no arbitrary shell accepted",
+			"no socat/gost install, start, stop, or restart",
+			"no listener binding",
+			"no firewall mutation",
+			"no Xray mutation",
+			"no nodes.share_link read or modification",
+			"no cutover",
+		},
+	}
 }
