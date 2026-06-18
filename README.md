@@ -1230,6 +1230,18 @@ stage does not change backend result/fail main logic, readonly collection
 logic, or remote behavior, and it does not auto-deploy the rebuilt Worker
 binary.
 
+Stage 3.3.68-hotfix-11-worker-curl-fallback-config-fix fixes the Worker curl
+fallback execution path after production logs showed curl fallback was
+triggered correctly but failed while reading its `--config` input. Worker
+`0.1.13-stage-3.3.68` now writes 0600 temporary body, config, and response
+files, invokes curl with a concrete `--config` file path, keeps those files
+alive for the curl process lifetime, and removes them after curl exits. The
+Worker secret remains outside process arguments and logs, and the fixed-path
+result/fail endpoint allowlist, no-query rule, no-shell execution, and
+redacted trace boundaries remain unchanged. This stage does not change backend
+result/fail main logic, readonly collection logic, or remote behavior, and it
+does not auto-deploy the rebuilt Worker binary.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2454,6 +2466,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 hotfix Worker auto-submit trace | Worker automatic result/fail submission now emits redacted size, endpoint, timing, status, and error-classification traces |
 | Stage 3.3.68 hotfix Worker submit curl compatible | Worker result/fail submit uses curl-compatible HTTP behavior plus constrained curl fallback for response-header timeouts |
 | Stage 3.3.68 hotfix Worker result EOF curl fallback | Worker result/fail submit now also uses the constrained curl fallback for pre-response EOF/reset/broken-pipe submit failures |
+| Stage 3.3.68 hotfix Worker curl fallback config fix | Worker curl fallback now uses readable 0600 temp config/body files and keeps secrets out of process args and logs |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

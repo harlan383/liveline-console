@@ -3,7 +3,12 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -337,13 +342,144 @@ func TestBuildCurlConfigDoesNotExposeSecretInArgsModel(t *testing.T) {
 		"/tmp/body.json",
 		"/tmp/response.json",
 	)
-	if !strings.Contains(config, "X-Worker-Secret: secret-value") {
-		t.Fatalf("curl config should contain the secret header for stdin-only curl config")
+	if !strings.Contains(config, "X-Worker-Secret: "+"secret-value") {
+		t.Fatalf("curl config should contain the secret header for temp-file curl config")
 	}
-	args := []string{"curl", "--config", "-"}
+	args := []string{"curl", "--config", "/tmp/liveline-worker-curl-config-example.conf"}
 	joinedArgs := strings.Join(args, " ")
 	if strings.Contains(joinedArgs, "secret-value") || strings.Contains(joinedArgs, "worker-id") {
 		t.Fatalf("curl process args leaked header values: %q", joinedArgs)
+	}
+}
+
+func TestPostJSONViaCurlUsesReadableTempConfigAndCleansFiles(t *testing.T) {
+	fakeBin := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "fake-curl.log")
+	fakeCurl := filepath.Join(fakeBin, "curl")
+	script := `#!/bin/sh
+if [ "$1" != "--config" ]; then
+  echo "bad args: $*" >&2
+  exit 11
+fi
+CONFIG="$2"
+if [ ! -f "$CONFIG" ]; then
+  echo "missing config" >&2
+  exit 12
+fi
+BODY=$(sed -n 's/^data-binary = "@\(.*\)"$/\1/p' "$CONFIG")
+OUT=$(sed -n 's/^output = "\(.*\)"$/\1/p' "$CONFIG")
+if [ ! -f "$BODY" ]; then
+  echo "missing body" >&2
+  exit 13
+fi
+if [ -z "$OUT" ]; then
+  echo "missing output" >&2
+  exit 14
+fi
+{
+  printf 'config=%s\n' "$CONFIG"
+  printf 'body=%s\n' "$BODY"
+  printf 'out=%s\n' "$OUT"
+  printf 'args=%s\n' "$*"
+} > "$LIVELINE_FAKE_CURL_LOG"
+printf '{"success":true,"message":"ok"}' > "$OUT"
+printf '200'
+`
+	if err := os.WriteFile(fakeCurl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("LIVELINE_FAKE_CURL_LOG", logPath)
+
+	var response apiResponse[map[string]any]
+	err := postJSONViaCurl(
+		"http://console.example:8200/api/workers/commands/abc/result",
+		map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"},
+		map[string]any{"result": map[string]any{"summary": "ok"}},
+		&response,
+	)
+	if err != nil {
+		t.Fatalf("postJSONViaCurl returned %v", err)
+	}
+	if !response.Success || response.Message != "ok" {
+		t.Fatalf("response = %#v, want success ok", response)
+	}
+	logTextBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logFields := parseTestKeyValueLines(string(logTextBytes))
+	for _, key := range []string{"config", "body", "out"} {
+		if logFields[key] == "" {
+			t.Fatalf("fake curl log missing %s: %s", key, logTextBytes)
+		}
+		if _, err := os.Stat(logFields[key]); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s temp file still exists or stat failed: path=%q err=%v", key, logFields[key], err)
+		}
+	}
+	if strings.Contains(logFields["args"], "secret-value") || strings.Contains(logFields["args"], "worker-id") {
+		t.Fatalf("curl args leaked header values: %q", logFields["args"])
+	}
+}
+
+func TestPostJSONViaCurlRoundTripWithRealCurlConfig(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not available")
+	}
+	var receivedBody string
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("local listener unavailable: %v", err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/workers/commands/abc/result" {
+			t.Fatalf("path = %q, want Worker result path", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", r.Method)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		receivedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"message":"ok","data":{"stored":true}}`))
+	}))
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	var response apiResponse[map[string]any]
+	err = postJSONViaCurl(
+		server.URL+"/api/workers/commands/abc/result",
+		map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"},
+		map[string]any{"result": map[string]any{"summary": "ok"}},
+		&response,
+	)
+	if err != nil {
+		t.Fatalf("postJSONViaCurl returned %v", err)
+	}
+	if !response.Success {
+		t.Fatalf("response = %#v, want success", response)
+	}
+	if !strings.Contains(receivedBody, `"summary":"ok"`) {
+		t.Fatalf("server received body %q, want JSON payload", receivedBody)
+	}
+}
+
+func TestWriteCurlFallbackTempFileUses0600(t *testing.T) {
+	path, cleanup, err := writeCurlFallbackTempFile("liveline-worker-test-*.txt", []byte("ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("temp file mode = %v, want 0600", info.Mode().Perm())
 	}
 }
 
@@ -414,4 +550,61 @@ func TestPostJSONWithCurlFallbackRejectsNonResultFailFallbackTargets(t *testing.
 	if curlCalls != 0 {
 		t.Fatalf("curl fallback called %d times for rejected endpoints", curlCalls)
 	}
+}
+
+func TestPostJSONWithCurlFallbackRedactsFailureTrace(t *testing.T) {
+	oldPostJSONFunc := postJSONFunc
+	oldPostJSONViaCurlFunc := postJSONViaCurlFunc
+	oldStderr := os.Stderr
+	defer func() {
+		postJSONFunc = oldPostJSONFunc
+		postJSONViaCurlFunc = oldPostJSONViaCurlFunc
+		os.Stderr = oldStderr
+	}()
+
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = writePipe
+
+	postJSONFunc = func(endpointURL string, headers map[string]string, payload any, out any) error {
+		return errors.New("post console failed before response: request_error: EOF secret-value")
+	}
+	postJSONViaCurlFunc = func(endpointURL string, headers map[string]string, payload any, out any) error {
+		return errors.New("curl failed with secret-value")
+	}
+
+	_ = postJSONWithCurlFallback(
+		"http://console.example:8200/api/workers/commands/abc/result",
+		map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"},
+		map[string]any{"result": "full-body-value"},
+		&map[string]any{},
+	)
+	writePipe.Close()
+	output, err := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(output)
+	for _, forbidden := range []string{"secret-value", "worker-id", "full-body-value"} {
+		if strings.Contains(logText, forbidden) {
+			t.Fatalf("fallback trace leaked %q: %s", forbidden, logText)
+		}
+	}
+}
+
+func parseTestKeyValueLines(text string) map[string]string {
+	values := map[string]string{}
+	for _, line := range strings.Split(text, "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		values[parts[0]] = parts[1]
+	}
+	return values
 }
