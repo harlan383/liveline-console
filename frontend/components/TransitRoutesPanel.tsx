@@ -592,13 +592,11 @@ export function TransitRoutesPanel() {
     setDraft((current) => {
       const nextResourceId = current.transitResourceId || selectableResources[0]?.id || "";
       const nextNodeId = current.landingNodeId || activeNodes[0]?.id || "";
-      const nextNode = activeNodes.find((node) => node.id === nextNodeId) ?? activeNodes[0] ?? null;
       return {
         ...current,
         transitResourceId: nextResourceId,
         landingNodeId: nextNodeId,
         plannedListenPort: current.plannedListenPort || "23843",
-        targetPort: targetPortForNode(nextNode) ? String(targetPortForNode(nextNode)) : current.targetPort,
       };
     });
   }, [selectableResources, activeNodes]);
@@ -790,11 +788,9 @@ export function TransitRoutesPanel() {
           <select
             value={selectedNode?.id ?? ""}
             onChange={(event) => {
-              const nextNode = activeNodes.find((node) => node.id === event.target.value) ?? null;
               setDraft({
                 ...draft,
                 landingNodeId: event.target.value,
-                targetPort: targetPortForNode(nextNode) ? String(targetPortForNode(nextNode)) : draft.targetPort,
               });
             }}
           >
