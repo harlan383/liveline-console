@@ -53,11 +53,6 @@ export type TaskListResult = {
   tasks: TaskData[];
 };
 
-export type ReadNodeResult = {
-  task_id: string;
-  vps_id: string;
-};
-
 export type NodeData = {
   id: string;
   vps_id: string;
@@ -105,11 +100,6 @@ export type NodeShareLinkExportResult = {
   node_name: string;
   share_link: string;
   warning: string;
-};
-
-export type NodeActionResult = {
-  task_id: string;
-  node_id: string;
 };
 
 export type TransitResourceData = {
@@ -172,21 +162,6 @@ export type TransitResourcePayload = {
   notes: string | null;
 };
 
-export type TransitServerReadResult = {
-  task_id: string;
-  transit_resource_id: string;
-};
-
-export type TransitGostInstallResult = {
-  task_id: string;
-  transit_resource_id: string;
-};
-
-export type TransitSocatInstallResult = {
-  task_id: string;
-  transit_resource_id: string;
-};
-
 export type TransitRouteData = {
   id: string;
   name: string;
@@ -211,22 +186,6 @@ export type TransitRouteData = {
 
 export type TransitRouteListResult = {
   routes: TransitRouteData[];
-};
-
-export type TransitRouteCreateResult = {
-  task_id: string;
-  transit_resource_id: string;
-  node_id: string;
-};
-
-export type TransitRouteDiagnoseResult = {
-  task_id: string;
-  transit_route_id: string;
-};
-
-export type TransitRouteRestartSocatResult = {
-  task_id: string;
-  transit_route_id: string;
 };
 
 export type ReadonlyPreflightPlanRequest = {
@@ -355,11 +314,6 @@ export type LandingNodeCreateResponse = {
   safety_boundary: string[];
 };
 
-export type VpsActionResult = {
-  task_id: string;
-  vps_id: string;
-};
-
 export type VpsServerNodeSummary = {
   id: string;
   name: string;
@@ -401,12 +355,6 @@ export type VpsServerData = {
 
 export type VpsServerListResult = {
   servers: VpsServerData[];
-};
-
-export type VpsServerTaskResult = {
-  task_id: string;
-  vps_id: string;
-  server: VpsServerData;
 };
 
 export type VpsServerUpdateResult = {
@@ -509,7 +457,8 @@ export type WorkerCommandType =
   | "service_status"
   | "landing_preflight"
   | "landing_node_create"
-  | "transit_readonly_preflight";
+  | "transit_readonly_preflight"
+  | "transit_route_create";
 
 export type WorkerCommandData = {
   id: string;
@@ -667,25 +616,6 @@ export async function apiFetch<T>(
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
-  });
-
-  notifyAuthExpired(path, response.status);
-  return response.json() as Promise<ApiResponse<T>>;
-}
-
-export async function apiFormFetch<T>(
-  path: string,
-  formData: FormData,
-  init: RequestInit = {},
-): Promise<ApiResponse<T>> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    method: init.method ?? "POST",
-    body: formData,
-    credentials: "include",
-    headers: {
       ...(init.headers ?? {}),
     },
   });

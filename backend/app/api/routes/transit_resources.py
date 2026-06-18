@@ -1,15 +1,12 @@
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
-from rq import Queue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import auth_error, csrf_error, csrf_valid, require_admin_session
-from app.db.redis import get_rq_redis_client
 from app.db.session import get_db
-from app.models.task import Task
 from app.models.transit_resource import TransitResource
 from app.models.worker import Worker, WorkerToken
 from app.schemas.common import error_response, success_response
@@ -21,8 +18,6 @@ from app.schemas.transit_resource import (
     TransitResourceUpdate,
 )
 from app.services.auth_service import record_audit
-from app.services.credentials import store_temp_credential
-from app.services.task_logging import add_task_log
 from app.services.worker_binding import (
     WORKER_PENDING_STATUS,
     WorkerPublicUrlError,
@@ -35,7 +30,6 @@ from app.services.worker_binding import (
     worker_runtime_status,
     worker_summary_fields,
 )
-from app.worker.jobs import install_gost_job, install_socat_job, read_transit_server_job
 
 router = APIRouter()
 
@@ -112,25 +106,6 @@ def apply_payload(resource: TransitResource, payload: dict) -> None:
         resource.ssh_host = None
         resource.ssh_port = None
         resource.ssh_username = None
-
-
-async def read_private_key_payload(
-    private_key_text: str | None,
-    private_key_file: UploadFile | None,
-) -> str | None:
-    if private_key_file is not None and private_key_file.filename:
-        content = await private_key_file.read()
-        if len(content) > 128 * 1024:
-            return None
-        try:
-            return content.decode("utf-8")
-        except UnicodeDecodeError:
-            return None
-
-    if private_key_text and private_key_text.strip():
-        return private_key_text
-
-    return None
 
 
 @router.get("")
@@ -386,222 +361,6 @@ def get_transit_resource(
         return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
 
     return success_response(serialize_transit_resource(resource), "ok")
-
-
-@router.post("/{resource_id}/read-server")
-async def read_transit_server(
-    resource_id: str,
-    request: Request,
-    private_key_text: str | None = Form(None),
-    ssh_key_passphrase: str | None = Form(None),
-    private_key_file: UploadFile | None = File(None),
-    db: Session = Depends(get_db),
-):
-    session = require_admin_session(db, request)
-    if not session:
-        return auth_error()
-    if not csrf_valid(request, session):
-        return csrf_error()
-
-    resource = get_transit_resource_or_error(db, resource_id)
-    if not resource:
-        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
-    if resource.resource_type != "server":
-        return error_response(400, "TRANSIT_RESOURCE_NOT_SERVER", "只允许读取 server 类型中转资源。")
-    if resource.status != "active":
-        return error_response(400, "TRANSIT_RESOURCE_NOT_ACTIVE", "只允许读取 active 中转资源。")
-    if not resource.has_ssh:
-        return error_response(400, "TRANSIT_RESOURCE_SSH_REQUIRED", "该中转资源未启用 SSH 元数据。")
-    if not resource.ssh_host or not resource.ssh_port or not resource.ssh_username:
-        return error_response(400, "TRANSIT_SSH_METADATA_MISSING", "中转资源缺少 SSH 元数据。")
-
-    private_key = await read_private_key_payload(private_key_text, private_key_file)
-    if not private_key:
-        return error_response(400, "SSH_AUTH_FAILED", "请上传或粘贴 SSH 私钥。")
-
-    temp_credential_id = store_temp_credential(private_key, ssh_key_passphrase)
-    private_key = ""
-    ssh_key_passphrase = None
-
-    task = Task(
-        vps_id=None,
-        node_id=None,
-        task_type="read_transit_server",
-        status="pending",
-        current_step="queued",
-        progress=0,
-    )
-    db.add(task)
-    db.flush()
-    add_task_log(
-        db,
-        task.id,
-        level="info",
-        step="queued",
-        message="中转服务器只读检查任务已创建，等待 Worker 执行。",
-    )
-    record_audit(
-        db,
-        admin_id=session.admin_id,
-        action="read_transit_server",
-        result="success",
-        request=request,
-        resource_type="task",
-        resource_id=task.id,
-    )
-    db.commit()
-
-    queue = Queue("default", connection=get_rq_redis_client())
-    queue.enqueue(read_transit_server_job, task.id, resource.id, temp_credential_id)
-
-    return success_response(
-        {"task_id": task.id, "transit_resource_id": resource.id},
-        "中转服务器只读检查任务已创建",
-    )
-
-
-@router.post("/{resource_id}/install-gost")
-async def install_gost(
-    resource_id: str,
-    request: Request,
-    private_key_text: str | None = Form(None),
-    ssh_key_passphrase: str | None = Form(None),
-    private_key_file: UploadFile | None = File(None),
-    db: Session = Depends(get_db),
-):
-    session = require_admin_session(db, request)
-    if not session:
-        return auth_error()
-    if not csrf_valid(request, session):
-        return csrf_error()
-
-    resource = get_transit_resource_or_error(db, resource_id)
-    if not resource:
-        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
-    if resource.resource_type != "server":
-        return error_response(400, "TRANSIT_RESOURCE_NOT_SERVER", "只允许给 server 类型中转资源安装 gost。")
-    if resource.status != "active":
-        return error_response(400, "TRANSIT_RESOURCE_NOT_ACTIVE", "只允许给 active 中转资源安装 gost。")
-    if not resource.has_ssh:
-        return error_response(400, "TRANSIT_RESOURCE_SSH_REQUIRED", "该中转资源未启用 SSH 元数据。")
-    if not resource.ssh_host or not resource.ssh_port or not resource.ssh_username:
-        return error_response(400, "TRANSIT_SSH_METADATA_MISSING", "中转资源缺少 SSH 元数据。")
-
-    private_key = await read_private_key_payload(private_key_text, private_key_file)
-    if not private_key:
-        return error_response(400, "SSH_AUTH_FAILED", "请上传或粘贴 SSH 私钥。")
-
-    temp_credential_id = store_temp_credential(private_key, ssh_key_passphrase)
-    private_key = ""
-    ssh_key_passphrase = None
-
-    task = Task(
-        vps_id=None,
-        node_id=None,
-        task_type="install_gost",
-        status="pending",
-        current_step="queued",
-        progress=0,
-    )
-    db.add(task)
-    db.flush()
-    add_task_log(
-        db,
-        task.id,
-        level="info",
-        step="queued",
-        message="gost binary 安装任务已创建，等待 Worker 执行。",
-    )
-    record_audit(
-        db,
-        admin_id=session.admin_id,
-        action="install_gost",
-        result="success",
-        request=request,
-        resource_type="task",
-        resource_id=task.id,
-    )
-    db.commit()
-
-    queue = Queue("default", connection=get_rq_redis_client())
-    queue.enqueue(install_gost_job, task.id, resource.id, temp_credential_id)
-
-    return success_response(
-        {"task_id": task.id, "transit_resource_id": resource.id},
-        "gost binary 安装任务已创建",
-    )
-
-
-@router.post("/{resource_id}/install-socat")
-async def install_socat(
-    resource_id: str,
-    request: Request,
-    private_key_text: str | None = Form(None),
-    ssh_key_passphrase: str | None = Form(None),
-    private_key_file: UploadFile | None = File(None),
-    db: Session = Depends(get_db),
-):
-    session = require_admin_session(db, request)
-    if not session:
-        return auth_error()
-    if not csrf_valid(request, session):
-        return csrf_error()
-
-    resource = get_transit_resource_or_error(db, resource_id)
-    if not resource:
-        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
-    if resource.resource_type != "server":
-        return error_response(400, "TRANSIT_RESOURCE_NOT_SERVER", "只允许给 server 类型中转资源安装 socat。")
-    if resource.status != "active":
-        return error_response(400, "TRANSIT_RESOURCE_NOT_ACTIVE", "只允许给 active 中转资源安装 socat。")
-    if not resource.has_ssh:
-        return error_response(400, "TRANSIT_RESOURCE_SSH_REQUIRED", "该中转资源未启用 SSH 元数据。")
-    if not resource.ssh_host or not resource.ssh_port or not resource.ssh_username:
-        return error_response(400, "TRANSIT_SSH_METADATA_MISSING", "中转资源缺少 SSH 元数据。")
-
-    private_key = await read_private_key_payload(private_key_text, private_key_file)
-    if not private_key:
-        return error_response(400, "SSH_AUTH_FAILED", "请上传或粘贴 SSH 私钥。")
-
-    temp_credential_id = store_temp_credential(private_key, ssh_key_passphrase)
-    private_key = ""
-    ssh_key_passphrase = None
-
-    task = Task(
-        vps_id=None,
-        node_id=None,
-        task_type="install_socat",
-        status="pending",
-        current_step="queued",
-        progress=0,
-    )
-    db.add(task)
-    db.flush()
-    add_task_log(
-        db,
-        task.id,
-        level="info",
-        step="queued",
-        message="socat 安装/检查任务已创建，等待 Worker 执行。",
-    )
-    record_audit(
-        db,
-        admin_id=session.admin_id,
-        action="install_socat",
-        result="success",
-        request=request,
-        resource_type="task",
-        resource_id=task.id,
-    )
-    db.commit()
-
-    queue = Queue("default", connection=get_rq_redis_client())
-    queue.enqueue(install_socat_job, task.id, resource.id, temp_credential_id)
-
-    return success_response(
-        {"task_id": task.id, "transit_resource_id": resource.id},
-        "socat 安装/检查任务已创建",
-    )
 
 
 @router.patch("/{resource_id}")
