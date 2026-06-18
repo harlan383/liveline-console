@@ -7,6 +7,12 @@ from app.api.routes.workers import (
     worker_command_status_is_terminal,
 )
 from app.services.worker_commands import normalize_worker_command_result
+from app.schemas.transit_route import (
+    APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
+    TransitRouteWorkerCreatePlanRequest,
+)
+from app.schemas.worker_commands import WorkerCommandCreate
+from app.services.worker_targeting import minimum_worker_version_for_command
 
 
 class WorkerCommandResultNormalizationTests(unittest.TestCase):
@@ -83,6 +89,52 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertTrue(worker_command_status_is_terminal("completed"))
         self.assertFalse(worker_command_status_is_terminal("running"))
         self.assertFalse(worker_command_status_is_terminal(None))
+
+    def test_transit_route_create_command_type_is_registered(self):
+        command = WorkerCommandCreate(command_type="transit_route_create", payload={"dry_run": True})
+        self.assertEqual(command.command_type, "transit_route_create")
+        self.assertEqual(
+            minimum_worker_version_for_command("transit_route_create"),
+            "0.1.17-stage-3.3.71",
+        )
+
+    def test_transit_route_worker_create_plan_schema_requires_current_stage(self):
+        payload = {
+            "transit_resource_id": "1e222459-9fa2-4c62-800f-a3b35edb7df8",
+            "landing_node_id": "a71472c6-f62c-43b5-a223-9f5f070ae4ef",
+            "planned_listen_port": 23843,
+            "landing_target_host": "64.90.13.19",
+            "landing_target_port": 27939,
+            "forwarding_method": "socat",
+            "approval_stage": APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
+            "dry_run": True,
+            "approval_required": True,
+            "user_approved_execution_boundary": True,
+            "no_node_share_link_change_confirmed": True,
+            "no_cutover_confirmed": True,
+        }
+        parsed = TransitRouteWorkerCreatePlanRequest(**payload)
+        self.assertTrue(parsed.dry_run)
+        self.assertEqual(parsed.forwarding_method, "socat")
+
+    def test_transit_route_worker_create_plan_schema_rejects_extra_shell(self):
+        payload = {
+            "transit_resource_id": "1e222459-9fa2-4c62-800f-a3b35edb7df8",
+            "landing_node_id": "a71472c6-f62c-43b5-a223-9f5f070ae4ef",
+            "planned_listen_port": 23843,
+            "landing_target_host": "64.90.13.19",
+            "landing_target_port": 27939,
+            "forwarding_method": "socat",
+            "approval_stage": APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
+            "dry_run": True,
+            "approval_required": True,
+            "user_approved_execution_boundary": True,
+            "no_node_share_link_change_confirmed": True,
+            "no_cutover_confirmed": True,
+            "shell": "systemctl start anything",
+        }
+        with self.assertRaises(Exception):
+            TransitRouteWorkerCreatePlanRequest(**payload)
 
 
 if __name__ == "__main__":

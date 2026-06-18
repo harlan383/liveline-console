@@ -16,6 +16,8 @@ MIN_LANDING_NODE_CREATE_VERSION = "0.1.6-stage-3.3.37"
 MIN_LANDING_NODE_CREATE_VERSION_KEY = (0, 1, 6, 3, 3, 37)
 MIN_TRANSIT_READONLY_PREFLIGHT_VERSION = "0.1.8-stage-3.3.68"
 MIN_TRANSIT_READONLY_PREFLIGHT_VERSION_KEY = (0, 1, 8, 3, 3, 68)
+MIN_TRANSIT_ROUTE_CREATE_VERSION = "0.1.17-stage-3.3.71"
+MIN_TRANSIT_ROUTE_CREATE_VERSION_KEY = (0, 1, 17, 3, 3, 71)
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+))?$")
 
 
@@ -69,6 +71,8 @@ def minimum_worker_version_for_command(command_type: str | None) -> str:
         return MIN_LANDING_PREFLIGHT_VERSION
     if command_type == "transit_readonly_preflight":
         return MIN_TRANSIT_READONLY_PREFLIGHT_VERSION
+    if command_type == "transit_route_create":
+        return MIN_TRANSIT_ROUTE_CREATE_VERSION
     return MIN_COMMAND_CHANNEL_VERSION
 
 
@@ -79,6 +83,8 @@ def minimum_worker_version_key_for_command(command_type: str | None) -> tuple[in
         return MIN_LANDING_PREFLIGHT_VERSION_KEY
     if command_type == "transit_readonly_preflight":
         return MIN_TRANSIT_READONLY_PREFLIGHT_VERSION_KEY
+    if command_type == "transit_route_create":
+        return MIN_TRANSIT_ROUTE_CREATE_VERSION_KEY
     return MIN_COMMAND_CHANNEL_VERSION_KEY
 
 

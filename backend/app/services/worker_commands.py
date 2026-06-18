@@ -322,6 +322,12 @@ def result_summary(command: WorkerCommand) -> str | None:
         check_count = len(checks) if isinstance(checks, list) else 0
         summary = result.get("summary") or "remote readonly preflight returned"
         return f"transit_readonly_preflight status={status} checks={check_count} summary={summary}"
+    if command.command_type == "transit_route_create":
+        mode = result.get("execution_mode") or "-"
+        status = result.get("status") or "-"
+        listen_port = result.get("planned_listen_port") or "-"
+        target_port = result.get("landing_target_port") or "-"
+        return f"transit_route_create mode={mode} status={status} listen_port={listen_port} target_port={target_port}"
     return "命令已返回脱敏结果。"
 
 
