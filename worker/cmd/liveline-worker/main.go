@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.9-stage-3.3.68"
+const workerVersion = "0.1.10-stage-3.3.68"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -33,6 +33,7 @@ const resultStringLimit = 1000
 const resultListLimit = 50
 const resultPayloadSoftLimit = 64 * 1024
 const responseBodyLogLimit = 1200
+const postJSONTimeout = 15 * time.Second
 const commandTimeout = 180 * time.Second
 const formalLandingPort = 27939
 const xrayDownloadURL = "https://github.com/XTLS/Xray-core/releases/download/v25.1.1/Xray-linux-64.zip"
@@ -1445,10 +1446,14 @@ func postWorkerCommandResult(cfg config, command workerCommand, result map[strin
 	var response apiResponse[map[string]any]
 	sanitized := sanitizeCommandResult(command.CommandType, result)
 	payload := commandResultPayload{Result: sanitized}
-	if payloadSize(payload) > resultPayloadSoftLimit {
+	summary := buildResultSubmitDebugSummary(command.CommandType, result)
+	fallbackWouldBeTriggered := payloadSize(payload) > resultPayloadSoftLimit
+	if fallbackWouldBeTriggered {
 		payload.Result = fallbackCommandResult(command, fmt.Errorf("sanitized result payload exceeded %d bytes", resultPayloadSoftLimit))
 	}
-	if err := postJSON(joinURL(cfg.ConsoleURL, "/api/workers/commands/"+command.ID+"/result"), headers, payload, &response); err != nil {
+	endpointURL := joinURL(cfg.ConsoleURL, "/api/workers/commands/"+command.ID+"/result")
+	traceWorkerCommandResultSubmit(command, endpointURL, headers, summary, payloadSize(payload), fallbackWouldBeTriggered)
+	if err := postJSON(endpointURL, headers, payload, &response); err != nil {
 		return err
 	}
 	if !response.Success {
@@ -1467,7 +1472,9 @@ func postWorkerCommandFailure(cfg config, commandID string, commandErr error, re
 		ErrorMessage: truncateResultString(commandErr.Error(), resultStringLimit),
 		Result:       sanitizeResultMap(result),
 	}
-	if err := postJSON(joinURL(cfg.ConsoleURL, "/api/workers/commands/"+commandID+"/fail"), headers, payload, &response); err != nil {
+	endpointURL := joinURL(cfg.ConsoleURL, "/api/workers/commands/"+commandID+"/fail")
+	traceWorkerCommandFailureSubmit(commandID, endpointURL, headers, payload)
+	if err := postJSON(endpointURL, headers, payload, &response); err != nil {
 		return err
 	}
 	if !response.Success {
@@ -1775,6 +1782,78 @@ func buildResultSubmitDebugSummary(commandType string, result map[string]any) re
 	}
 }
 
+func traceWorkerCommandResultSubmit(command workerCommand, endpointURL string, headers map[string]string, summary resultSubmitDebugSummary, contentLength int, fallbackWouldBeTriggered bool) {
+	traceLog(
+		"worker_command_result_submit_prepare command_id=%s command_type=%s endpoint=result sanitized_result_size=%d submit_payload_size=%d fallback_would_be_triggered=%v result_keys=%s checks_count=%d largest_field_path=%s largest_field_length=%d content_length=%d header_keys=%s endpoint=%s",
+		command.ID,
+		command.CommandType,
+		summary.SanitizedResultSize,
+		summary.SubmitPayloadSize,
+		fallbackWouldBeTriggered,
+		strings.Join(summary.ResultKeys, ","),
+		summary.ChecksCount,
+		summary.LargestFieldPath,
+		summary.LargestFieldLength,
+		contentLength,
+		strings.Join(sortedHeaderKeys(headers), ","),
+		safeEndpointLabel(endpointURL),
+	)
+}
+
+func traceWorkerCommandFailureSubmit(commandID string, endpointURL string, headers map[string]string, payload commandFailurePayload) {
+	resultPresent := payload.Result != nil
+	resultKeys := []string{}
+	if payload.Result != nil {
+		resultKeys = safeSortedMapKeys(payload.Result)
+	}
+	commandType := "unknown"
+	if payload.Result != nil {
+		commandType = stringResultValue(payload.Result["command_type"])
+		if commandType == "" {
+			commandType = "unknown"
+		}
+	}
+	traceLog(
+		"worker_command_failure_submit_prepare command_id=%s command_type=%s endpoint=fail failure_payload_size=%d result_present=%v fallback_result_keys=%s header_keys=%s endpoint=%s",
+		commandID,
+		commandType,
+		payloadSize(payload),
+		resultPresent,
+		strings.Join(resultKeys, ","),
+		strings.Join(sortedHeaderKeys(headers), ","),
+		safeEndpointLabel(endpointURL),
+	)
+}
+
+func traceLog(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "liveline-worker trace "+format+"\n", args...)
+}
+
+func sortedHeaderKeys(headers map[string]string) []string {
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func safeEndpointLabel(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "[invalid-url]"
+	}
+	host := parsed.Host
+	if host == "" {
+		host = "[no-host]"
+	}
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	return host + path
+}
+
 func jsonSize(value any) int {
 	body, err := json.Marshal(value)
 	if err != nil {
@@ -2060,8 +2139,23 @@ func postJSON(url string, headers map[string]string, payload any, out any) error
 	if err != nil {
 		return err
 	}
+	startedAt := time.Now().UTC()
+	endpoint := safeEndpointLabel(url)
+	traceLog(
+		"http_json_submit_begin endpoint=%s method=POST body_size=%d timeout=%s start=%s",
+		endpoint,
+		len(body),
+		postJSONTimeout,
+		startedAt.Format(time.RFC3339Nano),
+	)
 	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
+		traceLog(
+			"http_json_submit_end endpoint=%s method=POST body_size=%d elapsed_ms=%d success=false error_classification=request_build_failed",
+			endpoint,
+			len(body),
+			time.Since(startedAt).Milliseconds(),
+		)
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
@@ -2072,27 +2166,70 @@ func postJSON(url string, headers map[string]string, payload any, out any) error
 	}
 
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout: postJSONTimeout,
 		Transport: &http.Transport{
 			DisableKeepAlives: true,
 		},
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return fmt.Errorf("post %s failed before response: %s", url, describeHTTPPostError(err))
+		classified := describeHTTPPostError(err)
+		traceLog(
+			"http_json_submit_end endpoint=%s method=POST body_size=%d timeout=%s elapsed_ms=%d success=false error_classification=%s",
+			endpoint,
+			len(body),
+			postJSONTimeout,
+			time.Since(startedAt).Milliseconds(),
+			classified,
+		)
+		return fmt.Errorf("post %s failed before response: %s", endpoint, classified)
 	}
 	defer response.Body.Close()
 
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
+		classified := describeHTTPPostError(err)
+		traceLog(
+			"http_json_submit_end endpoint=%s method=POST body_size=%d timeout=%s elapsed_ms=%d success=false response_status=%d error_classification=%s",
+			endpoint,
+			len(body),
+			postJSONTimeout,
+			time.Since(startedAt).Milliseconds(),
+			response.StatusCode,
+			classified,
+		)
 		return fmt.Errorf("read console response status=%d failed: %s", response.StatusCode, describeHTTPPostError(err))
 	}
 	if err := json.Unmarshal(responseBody, out); err != nil {
+		traceLog(
+			"http_json_submit_end endpoint=%s method=POST body_size=%d timeout=%s elapsed_ms=%d success=false response_status=%d error_classification=invalid_json_response",
+			endpoint,
+			len(body),
+			postJSONTimeout,
+			time.Since(startedAt).Milliseconds(),
+			response.StatusCode,
+		)
 		return fmt.Errorf("invalid console response status=%d body=%s", response.StatusCode, responseBodySummary(responseBody))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		traceLog(
+			"http_json_submit_end endpoint=%s method=POST body_size=%d timeout=%s elapsed_ms=%d success=false response_status=%d error_classification=non_2xx_response",
+			endpoint,
+			len(body),
+			postJSONTimeout,
+			time.Since(startedAt).Milliseconds(),
+			response.StatusCode,
+		)
 		return fmt.Errorf("console returned status=%d body=%s", response.StatusCode, responseBodySummary(responseBody))
 	}
+	traceLog(
+		"http_json_submit_end endpoint=%s method=POST body_size=%d timeout=%s elapsed_ms=%d success=true response_status=%d",
+		endpoint,
+		len(body),
+		postJSONTimeout,
+		time.Since(startedAt).Milliseconds(),
+		response.StatusCode,
+	)
 	return nil
 }
 

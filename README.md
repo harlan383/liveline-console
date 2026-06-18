@@ -1198,6 +1198,15 @@ amd64 Worker binary is rebuilt as Worker `0.1.9-stage-3.3.68` for a later
 separately authorized Worker replacement; this stage does not auto-deploy or
 retry production commands.
 
+Stage 3.3.68-hotfix-8-worker-auto-submit-trace adds redacted Worker-side trace
+logs around automatic result and failure submission. Worker
+`0.1.10-stage-3.3.68` logs command id, command type, endpoint kind, payload
+sizes, content length, header key names, safe host/path, timeout, timestamp,
+elapsed time, HTTP status, and error classification without printing Worker
+secrets, tokens, result bodies, or client links. This stage does not change the
+console result/fail main logic, readonly collection logic, or real creation
+behavior, and it does not auto-deploy the rebuilt Worker binary.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2419,6 +2428,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 hotfix Worker result endpoint timeout | Worker result/fail endpoints now use bounded fast-path ingestion, ingress logs, fallback failure handling, and idempotent already-completed responses |
 | Stage 3.3.68 hotfix Worker authenticated result path | Worker-authenticated result/fail paths now log phase timings, apply short DB statement timeout, and classify Worker submit timeout phases |
 | Stage 3.3.68 hotfix Worker result payload diagnosis | Worker can locally generate transit readonly preflight results and print redacted payload diagnostics without submitting to the console |
+| Stage 3.3.68 hotfix Worker auto-submit trace | Worker automatic result/fail submission now emits redacted size, endpoint, timing, status, and error-classification traces |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

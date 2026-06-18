@@ -226,6 +226,63 @@ or restart `socat` / `gost`, does not create transit routes, does not add
 listening ports, does not modify firewall rules, does not modify Xray, does not
 read or modify `nodes.share_link`, and does not perform cutover.
 
+## Hotfix 8: Worker Auto-submit Trace
+
+Stage 3.3.68-hotfix-8-worker-auto-submit-trace adds Worker-side redacted trace
+logs around the automatic result/failure submit path after manual authenticated
+submissions and the local payload diagnosis showed that backend routing,
+authentication, minimal transit result normalization, and payload size were not
+the apparent blockers.
+
+The Worker now logs a single redacted `result` preparation line before calling
+the console:
+
+- command id,
+- command type,
+- endpoint kind,
+- sanitized result JSON size,
+- submit payload JSON size,
+- whether fallback would be triggered,
+- result top-level keys,
+- checks count,
+- largest field path and length,
+- content length,
+- header key names only,
+- console host and path without query strings.
+
+The Worker also logs a redacted `fail` preparation line with command id,
+endpoint kind, failure payload size, whether a fallback result is present,
+fallback result keys, header key names only, and safe console host/path.
+
+The common JSON submit path now logs before and after each POST:
+
+- endpoint host/path,
+- method,
+- body size,
+- timeout value,
+- start timestamp,
+- elapsed milliseconds,
+- success/failure,
+- response status when available,
+- error classification when failed.
+
+These traces deliberately omit `X-Worker-Secret` values, Worker setup tokens,
+SSH private keys, database passwords, complete result bodies, complete node
+links, and `nodes.share_link`. The trace prints header names but never header
+values.
+
+The Linux amd64 Worker binary is rebuilt and committed as Worker
+`0.1.10-stage-3.3.68` so a later authorized Worker replacement can collect the
+new submit trace. This stage does not automatically deploy or restart any
+remote Worker.
+
+This hotfix does not change the console `/result` or `/fail` main logic, does
+not change `transit_readonly_preflight` collection logic, does not create or
+retry readonly preflight commands, does not install, start, stop, or restart
+`socat` / `gost`, does not create transit routes, does not add listening ports,
+does not modify firewall rules, does not modify Xray, does not read or modify
+`nodes.share_link`, and does not perform cutover.
+
 ## Safety Boundary
 
 This stage does not:
