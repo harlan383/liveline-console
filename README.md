@@ -1277,6 +1277,16 @@ and only `checks_count` plus failed check names are retained. The backend
 result/fail logic, curl fallback behavior, route creation behavior, and no
 auto-deploy boundary remain unchanged.
 
+Stage 3.3.69-transit-readonly-ui-validation-record records production UI
+validation after hotfix-14. The public console and Hong Kong transit Worker
+were already updated by the operator, Worker `0.1.16-stage-3.3.68` submitted a
+compact readonly preflight result successfully, and the real UI-triggered
+`transit_readonly_preflight` command completed with `passed` status in one
+attempt. This record is documentation only: no Worker command is triggered, no
+transit route is created, no listener or firewall is changed, Xray is not
+modified, `nodes.share_link` is not read or modified, no real client link is
+generated or displayed, and no cutover is performed.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2503,6 +2513,9 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 hotfix Worker result EOF curl fallback | Worker result/fail submit now also uses the constrained curl fallback for pre-response EOF/reset/broken-pipe submit failures |
 | Stage 3.3.68 hotfix Worker curl fallback config fix | Worker curl fallback now uses readable 0600 temp config/body files and keeps secrets out of process args and logs |
 | Stage 3.3.68 hotfix Worker curl fallback no config | Worker curl fallback no longer uses curl --config; it uses 0600 header/body/response temp files with fixed curl args |
+| Stage 3.3.68 hotfix Worker curl fallback manual compatible | Worker curl fallback now matches the manually successful curl -i header/body-file command shape |
+| Stage 3.3.68 hotfix Worker compact result payload | Transit readonly preflight Worker result payload is compacted below the small-body target before submission |
+| Stage 3.3.69 Transit readonly UI validation record | Production UI readonly preflight validation passed with Worker 0.1.16 compact result submission; no real route creation or cutover |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
