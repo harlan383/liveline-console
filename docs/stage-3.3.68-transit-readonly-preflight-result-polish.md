@@ -283,6 +283,56 @@ retry readonly preflight commands, does not install, start, stop, or restart
 does not modify firewall rules, does not modify Xray, does not read or modify
 `nodes.share_link`, and does not perform cutover.
 
+## Hotfix 9: Worker Submit Curl Compatible
+
+Stage 3.3.68-hotfix-9-worker-submit-curl-compatible changes only the Worker
+submit transport after decisive diagnostics showed that manual authenticated
+curl submission of the same `transit_readonly_preflight` command and token
+completed immediately, while the Worker automatic Go `net/http` submission
+timed out awaiting response headers.
+
+The Worker HTTP path is made closer to curl:
+
+- `Content-Type: application/json` remains explicit.
+- `Content-Length` is set explicitly.
+- The Worker no longer forces `Connection: close`.
+- The request no longer sets `request.Close=true`.
+- The Worker no longer uses a custom `DisableKeepAlives` transport for these
+  JSON posts.
+- The existing redacted trace continues to log body size, content length,
+  endpoint host/path, elapsed time, response status, error classification, and
+  whether fallback was triggered.
+
+If Go `net/http` submission fails specifically with `response_headers_timeout`,
+the Worker may try a constrained curl fallback. The fallback is intentionally
+narrow:
+
+- it is used only by the Worker result/fail submit path,
+- it accepts only fixed
+  `/api/workers/commands/{command_id}/result` and
+  `/api/workers/commands/{command_id}/fail` paths,
+- it rejects query strings, fragments, unsupported schemes, and non-result/fail
+  paths,
+- it uses `exec.CommandContext` without invoking a shell,
+- it sends curl options through stdin config so Worker secret values are not
+  placed in process arguments,
+- it sets a max time and cannot hang indefinitely,
+- it does not print Worker secrets, Worker tokens, request bodies, complete
+  client links, or `nodes.share_link`.
+
+The Linux amd64 Worker binary is rebuilt and committed as Worker
+`0.1.11-stage-3.3.68` so a later authorized Worker replacement can test the
+curl-compatible submit path. This stage does not automatically deploy or
+restart any remote Worker.
+
+This hotfix does not change the console `/result` or `/fail` main logic, does
+not change `transit_readonly_preflight` collection logic, does not create or
+retry readonly preflight commands, does not add transit creation capability,
+does not install, start, stop, or restart `socat` / `gost`, does not create
+transit routes, does not add listening ports, does not modify firewall rules,
+does not modify Xray, does not read or modify `nodes.share_link`, and does not
+perform cutover.
+
 ## Safety Boundary
 
 This stage does not:

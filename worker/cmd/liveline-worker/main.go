@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.10-stage-3.3.68"
+const workerVersion = "0.1.11-stage-3.3.68"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -45,6 +45,8 @@ const managedXrayConfigPath = "/opt/liveline-xray/config/config.json"
 const managedXrayStateDir = "/opt/liveline-xray/state"
 const managedXrayServiceName = "liveline-xray.service"
 const managedXrayServicePath = "/etc/systemd/system/liveline-xray.service"
+
+var postJSONHTTPClient = &http.Client{Timeout: postJSONTimeout}
 
 var protectedTransitListenPorts = map[int]string{
 	22:    "22 is reserved for SSH management",
@@ -1453,7 +1455,7 @@ func postWorkerCommandResult(cfg config, command workerCommand, result map[strin
 	}
 	endpointURL := joinURL(cfg.ConsoleURL, "/api/workers/commands/"+command.ID+"/result")
 	traceWorkerCommandResultSubmit(command, endpointURL, headers, summary, payloadSize(payload), fallbackWouldBeTriggered)
-	if err := postJSON(endpointURL, headers, payload, &response); err != nil {
+	if err := postJSONWithCurlFallback(endpointURL, headers, payload, &response); err != nil {
 		return err
 	}
 	if !response.Success {
@@ -1474,7 +1476,7 @@ func postWorkerCommandFailure(cfg config, commandID string, commandErr error, re
 	}
 	endpointURL := joinURL(cfg.ConsoleURL, "/api/workers/commands/"+commandID+"/fail")
 	traceWorkerCommandFailureSubmit(commandID, endpointURL, headers, payload)
-	if err := postJSON(endpointURL, headers, payload, &response); err != nil {
+	if err := postJSONWithCurlFallback(endpointURL, headers, payload, &response); err != nil {
 		return err
 	}
 	if !response.Success {
@@ -1708,6 +1710,155 @@ func payloadSize(payload any) int {
 		return resultPayloadSoftLimit + 1
 	}
 	return len(body)
+}
+
+func postJSONWithCurlFallback(endpointURL string, headers map[string]string, payload any, out any) error {
+	err := postJSON(endpointURL, headers, payload, out)
+	if err == nil {
+		return nil
+	}
+	if !isResponseHeadersTimeoutError(err) {
+		return err
+	}
+	if validateCurlFallbackEndpoint(endpointURL) != nil {
+		return err
+	}
+	traceLog(
+		"http_json_curl_fallback_begin endpoint=%s body_size=%d reason=response_headers_timeout header_keys=%s",
+		safeEndpointLabel(endpointURL),
+		payloadSize(payload),
+		strings.Join(sortedHeaderKeys(headers), ","),
+	)
+	if fallbackErr := postJSONViaCurl(endpointURL, headers, payload, out); fallbackErr != nil {
+		traceLog(
+			"http_json_curl_fallback_end endpoint=%s success=false error=%s",
+			safeEndpointLabel(endpointURL),
+			truncateResultString(fallbackErr.Error(), responseBodyLogLimit),
+		)
+		return fmt.Errorf("go net/http submit failed: %w; curl fallback failed: %v", err, fallbackErr)
+	}
+	traceLog(
+		"http_json_curl_fallback_end endpoint=%s success=true",
+		safeEndpointLabel(endpointURL),
+	)
+	return nil
+}
+
+func isResponseHeadersTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "response_headers_timeout")
+}
+
+func validateCurlFallbackEndpoint(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("curl fallback endpoint scheme is not allowed")
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("curl fallback endpoint host is required")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("curl fallback endpoint query and fragment are not allowed")
+	}
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	if len(parts) != 5 {
+		return fmt.Errorf("curl fallback endpoint path is not allowed")
+	}
+	if parts[0] != "api" || parts[1] != "workers" || parts[2] != "commands" {
+		return fmt.Errorf("curl fallback endpoint path is not a Worker command endpoint")
+	}
+	if parts[3] == "" || strings.ContainsAny(parts[3], "; \t\r\n") {
+		return fmt.Errorf("curl fallback command id is invalid")
+	}
+	if parts[4] != "result" && parts[4] != "fail" {
+		return fmt.Errorf("curl fallback endpoint must be result or fail")
+	}
+	return nil
+}
+
+func postJSONViaCurl(endpointURL string, headers map[string]string, payload any, out any) error {
+	if err := validateCurlFallbackEndpoint(endpointURL); err != nil {
+		return err
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	bodyFile, err := os.CreateTemp("", "liveline-worker-curl-body-*.json")
+	if err != nil {
+		return err
+	}
+	bodyPath := bodyFile.Name()
+	defer os.Remove(bodyPath)
+	if _, err := bodyFile.Write(body); err != nil {
+		bodyFile.Close()
+		return err
+	}
+	if err := bodyFile.Close(); err != nil {
+		return err
+	}
+
+	responseFile, err := os.CreateTemp("", "liveline-worker-curl-response-*.json")
+	if err != nil {
+		return err
+	}
+	responsePath := responseFile.Name()
+	responseFile.Close()
+	defer os.Remove(responsePath)
+
+	configText := buildCurlConfig(endpointURL, headers, bodyPath, responsePath)
+	ctx, cancel := context.WithTimeout(context.Background(), postJSONTimeout+2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "curl", "--config", "-")
+	cmd.Stdin = strings.NewReader(configText)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	statusOutput, err := cmd.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("curl fallback timed out endpoint=%s", safeEndpointLabel(endpointURL))
+	}
+	statusText := strings.TrimSpace(string(statusOutput))
+	if err != nil {
+		return fmt.Errorf("curl fallback command failed endpoint=%s status_output=%s stderr=%s", safeEndpointLabel(endpointURL), truncateResultString(statusText, 80), truncateResultString(stderr.String(), responseBodyLogLimit))
+	}
+	statusCode, err := strconv.Atoi(statusText)
+	if err != nil {
+		return fmt.Errorf("curl fallback returned invalid status endpoint=%s status_output=%s stderr=%s", safeEndpointLabel(endpointURL), truncateResultString(statusText, 80), truncateResultString(stderr.String(), responseBodyLogLimit))
+	}
+	responseBody, err := os.ReadFile(responsePath)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(responseBody, out); err != nil {
+		return fmt.Errorf("invalid curl fallback response status=%d body=%s", statusCode, responseBodySummary(responseBody))
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return fmt.Errorf("curl fallback returned status=%d body=%s", statusCode, responseBodySummary(responseBody))
+	}
+	return nil
+}
+
+func buildCurlConfig(endpointURL string, headers map[string]string, bodyPath string, responsePath string) string {
+	lines := []string{
+		"url = " + strconv.Quote(endpointURL),
+		"request = " + strconv.Quote("POST"),
+		fmt.Sprintf("max-time = %d", int(postJSONTimeout.Seconds())),
+		"silent = true",
+		"show-error = true",
+		"header = " + strconv.Quote("Content-Type: application/json"),
+		"data-binary = " + strconv.Quote("@"+bodyPath),
+		"output = " + strconv.Quote(responsePath),
+		"write-out = " + strconv.Quote("%{http_code}"),
+	}
+	for _, key := range sortedHeaderKeys(headers) {
+		lines = append(lines, "header = "+strconv.Quote(key+": "+headers[key]))
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 type resultSubmitDebugSummary struct {
@@ -2159,19 +2310,12 @@ func postJSON(url string, headers map[string]string, payload any, out any) error
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Connection", "close")
-	request.Close = true
+	request.ContentLength = int64(len(body))
 	for key, value := range headers {
 		request.Header.Set(key, value)
 	}
 
-	client := &http.Client{
-		Timeout: postJSONTimeout,
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-		},
-	}
-	response, err := client.Do(request)
+	response, err := postJSONHTTPClient.Do(request)
 	if err != nil {
 		classified := describeHTTPPostError(err)
 		traceLog(
