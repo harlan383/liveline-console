@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.18-stage-3.3.72"
+const workerVersion = "0.1.19-stage-3.3.73"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -45,13 +45,18 @@ const postJSONTimeout = 15 * time.Second
 const commandTimeout = 180 * time.Second
 const formalLandingPort = 27939
 const approvedTransitCreateStage = "Stage 3.3.71-transit-route-worker-create-path"
+const approvedTransitRealCreateStage = "Stage 3.3.73d-transit-route-real-create-code-path"
 const approvedTransitResourceID = "1e222459-9fa2-4c62-800f-a3b35edb7df8"
+const approvedTransitWorkerID = "f2e16197-e953-46dd-90af-66f64759a2a9"
 const approvedTransitLandingNodeID = "a71472c6-f62c-43b5-a223-9f5f070ae4ef"
 const approvedTransitListenPort = 23843
 const approvedTransitLandingTargetHost = "64.90.13.19"
 const approvedTransitLandingTargetPort = 27939
 const approvedTransitForwardingMethod = "socat"
 const approvedTransitInterfaceName = "eth0"
+const approvedTransitRouteName = "hk-socat-live-23843"
+const approvedTransitSocatServiceName = "liveline-socat-23843.service"
+const approvedTransitSocatServicePath = "/etc/systemd/system/liveline-socat-23843.service"
 const transitSocatServicePrefix = "liveline-socat"
 const transitSystemdDir = "/etc/systemd/system"
 const xrayDownloadURL = "https://github.com/XTLS/Xray-core/releases/download/v25.1.1/Xray-linux-64.zip"
@@ -547,7 +552,7 @@ func executeWorkerCommand(cfg config, command workerCommand) (map[string]any, er
 		if cfg.Role != "transit" {
 			return nil, fmt.Errorf("transit_route_create requires transit worker role")
 		}
-		result, err := executeTransitRouteCreateDryRun(cfg, hostname, command)
+		result, err := executeTransitRouteCreate(cfg, hostname, command)
 		if err != nil {
 			return nil, err
 		}
@@ -569,15 +574,38 @@ type transitRouteCreateRequest struct {
 	ApprovalStage     string
 	DryRun            bool
 	ApprovalRequired  bool
+	ExecutionMode     string
+	ApprovedReal      bool
+	SecurityGroupOK   bool
+	CloudFirewallOK   bool
+	ServerFirewallOK  bool
+	NoShareLinkChange bool
+	NoFullClientLink  bool
+	NoCutover         bool
 	RouteName         string
 }
 
-func executeTransitRouteCreateDryRun(cfg config, hostname string, command workerCommand) (map[string]any, error) {
+type transitRouteCreateArtifacts struct {
+	ServiceWritten  bool
+	ServiceStarted  bool
+	DaemonReloaded  bool
+	ServiceEnabled  bool
+	RollbackAttempt bool
+}
+
+func executeTransitRouteCreate(cfg config, hostname string, command workerCommand) (map[string]any, error) {
 	request, err := parseTransitRouteCreateRequest(command.Payload)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateTransitRouteCreateRequest(request); err != nil {
+	if request.DryRun {
+		return executeTransitRouteCreateDryRunWithRequest(cfg, hostname, command, request)
+	}
+	return executeTransitRouteCreateReal(cfg, hostname, request)
+}
+
+func executeTransitRouteCreateDryRunWithRequest(cfg config, hostname string, command workerCommand, request transitRouteCreateRequest) (map[string]any, error) {
+	if err := validateTransitRouteCreateDryRunRequest(request); err != nil {
 		return nil, err
 	}
 	if cfg.InterfaceName != approvedTransitInterfaceName {
@@ -637,6 +665,96 @@ func executeTransitRouteCreateDryRun(cfg config, hostname string, command worker
 	}, nil
 }
 
+func executeTransitRouteCreateReal(cfg config, hostname string, request transitRouteCreateRequest) (map[string]any, error) {
+	if err := validateTransitRouteCreateRealRequest(cfg, request); err != nil {
+		return nil, err
+	}
+	if os.Geteuid() != 0 {
+		return nil, errors.New("transit_route_create real execution must run as root because systemd service is managed")
+	}
+	if _, err := os.Stat("/usr/bin/socat"); err != nil {
+		return nil, errors.New("transit_route_create requires existing /usr/bin/socat binary; install is not allowed by this command")
+	}
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return nil, errors.New("transit_route_create requires systemctl")
+	}
+	if _, err := os.Stat(approvedTransitSocatServicePath); err == nil {
+		return nil, fmt.Errorf("transit_route_create refuses to overwrite existing service %s", approvedTransitSocatServicePath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("transit_route_create cannot inspect service path: %w", err)
+	}
+	if portListening(approvedTransitListenPort) {
+		return nil, fmt.Errorf("transit_route_create approved TCP port %d is already listening", approvedTransitListenPort)
+	}
+	reachable, reachDetail := tcpReachability(approvedTransitLandingTargetHost, approvedTransitLandingTargetPort)
+	if !reachable {
+		return nil, fmt.Errorf("transit_route_create landing target is not reachable: %s", reachDetail)
+	}
+
+	artifacts := &transitRouteCreateArtifacts{}
+	rollbackOnError := func(err error) (map[string]any, error) {
+		rollbackTransitRouteCreate(artifacts)
+		return nil, err
+	}
+
+	if err := writeApprovedTransitSocatService(); err != nil {
+		return rollbackOnError(fmt.Errorf("transit_route_create failed to write systemd service: %w", err))
+	}
+	artifacts.ServiceWritten = true
+	if _, err := runCommand(30*time.Second, "systemctl", "daemon-reload"); err != nil {
+		return rollbackOnError(fmt.Errorf("transit_route_create daemon-reload failed: %w", err))
+	}
+	artifacts.DaemonReloaded = true
+	if _, err := runCommand(45*time.Second, "systemctl", "enable", "--now", approvedTransitSocatServiceName); err != nil {
+		return rollbackOnError(fmt.Errorf("transit_route_create enable/start failed: %w", err))
+	}
+	artifacts.ServiceEnabled = true
+	artifacts.ServiceStarted = true
+	if err := verifyApprovedTransitSocatActiveAndListening(); err != nil {
+		return rollbackOnError(err)
+	}
+
+	return map[string]any{
+		"status":              "succeeded",
+		"execution_mode":      "real_create",
+		"real_execution":      true,
+		"summary":             "Approved socat transit route created and verified for listen 23843 to landing target 27939.",
+		"worker_version":      workerVersion,
+		"hostname":            hostname,
+		"role":                cfg.Role,
+		"interface_name":      cfg.InterfaceName,
+		"transit_resource_id": request.TransitResourceID,
+		"landing_node_id":     request.LandingNodeID,
+		"planned_listen_port": approvedTransitListenPort,
+		"landing_target_host": approvedTransitLandingTargetHost,
+		"landing_target_port": approvedTransitLandingTargetPort,
+		"forwarding_method":   approvedTransitForwardingMethod,
+		"purpose":             request.Purpose,
+		"approval_stage":      request.ApprovalStage,
+		"route_name":          approvedTransitRouteName,
+		"service_name":        approvedTransitSocatServiceName,
+		"service_path":        approvedTransitSocatServicePath,
+		"checks": []any{
+			map[string]any{"name": "approved_parameters_match", "passed": true},
+			map[string]any{"name": "planned_port_available", "passed": true},
+			map[string]any{"name": "landing_target_reachable", "passed": true},
+			map[string]any{"name": "fixed_socat_service_active", "passed": true},
+			map[string]any{"name": "listener_verified", "passed": true},
+			map[string]any{"name": "no_node_share_link_read_or_modified", "passed": true},
+		},
+		"safety_boundary": []any{
+			"approved real create only",
+			"fixed socat template only",
+			"no arbitrary shell accepted",
+			"no firewall mutation",
+			"no Xray mutation",
+			"no nodes.share_link read or modification",
+			"no full client link export",
+			"no cutover",
+		},
+	}, nil
+}
+
 func parseTransitRouteCreateRequest(payload map[string]any) (transitRouteCreateRequest, error) {
 	if path, ok := firstUnsafeTransitCreatePayloadKey(payload); ok {
 		return transitRouteCreateRequest{}, fmt.Errorf("transit_route_create payload contains unsupported execution field %s", path)
@@ -652,21 +770,20 @@ func parseTransitRouteCreateRequest(payload map[string]any) (transitRouteCreateR
 		ApprovalStage:     stringPayload(payload, "approval_stage"),
 		DryRun:            boolPayload(payload, "dry_run"),
 		ApprovalRequired:  boolPayload(payload, "approval_required"),
-		RouteName:         defaultStringPayload(payload, "route_name", "hk-socat-live-23843"),
+		ExecutionMode:     stringPayload(payload, "execution_mode"),
+		ApprovedReal:      boolPayload(payload, "approved_real_execution"),
+		SecurityGroupOK:   boolPayload(payload, "firewall_security_group_confirmed"),
+		CloudFirewallOK:   boolPayload(payload, "cloud_firewall_confirmed"),
+		ServerFirewallOK:  boolPayload(payload, "server_firewall_confirmed"),
+		NoShareLinkChange: boolPayload(payload, "no_node_share_link_change_confirmed"),
+		NoFullClientLink:  boolPayload(payload, "no_full_client_link_confirmed"),
+		NoCutover:         boolPayload(payload, "no_cutover_confirmed"),
+		RouteName:         defaultStringPayload(payload, "route_name", approvedTransitRouteName),
 	}
 	return request, nil
 }
 
-func validateTransitRouteCreateRequest(request transitRouteCreateRequest) error {
-	if !request.DryRun {
-		return errors.New("transit_route_create requires dry_run=true until Stage 3.3.72")
-	}
-	if !request.ApprovalRequired {
-		return errors.New("transit_route_create requires approval_required=true")
-	}
-	if request.ApprovalStage != approvedTransitCreateStage {
-		return errors.New("transit_route_create approval_stage does not match Stage 3.3.71")
-	}
+func validateTransitRouteCreateApprovedParams(request transitRouteCreateRequest) error {
 	if request.TransitResourceID != approvedTransitResourceID {
 		return errors.New("transit_route_create transit_resource_id is not approved")
 	}
@@ -697,8 +814,110 @@ func validateTransitRouteCreateRequest(request transitRouteCreateRequest) error 
 	return nil
 }
 
+func validateTransitRouteCreateDryRunRequest(request transitRouteCreateRequest) error {
+	if !request.DryRun {
+		return errors.New("transit_route_create dry-run requires dry_run=true")
+	}
+	if !request.ApprovalRequired {
+		return errors.New("transit_route_create dry-run requires approval_required=true")
+	}
+	if request.ApprovalStage != approvedTransitCreateStage {
+		return errors.New("transit_route_create approval_stage does not match Stage 3.3.71")
+	}
+	return validateTransitRouteCreateApprovedParams(request)
+}
+
+func validateTransitRouteCreateRealRequest(cfg config, request transitRouteCreateRequest) error {
+	if request.DryRun {
+		return errors.New("transit_route_create real execution requires dry_run=false")
+	}
+	if request.ApprovalRequired {
+		return errors.New("transit_route_create real execution requires approval_required=false")
+	}
+	if request.ExecutionMode != "real_create" {
+		return errors.New("transit_route_create real execution requires execution_mode=real_create")
+	}
+	if request.ApprovalStage != approvedTransitRealCreateStage {
+		return errors.New("transit_route_create approval_stage does not match Stage 3.3.73d")
+	}
+	if !request.ApprovedReal {
+		return errors.New("transit_route_create requires approved_real_execution=true")
+	}
+	if !request.SecurityGroupOK || !request.CloudFirewallOK || !request.ServerFirewallOK {
+		return errors.New("transit_route_create requires firewall confirmations")
+	}
+	if !request.NoShareLinkChange || !request.NoFullClientLink || !request.NoCutover {
+		return errors.New("transit_route_create requires no share-link, no full-link, and no-cutover confirmations")
+	}
+	if request.RouteName != approvedTransitRouteName {
+		return errors.New("transit_route_create route_name is not approved")
+	}
+	if cfg.WorkerID != approvedTransitWorkerID {
+		return errors.New("transit_route_create worker_id is not approved")
+	}
+	if cfg.InterfaceName != approvedTransitInterfaceName {
+		return fmt.Errorf("transit_route_create interface %s is not approved", cfg.InterfaceName)
+	}
+	return validateTransitRouteCreateApprovedParams(request)
+}
+
 func transitSocatServiceNameFor(commandID string) string {
 	return fmt.Sprintf("%s-%s.service", transitSocatServicePrefix, strings.ReplaceAll(commandID, "-", ""))
+}
+
+func approvedTransitSocatServiceContent() string {
+	return fmt.Sprintf(`[Unit]
+Description=LiveLine approved socat transit route 23843
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/socat TCP-LISTEN:%d,fork,reuseaddr TCP:%s:%d
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+`, approvedTransitListenPort, approvedTransitLandingTargetHost, approvedTransitLandingTargetPort)
+}
+
+func writeApprovedTransitSocatService() error {
+	return os.WriteFile(approvedTransitSocatServicePath, []byte(approvedTransitSocatServiceContent()), 0o644)
+}
+
+func verifyApprovedTransitSocatActiveAndListening() error {
+	output, err := runCommand(30*time.Second, "systemctl", "is-active", approvedTransitSocatServiceName)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(output) != "active" {
+		return fmt.Errorf("%s is not active", approvedTransitSocatServiceName)
+	}
+	if !portListening(approvedTransitListenPort) {
+		return fmt.Errorf("approved TCP port %d is not listening after socat start", approvedTransitListenPort)
+	}
+	return nil
+}
+
+func rollbackTransitRouteCreate(artifacts *transitRouteCreateArtifacts) {
+	if artifacts == nil {
+		return
+	}
+	artifacts.RollbackAttempt = true
+	if artifacts.ServiceStarted {
+		_, _ = runCommand(30*time.Second, "systemctl", "stop", approvedTransitSocatServiceName)
+	}
+	if artifacts.ServiceEnabled {
+		_, _ = runCommand(30*time.Second, "systemctl", "disable", approvedTransitSocatServiceName)
+	}
+	if artifacts.ServiceWritten {
+		_ = os.Remove(approvedTransitSocatServicePath)
+	}
+	if artifacts.DaemonReloaded || artifacts.ServiceWritten {
+		_, _ = runCommand(30*time.Second, "systemctl", "daemon-reload")
+	}
 }
 
 func firstUnsafeTransitCreatePayloadKey(value any) (string, bool) {
@@ -709,6 +928,9 @@ func firstUnsafeTransitCreatePayloadKey(value any) (string, bool) {
 		"args":            true,
 		"argv":            true,
 		"script":          true,
+		"planned_service": true,
+		"service_name":    true,
+		"service_path":    true,
 		"systemd_unit":    true,
 		"unit_content":    true,
 		"service_content": true,
@@ -1963,6 +2185,23 @@ func compactTransitRouteCreateResultBase(result map[string]any) map[string]any {
 	if executionMode == "" {
 		executionMode = "dry_run"
 	}
+	safetyBoundary := []any{
+		"dry_run_only",
+		"no_listener_binding",
+		"no_service_created",
+		"no_firewall_mutation",
+		"no_cutover",
+	}
+	if executionMode == "real_create" {
+		safetyBoundary = []any{
+			"approved_real_create_only",
+			"fixed_socat_template_only",
+			"no_firewall_mutation",
+			"no_xray_mutation",
+			"no_nodes_share_link_change",
+			"no_cutover",
+		}
+	}
 	compacted := map[string]any{
 		"execution_mode":        executionMode,
 		"real_execution":        boolResultValue(result["real_execution"]),
@@ -1978,15 +2217,11 @@ func compactTransitRouteCreateResultBase(result map[string]any) map[string]any {
 		"forwarding_method":     truncateCompactString(stringResultValue(result["forwarding_method"]), 16),
 		"route_name":            truncateCompactString(stringResultValue(result["route_name"]), 120),
 		"planned_service_name":  truncateCompactString(plannedServiceField(result["planned_service"], "name"), 120),
+		"service_name":          truncateCompactString(stringResultValue(result["service_name"]), 120),
+		"service_path":          truncateCompactString(stringResultValue(result["service_path"]), 160),
 		"checks_count":          checksCount(result["checks"]),
 		"planned_actions_count": listCount(result["planned_actions"]),
-		"safety_boundary": []any{
-			"dry_run_only",
-			"no_listener_binding",
-			"no_service_created",
-			"no_firewall_mutation",
-			"no_cutover",
-		},
+		"safety_boundary":       safetyBoundary,
 	}
 	return compacted
 }

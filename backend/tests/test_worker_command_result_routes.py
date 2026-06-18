@@ -81,7 +81,7 @@ def fake_worker() -> Worker:
         id="worker-1",
         role="transit",
         status="online",
-        worker_version="0.1.18-stage-3.3.72",
+        worker_version="0.1.19-stage-3.3.73",
         worker_secret_hash="hash",
     )
 
@@ -148,7 +148,7 @@ class WorkerCommandResultRouteTests(unittest.TestCase):
                     "real_execution": False,
                     "status": "approval_required",
                     "summary": "Transit route create dry-run accepted.",
-                    "worker_version": "0.1.18-stage-3.3.72",
+                    "worker_version": "0.1.19-stage-3.3.73",
                     "hostname": "WEPC202605221223335",
                     "role": "transit",
                     "interface_name": "eth0",

@@ -5,13 +5,18 @@ TRANSIT_ROUTE_STATUSES = {"creating", "active", "disabled", "error"}
 SSH_RESERVED_PORT = 20575
 PROTECTED_CREATE_PORTS = {22, 8443, 18443, 20575}
 APPROVED_TRANSIT_ROUTE_CREATE_STAGE = "Stage 3.3.71-transit-route-worker-create-path"
+APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE = "Stage 3.3.73d-transit-route-real-create-code-path"
 APPROVED_TRANSIT_RESOURCE_ID = "1e222459-9fa2-4c62-800f-a3b35edb7df8"
+APPROVED_TRANSIT_WORKER_ID = "f2e16197-e953-46dd-90af-66f64759a2a9"
 APPROVED_LANDING_NODE_ID = "a71472c6-f62c-43b5-a223-9f5f070ae4ef"
 APPROVED_TRANSIT_LISTEN_PORT = 23843
 APPROVED_TRANSIT_INTERFACE_NAME = "eth0"
 APPROVED_LANDING_TARGET_HOST = "64.90.13.19"
 APPROVED_LANDING_TARGET_PORT = 27939
 APPROVED_TRANSIT_FORWARDING_METHOD = "socat"
+APPROVED_TRANSIT_ROUTE_NAME = "hk-socat-live-23843"
+APPROVED_TRANSIT_SERVICE_NAME = "liveline-socat-23843.service"
+APPROVED_TRANSIT_SERVICE_PATH = "/etc/systemd/system/liveline-socat-23843.service"
 PROTECTED_CREATE_PORT_MESSAGES = {
     22: "22 是 SSH 端口，不能作为中转监听端口。",
     8443: "8443 当前保留给 gost 回退链路，不能作为新转发端口。",
@@ -188,4 +193,62 @@ class TransitRouteWorkerCreatePlanRequest(BaseModel):
         cleaned = value.strip()
         if cleaned != APPROVED_TRANSIT_ROUTE_CREATE_STAGE:
             raise ValueError("approval_stage 不匹配当前审批阶段")
+        return cleaned
+
+
+class TransitRouteWorkerCreateExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transit_resource_id: str = Field(min_length=1, max_length=36)
+    landing_node_id: str = Field(min_length=1, max_length=36)
+    planned_listen_port: int = Field(ge=1, le=65535)
+    landing_target_host: str = Field(min_length=1, max_length=255)
+    landing_target_port: int = Field(ge=1, le=65535)
+    forwarding_method: str = "socat"
+    purpose: str | None = Field(default=None, max_length=120)
+    route_name: str = APPROVED_TRANSIT_ROUTE_NAME
+    approval_stage: str = APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE
+    dry_run: bool = False
+    approval_required: bool = False
+    user_approved_real_execution: bool = False
+    firewall_security_group_confirmed: bool = False
+    cloud_firewall_confirmed: bool = False
+    server_firewall_confirmed: bool = False
+    no_node_share_link_change_confirmed: bool = False
+    no_full_client_link_confirmed: bool = False
+    no_cutover_confirmed: bool = False
+
+    @field_validator("forwarding_method")
+    @classmethod
+    def validate_execute_forwarding_method(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if cleaned not in FORWARDING_METHODS:
+            raise ValueError("forwarding_method 不支持")
+        return cleaned
+
+    @field_validator("purpose")
+    @classmethod
+    def clean_execute_purpose(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        lowered = cleaned.lower()
+        if "://" in lowered or "private key" in lowered or "token" in lowered or "password" in lowered:
+            raise ValueError("purpose 不能包含链接、token、密码或私钥内容")
+        return cleaned or None
+
+    @field_validator("route_name")
+    @classmethod
+    def validate_execute_route_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if cleaned != APPROVED_TRANSIT_ROUTE_NAME:
+            raise ValueError("route_name 不匹配当前审批记录")
+        return cleaned
+
+    @field_validator("approval_stage")
+    @classmethod
+    def validate_execute_approval_stage(cls, value: str) -> str:
+        cleaned = value.strip()
+        if cleaned != APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE:
+            raise ValueError("approval_stage 不匹配当前真实执行审批阶段")
         return cleaned

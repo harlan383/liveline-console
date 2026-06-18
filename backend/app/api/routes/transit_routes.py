@@ -16,7 +16,10 @@ from app.schemas.transit_route import (
     APPROVED_TRANSIT_FORWARDING_METHOD,
     APPROVED_TRANSIT_INTERFACE_NAME,
     APPROVED_TRANSIT_LISTEN_PORT,
+    APPROVED_TRANSIT_ROUTE_NAME,
     APPROVED_TRANSIT_RESOURCE_ID,
+    APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
+    APPROVED_TRANSIT_WORKER_ID,
     APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
     PROTECTED_CREATE_PORT_MESSAGES,
     PROTECTED_CREATE_PORTS,
@@ -24,6 +27,7 @@ from app.schemas.transit_route import (
     ReadonlyPreflightPlanRequest,
     ReadonlyPreflightPlanResponse,
     TransitReadonlyPreflightCommandRequest,
+    TransitRouteWorkerCreateExecuteRequest,
     TransitRouteWorkerCreatePlanRequest,
 )
 from app.services.auth_service import record_audit
@@ -64,6 +68,18 @@ TRANSIT_ROUTE_CREATE_DRY_RUN_BOUNDARY = [
     "no Xray modification",
     "no nodes.share_link read or modification",
     "no full client link export",
+    "no cutover",
+]
+TRANSIT_ROUTE_CREATE_REAL_BOUNDARY = [
+    "approved real create only for hk-socat-live-23843",
+    "no arbitrary shell accepted",
+    "no systemd unit content accepted from API",
+    "fixed socat forwarding template only",
+    "no nodes.share_link read or modification",
+    "no full client link export",
+    "no Xray modification",
+    "no landing node configuration modification",
+    "no firewall or cloud security group change",
     "no cutover",
 ]
 READONLY_PREFLIGHT_SAFETY_BOUNDARY = [
@@ -196,6 +212,18 @@ def has_matching_successful_transit_readonly_preflight(
         if result.get("passed") is True or result.get("status") == "passed":
             return True
     return False
+
+
+def has_in_flight_transit_route_create_command(db: Session, transit_resource_id: str) -> bool:
+    command = db.scalar(
+        select(WorkerCommand)
+        .where(WorkerCommand.command_type == TRANSIT_ROUTE_CREATE_COMMAND)
+        .where(WorkerCommand.server_type == "transit")
+        .where(WorkerCommand.server_id == transit_resource_id)
+        .where(WorkerCommand.status.in_(("pending", "running", "claimed")))
+        .order_by(WorkerCommand.created_at.desc())
+    )
+    return command is not None
 
 
 def future_preflight_check(check_id: str, label: str, category: str) -> ReadonlyPreflightPlanCheck:
@@ -717,4 +745,189 @@ def create_transit_route_worker_create_plan(
             "safety_boundary": TRANSIT_ROUTE_CREATE_DRY_RUN_BOUNDARY,
         },
         "中转链路 Worker 创建路径 dry-run command 已创建；不会创建真实转发。",
+    )
+
+
+@router.post("/worker-create-execute")
+def create_transit_route_worker_create_execute(
+    payload: TransitRouteWorkerCreateExecuteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    if payload.dry_run:
+        return error_response(400, "TRANSIT_ROUTE_REAL_CREATE_REQUIRED", "真实执行入口必须 dry_run=false。")
+    if payload.approval_required:
+        return error_response(
+            400,
+            "TRANSIT_ROUTE_APPROVAL_ALREADY_REQUIRED",
+            "Stage 3.3.73d 需要显式真实执行授权，approval_required 必须为 false。",
+        )
+    if not payload.user_approved_real_execution:
+        return error_response(400, "REAL_EXECUTION_APPROVAL_REQUIRED", "必须确认允许真实创建本次固定中转链路。")
+    if not payload.firewall_security_group_confirmed:
+        return error_response(400, "SECURITY_GROUP_CONFIRMATION_REQUIRED", "必须确认云安全组已放行 23843/TCP。")
+    if not payload.cloud_firewall_confirmed:
+        return error_response(400, "CLOUD_FIREWALL_CONFIRMATION_REQUIRED", "必须确认云防火墙已放行 23843/TCP。")
+    if not payload.server_firewall_confirmed:
+        return error_response(400, "SERVER_FIREWALL_CONFIRMATION_REQUIRED", "必须确认服务器防火墙已放行或无阻断。")
+    if not payload.no_node_share_link_change_confirmed:
+        return error_response(
+            400,
+            "NODE_SHARE_LINK_BOUNDARY_REQUIRED",
+            "必须确认本阶段不读取或修改 nodes.share_link。",
+        )
+    if not payload.no_full_client_link_confirmed:
+        return error_response(400, "NO_FULL_CLIENT_LINK_CONFIRMATION_REQUIRED", "必须确认不生成或展示完整节点链接。")
+    if not payload.no_cutover_confirmed:
+        return error_response(400, "NO_CUTOVER_CONFIRMATION_REQUIRED", "必须确认本阶段不执行 cutover。")
+
+    if payload.approval_stage != APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE:
+        return error_response(400, "APPROVAL_STAGE_MISMATCH", "真实执行审批阶段不匹配。")
+    if payload.transit_resource_id != APPROVED_TRANSIT_RESOURCE_ID:
+        return error_response(400, "TRANSIT_RESOURCE_APPROVAL_MISMATCH", "中转资源与审批记录不一致。")
+    if payload.landing_node_id != APPROVED_LANDING_NODE_ID:
+        return error_response(400, "LANDING_NODE_APPROVAL_MISMATCH", "落地节点与审批记录不一致。")
+    if payload.planned_listen_port != APPROVED_TRANSIT_LISTEN_PORT:
+        return error_response(400, "LISTEN_PORT_APPROVAL_MISMATCH", "监听端口与审批记录不一致。")
+    if payload.landing_target_host != APPROVED_LANDING_TARGET_HOST:
+        return error_response(400, "LANDING_HOST_APPROVAL_MISMATCH", "落地目标 Host 与审批记录不一致。")
+    if payload.landing_target_port != APPROVED_LANDING_TARGET_PORT:
+        return error_response(400, "LANDING_PORT_APPROVAL_MISMATCH", "落地目标端口与审批记录不一致。")
+    if payload.forwarding_method != APPROVED_TRANSIT_FORWARDING_METHOD:
+        return error_response(400, "FORWARDING_METHOD_APPROVAL_MISMATCH", "转发方式与审批记录不一致。")
+    if payload.route_name != APPROVED_TRANSIT_ROUTE_NAME:
+        return error_response(400, "ROUTE_NAME_APPROVAL_MISMATCH", "线路名称与审批记录不一致。")
+    if payload.planned_listen_port in PROTECTED_CREATE_PORTS:
+        return error_response(
+            400,
+            "PROTECTED_LISTEN_PORT",
+            PROTECTED_CREATE_PORT_MESSAGES[payload.planned_listen_port],
+        )
+
+    resource = db.get(TransitResource, payload.transit_resource_id)
+    if not resource or resource.deleted_at is not None:
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转服务器记录不存在。")
+    if resource.resource_type != "server":
+        return error_response(400, "TRANSIT_RESOURCE_TYPE_UNSUPPORTED", "只允许 server 类型中转资源执行真实创建。")
+    if resource.status == "disabled":
+        return error_response(400, "TRANSIT_RESOURCE_DISABLED", "已停用的中转资源不能执行真实创建。")
+
+    node = db.get(Node, payload.landing_node_id)
+    if not node or node.deleted_at is not None:
+        return error_response(404, "LANDING_NODE_NOT_FOUND", "落地节点不存在。")
+    if node.status != "active":
+        return error_response(400, "LANDING_NODE_NOT_ACTIVE", "只允许 active 落地节点执行真实创建。")
+    landing_host = node.vps.ip if node.vps else None
+    if landing_host != payload.landing_target_host:
+        return error_response(400, "LANDING_HOST_MISMATCH", "落地节点当前 IP 与审批目标不一致。")
+    if node.xray_port != payload.landing_target_port:
+        return error_response(400, "LANDING_TARGET_PORT_MISMATCH", "落地节点当前端口与审批目标不一致。")
+
+    existing_route = db.scalar(
+        select(TransitRoute).where(
+            TransitRoute.transit_resource_id == resource.id,
+            TransitRoute.listen_port == payload.planned_listen_port,
+            TransitRoute.status.in_(("creating", "active")),
+            TransitRoute.deleted_at.is_(None),
+        )
+    )
+    if existing_route:
+        return error_response(409, "TRANSIT_PORT_ALREADY_PLANNED", "该中转资源已有相同监听端口的 creating/active 线路记录。")
+
+    if has_in_flight_transit_route_create_command(db, resource.id):
+        return error_response(409, "TRANSIT_ROUTE_CREATE_COMMAND_IN_FLIGHT", "当前已有 pending/running/claimed 中转链路创建命令。")
+
+    if not has_matching_successful_transit_readonly_preflight(
+        db,
+        transit_resource_id=resource.id,
+        landing_node_id=node.id,
+        planned_listen_port=payload.planned_listen_port,
+        landing_target_host=payload.landing_target_host,
+        landing_target_port=payload.landing_target_port,
+        forwarding_method=payload.forwarding_method,
+    ):
+        return error_response(
+            400,
+            "READONLY_PREFLIGHT_REQUIRED",
+            "未找到匹配的已成功远程只读预检记录，不能执行真实中转链路创建。",
+        )
+
+    try:
+        target = resolve_command_target_worker(
+            db,
+            server_type="transit",
+            server_id=resource.id,
+            role="transit",
+            requested_worker_id=APPROVED_TRANSIT_WORKER_ID,
+            command_type=TRANSIT_ROUTE_CREATE_COMMAND,
+        )
+    except WorkerTargetError as exc:
+        return error_response(400, exc.code, exc.message)
+
+    target_worker = target.worker
+    if target_worker.id != APPROVED_TRANSIT_WORKER_ID:
+        return error_response(400, "WORKER_APPROVAL_MISMATCH", "目标 Worker 与审批记录不一致。")
+    if target_worker.interface_name != APPROVED_TRANSIT_INTERFACE_NAME:
+        return error_response(
+            400,
+            "WORKER_INTERFACE_MISMATCH",
+            "目标 Worker interface_name 与审批记录不一致。",
+        )
+    if target_worker.role != "transit":
+        return error_response(400, "WORKER_ROLE_MISMATCH", "只允许 transit role Worker 执行真实创建。")
+
+    command_payload = {
+        "transit_resource_id": resource.id,
+        "transit_resource_name": resource.name,
+        "landing_node_id": node.id,
+        "landing_node_name": node.node_name,
+        "planned_listen_port": payload.planned_listen_port,
+        "landing_target_host": payload.landing_target_host,
+        "landing_target_port": payload.landing_target_port,
+        "forwarding_method": payload.forwarding_method,
+        "purpose": payload.purpose,
+        "approval_stage": payload.approval_stage,
+        "dry_run": False,
+        "approval_required": False,
+        "execution_mode": "real_create",
+        "approved_real_execution": True,
+        "route_name": payload.route_name,
+        "firewall_security_group_confirmed": True,
+        "cloud_firewall_confirmed": True,
+        "server_firewall_confirmed": True,
+        "no_node_share_link_change_confirmed": True,
+        "no_full_client_link_confirmed": True,
+        "no_cutover_confirmed": True,
+        "safety_boundary": TRANSIT_ROUTE_CREATE_REAL_BOUNDARY,
+    }
+    command = create_worker_command(db, target_worker, TRANSIT_ROUTE_CREATE_COMMAND, command_payload)
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="create_transit_route_worker_create_execute",
+        result="success",
+        request=request,
+        resource_type="worker_command",
+        resource_id=command.id,
+    )
+    db.commit()
+    db.refresh(command)
+
+    return success_response(
+        {
+            "command": serialize_worker_command(command, include_payload=True, worker=target_worker),
+            "target_worker_id": target_worker.id,
+            "target_worker_version": target_worker.worker_version,
+            "minimum_supported_worker_version": minimum_worker_version_for_command(TRANSIT_ROUTE_CREATE_COMMAND),
+            "execution_mode": "real_create",
+            "approval_required": False,
+            "safety_boundary": TRANSIT_ROUTE_CREATE_REAL_BOUNDARY,
+        },
+        "中转链路真实创建 Worker command 已创建；结果成功后才会写入 transit_routes，不读取或修改 nodes.share_link。",
     )

@@ -504,7 +504,7 @@ func approvedTransitRouteCreatePayload() map[string]any {
 		"approval_stage":      approvedTransitCreateStage,
 		"dry_run":             true,
 		"approval_required":   true,
-		"route_name":          "hk-socat-live-23843",
+		"route_name":          approvedTransitRouteName,
 		"safety_boundary":     []any{"dry-run plan only", "no arbitrary shell accepted"},
 	}
 }
@@ -515,13 +515,13 @@ func TestTransitRouteCreateDryRunReturnsPlanOnly(t *testing.T) {
 		CommandType: "transit_route_create",
 		Payload:     approvedTransitRouteCreatePayload(),
 	}
-	result, err := executeTransitRouteCreateDryRun(
+	result, err := executeTransitRouteCreate(
 		config{Role: "transit", InterfaceName: "eth0"},
 		"WEPC202605221223335",
 		command,
 	)
 	if err != nil {
-		t.Fatalf("executeTransitRouteCreateDryRun returned error: %v", err)
+		t.Fatalf("executeTransitRouteCreate returned error: %v", err)
 	}
 	if result["execution_mode"] != "dry_run" {
 		t.Fatalf("execution_mode = %#v, want dry_run", result["execution_mode"])
@@ -566,9 +566,9 @@ func TestTransitRouteCreateDryRunRejectsNonApprovedPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.PlannedListenPort = 24731
-	err = validateTransitRouteCreateRequest(request)
+	err = validateTransitRouteCreateDryRunRequest(request)
 	if err == nil {
-		t.Fatal("validateTransitRouteCreateRequest returned nil for non-approved port")
+		t.Fatal("validateTransitRouteCreateDryRunRequest returned nil for non-approved port")
 	}
 	if !strings.Contains(err.Error(), "planned_listen_port is not approved") {
 		t.Fatalf("error = %q, want planned_listen_port approval error", err.Error())
@@ -581,12 +581,123 @@ func TestTransitRouteCreateDryRunRejectsNonApprovedLandingTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.LandingTargetHost = "203.0.113.10"
-	err = validateTransitRouteCreateRequest(request)
+	err = validateTransitRouteCreateDryRunRequest(request)
 	if err == nil {
-		t.Fatal("validateTransitRouteCreateRequest returned nil for non-approved target")
+		t.Fatal("validateTransitRouteCreateDryRunRequest returned nil for non-approved target")
 	}
 	if !strings.Contains(err.Error(), "landing_target_host is not approved") {
 		t.Fatalf("error = %q, want landing_target_host approval error", err.Error())
+	}
+}
+
+func approvedTransitRouteCreateRealPayload() map[string]any {
+	payload := approvedTransitRouteCreatePayload()
+	payload["approval_stage"] = approvedTransitRealCreateStage
+	payload["dry_run"] = false
+	payload["approval_required"] = false
+	payload["execution_mode"] = "real_create"
+	payload["approved_real_execution"] = true
+	payload["firewall_security_group_confirmed"] = true
+	payload["cloud_firewall_confirmed"] = true
+	payload["server_firewall_confirmed"] = true
+	payload["no_node_share_link_change_confirmed"] = true
+	payload["no_full_client_link_confirmed"] = true
+	payload["no_cutover_confirmed"] = true
+	return payload
+}
+
+func TestTransitRouteCreateRealRequestRejectsNonApprovedPort(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.PlannedListenPort = 24731
+	err = validateTransitRouteCreateRealRequest(config{Role: "transit", WorkerID: approvedTransitWorkerID, InterfaceName: approvedTransitInterfaceName}, request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRealRequest returned nil for non-approved port")
+	}
+	if !strings.Contains(err.Error(), "planned_listen_port is not approved") {
+		t.Fatalf("error = %q, want planned_listen_port approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealRequestRejectsNonApprovedTarget(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.LandingTargetHost = "203.0.113.10"
+	err = validateTransitRouteCreateRealRequest(config{Role: "transit", WorkerID: approvedTransitWorkerID, InterfaceName: approvedTransitInterfaceName}, request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRealRequest returned nil for non-approved target")
+	}
+	if !strings.Contains(err.Error(), "landing_target_host is not approved") {
+		t.Fatalf("error = %q, want landing_target_host approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealRequestRejectsUnsafePayload(t *testing.T) {
+	payload := approvedTransitRouteCreateRealPayload()
+	payload["systemd_unit"] = "[Service]\nExecStart=/bin/true"
+	_, err := parseTransitRouteCreateRequest(payload)
+	if err == nil {
+		t.Fatal("parseTransitRouteCreateRequest returned nil for systemd_unit payload")
+	}
+	if !strings.Contains(err.Error(), "unsupported execution field") {
+		t.Fatalf("error = %q, want unsupported execution field", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealRequestRequiresApprovedWorker(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateRealRequest(config{Role: "transit", WorkerID: "other-worker", InterfaceName: approvedTransitInterfaceName}, request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRealRequest returned nil for wrong worker")
+	}
+	if !strings.Contains(err.Error(), "worker_id is not approved") {
+		t.Fatalf("error = %q, want worker approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealResultCompactKeepsServiceFields(t *testing.T) {
+	result := map[string]any{
+		"execution_mode":      "real_create",
+		"real_execution":      true,
+		"status":              "succeeded",
+		"summary":             "approved route created",
+		"hostname":            "WEPC202605221223335",
+		"role":                "transit",
+		"interface_name":      approvedTransitInterfaceName,
+		"planned_listen_port": approvedTransitListenPort,
+		"landing_target_host": approvedTransitLandingTargetHost,
+		"landing_target_port": approvedTransitLandingTargetPort,
+		"forwarding_method":   approvedTransitForwardingMethod,
+		"route_name":          approvedTransitRouteName,
+		"service_name":        approvedTransitSocatServiceName,
+		"service_path":        approvedTransitSocatServicePath,
+		"checks":              []any{map[string]any{"name": "listener_verified", "passed": true}},
+	}
+	submitResult, info := prepareCommandResultForSubmit("transit_route_create", sanitizeCommandResult("transit_route_create", result))
+	if !info.CompactApplied {
+		t.Fatal("CompactApplied = false, want true for transit_route_create")
+	}
+	if stringResultValue(submitResult["service_name"]) != approvedTransitSocatServiceName {
+		t.Fatalf("service_name = %#v", submitResult["service_name"])
+	}
+	if stringResultValue(submitResult["service_path"]) != approvedTransitSocatServicePath {
+		t.Fatalf("service_path = %#v", submitResult["service_path"])
+	}
+	text, err := json.Marshal(submitResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"vless://", "X-Worker-Secret", "worker_secret"} {
+		if strings.Contains(string(text), forbidden) {
+			t.Fatalf("compact result leaked %q: %s", forbidden, string(text))
+		}
 	}
 }
 

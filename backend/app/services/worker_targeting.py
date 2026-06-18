@@ -16,8 +16,8 @@ MIN_LANDING_NODE_CREATE_VERSION = "0.1.6-stage-3.3.37"
 MIN_LANDING_NODE_CREATE_VERSION_KEY = (0, 1, 6, 3, 3, 37)
 MIN_TRANSIT_READONLY_PREFLIGHT_VERSION = "0.1.8-stage-3.3.68"
 MIN_TRANSIT_READONLY_PREFLIGHT_VERSION_KEY = (0, 1, 8, 3, 3, 68)
-MIN_TRANSIT_ROUTE_CREATE_VERSION = "0.1.18-stage-3.3.72"
-MIN_TRANSIT_ROUTE_CREATE_VERSION_KEY = (0, 1, 18, 3, 3, 72)
+MIN_TRANSIT_ROUTE_CREATE_VERSION = "0.1.19-stage-3.3.73"
+MIN_TRANSIT_ROUTE_CREATE_VERSION_KEY = (0, 1, 19, 3, 3, 73)
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+))?$")
 
 
@@ -141,7 +141,16 @@ def resolve_command_target_worker(
             "当前在线 Worker 不支持检查命令，请重新安装或升级 liveline-worker。",
         )
 
-    target = sorted(command_capable_workers, key=worker_sort_key, reverse=True)[0]
+    if requested_worker_id:
+        requested_workers = [worker for worker in command_capable_workers if worker.id == requested_worker_id]
+        if not requested_workers:
+            raise WorkerTargetError(
+                "REQUESTED_WORKER_NOT_AVAILABLE",
+                "审批指定 Worker 不在线、不匹配角色，或不支持该命令。",
+            )
+        target = sorted(requested_workers, key=worker_sort_key, reverse=True)[0]
+    else:
+        target = sorted(command_capable_workers, key=worker_sort_key, reverse=True)[0]
     return WorkerTargetResolution(
         worker=target,
         changed=bool(requested_worker_id and target.id != requested_worker_id),
