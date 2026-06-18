@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.13-stage-3.3.68"
+const workerVersion = "0.1.14-stage-3.3.68"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -1841,16 +1841,16 @@ func postJSONViaCurl(endpointURL string, headers map[string]string, payload any,
 	}
 	defer cleanupResponse()
 
-	configText := buildCurlConfig(endpointURL, headers, bodyPath, responsePath)
-	configPath, cleanupConfig, err := writeCurlFallbackTempFile("liveline-worker-curl-config-*.conf", []byte(configText))
+	headerText := buildCurlHeaderFile(headers)
+	headerPath, cleanupHeader, err := writeCurlFallbackTempFile("liveline-worker-curl-headers-*.txt", []byte(headerText))
 	if err != nil {
 		return err
 	}
-	defer cleanupConfig()
+	defer cleanupHeader()
 
 	ctx, cancel := context.WithTimeout(context.Background(), postJSONTimeout+2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "curl", "--config", configPath)
+	cmd := exec.CommandContext(ctx, "curl", buildCurlFallbackArgs(endpointURL, headerPath, bodyPath, responsePath)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	statusOutput, err := cmd.Output()
@@ -1859,7 +1859,7 @@ func postJSONViaCurl(endpointURL string, headers map[string]string, payload any,
 	}
 	statusText := strings.TrimSpace(string(statusOutput))
 	if err != nil {
-		return fmt.Errorf("curl fallback command failed endpoint=%s status_output=%s stderr=%s", safeEndpointLabel(endpointURL), truncateResultString(redactSensitiveLogText(statusText, headers), 80), truncateResultString(redactSensitiveLogText(stderr.String(), headers), responseBodyLogLimit))
+		return fmt.Errorf("curl fallback command failed endpoint=%s exit_code=%d status_output=%s stderr=%s", safeEndpointLabel(endpointURL), curlExitCode(err), truncateResultString(redactSensitiveLogText(statusText, headers), 80), truncateResultString(redactSensitiveLogText(stderr.String(), headers), responseBodyLogLimit))
 	}
 	statusCode, err := strconv.Atoi(statusText)
 	if err != nil {
@@ -1912,22 +1912,40 @@ func writeCurlFallbackTempFile(pattern string, contents []byte) (string, func(),
 	return path, cleanup, nil
 }
 
-func buildCurlConfig(endpointURL string, headers map[string]string, bodyPath string, responsePath string) string {
-	lines := []string{
-		"url = " + strconv.Quote(endpointURL),
-		"request = " + strconv.Quote("POST"),
-		fmt.Sprintf("max-time = %d", int(postJSONTimeout.Seconds())),
-		"silent = true",
-		"show-error = true",
-		"header = " + strconv.Quote("Content-Type: application/json"),
-		"data-binary = " + strconv.Quote("@"+bodyPath),
-		"output = " + strconv.Quote(responsePath),
-		"write-out = " + strconv.Quote("%{http_code}"),
-	}
+func buildCurlHeaderFile(headers map[string]string) string {
+	lines := []string{"Content-Type: application/json"}
 	for _, key := range sortedHeaderKeys(headers) {
-		lines = append(lines, "header = "+strconv.Quote(key+": "+headers[key]))
+		lines = append(lines, key+": "+headers[key])
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func buildCurlFallbackArgs(endpointURL string, headerPath string, bodyPath string, responsePath string) []string {
+	return []string{
+		"--silent",
+		"--show-error",
+		"--max-time",
+		fmt.Sprintf("%d", int(postJSONTimeout.Seconds())),
+		"--request",
+		"POST",
+		"--header",
+		"@" + headerPath,
+		"--data-binary",
+		"@" + bodyPath,
+		"--output",
+		responsePath,
+		"--write-out",
+		"%{http_code}",
+		endpointURL,
+	}
+}
+
+func curlExitCode(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
 
 func redactSensitiveLogText(text string, headers map[string]string) string {

@@ -420,6 +420,46 @@ modify firewall rules, does not modify Xray, does not read or modify
 Worker binary is committed for a later separately authorized Worker
 replacement; this stage does not automatically deploy it.
 
+## Hotfix 12: Worker Curl Fallback Without Config
+
+Stage 3.3.68-hotfix-12-worker-curl-fallback-no-config removes curl `--config`
+from the Worker fallback path. Production logs showed Worker
+`0.1.13-stage-3.3.68` still reached curl fallback correctly, but both `/result`
+and `/fail` fallback failed while curl attempted to read the config file. The
+problem was therefore isolated to the curl config mechanism rather than the
+backend, database, Worker token, command row, payload size, or fallback trigger
+conditions.
+
+Worker `0.1.14-stage-3.3.68` keeps the existing EOF and response-header-timeout
+trigger conditions, but invokes curl with fixed arguments instead of `--config`:
+
+- headers are written to a 0600 temporary header file,
+- the JSON body is written to a 0600 temporary body file,
+- the response is written to a 0600 temporary response file,
+- curl uses `--header @<header-file>` and `--data-binary @<body-file>`,
+- the Worker secret stays in the temporary header file and never appears in
+  process arguments,
+- all fallback temporary files are removed after curl exits.
+
+The fallback remains tightly scoped:
+
+- fixed result/fail endpoint allowlist only,
+- no query strings or fragments,
+- no arbitrary shell,
+- no arbitrary URL,
+- no Worker token or secret logging,
+- no complete result body logging,
+- no client link or `nodes.share_link` output.
+
+This hotfix does not change the console `/result` or `/fail` main logic, does
+not change `transit_readonly_preflight` collection logic, does not add transit
+creation capability, does not install, start, stop, or restart `socat` /
+`gost`, does not create transit routes, does not add listening ports, does not
+modify firewall rules, does not modify Xray, does not read or modify
+`nodes.share_link`, and does not perform cutover. The rebuilt Linux amd64
+Worker binary is committed for a later separately authorized Worker
+replacement; this stage does not automatically deploy it.
+
 ## Safety Boundary
 
 This stage does not:
