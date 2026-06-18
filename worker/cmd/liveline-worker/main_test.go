@@ -118,6 +118,60 @@ func TestDescribeHTTPPostErrorClassifiesHeadersTimeout(t *testing.T) {
 	}
 }
 
+func TestCurlFallbackTriggerReasonCoversPreResponseFailures(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		reason string
+	}{
+		{
+			name:   "headers timeout",
+			err:    errors.New("post console.example/api/workers/commands/id/result failed before response: response_headers_timeout: context deadline exceeded"),
+			reason: "response_headers_timeout",
+		},
+		{
+			name:   "request eof",
+			err:    errors.New("post console.example/api/workers/commands/id/result failed before response: request_error: EOF"),
+			reason: "pre_response_eof",
+		},
+		{
+			name:   "unexpected eof",
+			err:    errors.New("post console.example/api/workers/commands/id/result failed before response: unexpected EOF"),
+			reason: "unexpected_eof",
+		},
+		{
+			name:   "connection reset",
+			err:    errors.New("post console.example/api/workers/commands/id/result failed before response: read tcp: connection reset by peer"),
+			reason: "connection_reset_by_peer",
+		},
+		{
+			name:   "broken pipe",
+			err:    errors.New("post console.example/api/workers/commands/id/result failed before response: write tcp: broken pipe"),
+			reason: "broken_pipe",
+		},
+		{
+			name:   "server closed idle connection",
+			err:    errors.New("post console.example/api/workers/commands/id/result failed before response: http: server closed idle connection"),
+			reason: "server_closed_idle_connection",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := curlFallbackTriggerReason(tc.err)
+			if !ok {
+				t.Fatalf("curlFallbackTriggerReason(%v) did not trigger", tc.err)
+			}
+			if got != tc.reason {
+				t.Fatalf("reason = %q, want %q", got, tc.reason)
+			}
+		})
+	}
+
+	if reason, ok := curlFallbackTriggerReason(errors.New("read console response status=200 failed: request_error: EOF")); ok {
+		t.Fatalf("post-response EOF triggered curl fallback with reason %q", reason)
+	}
+}
+
 func TestBuildResultSubmitDebugSummaryRedactsBodyAndSensitiveValues(t *testing.T) {
 	fakeLinkMarker := "vless" + "://fake-redacted-example"
 	result := map[string]any{
@@ -290,5 +344,74 @@ func TestBuildCurlConfigDoesNotExposeSecretInArgsModel(t *testing.T) {
 	joinedArgs := strings.Join(args, " ")
 	if strings.Contains(joinedArgs, "secret-value") || strings.Contains(joinedArgs, "worker-id") {
 		t.Fatalf("curl process args leaked header values: %q", joinedArgs)
+	}
+}
+
+func TestPostJSONWithCurlFallbackUsesCurlForEOFAndReturnsSuccess(t *testing.T) {
+	oldPostJSONFunc := postJSONFunc
+	oldPostJSONViaCurlFunc := postJSONViaCurlFunc
+	defer func() {
+		postJSONFunc = oldPostJSONFunc
+		postJSONViaCurlFunc = oldPostJSONViaCurlFunc
+	}()
+
+	postJSONFunc = func(endpointURL string, headers map[string]string, payload any, out any) error {
+		return errors.New("post console.example/api/workers/commands/abc/result failed before response: request_error: EOF")
+	}
+	curlCalled := false
+	postJSONViaCurlFunc = func(endpointURL string, headers map[string]string, payload any, out any) error {
+		curlCalled = true
+		return nil
+	}
+
+	err := postJSONWithCurlFallback(
+		"http://console.example:8200/api/workers/commands/abc/result",
+		map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"},
+		map[string]any{"result": "ok"},
+		&map[string]any{},
+	)
+	if err != nil {
+		t.Fatalf("postJSONWithCurlFallback returned %v, want nil", err)
+	}
+	if !curlCalled {
+		t.Fatal("curl fallback was not called")
+	}
+}
+
+func TestPostJSONWithCurlFallbackRejectsNonResultFailFallbackTargets(t *testing.T) {
+	oldPostJSONFunc := postJSONFunc
+	oldPostJSONViaCurlFunc := postJSONViaCurlFunc
+	defer func() {
+		postJSONFunc = oldPostJSONFunc
+		postJSONViaCurlFunc = oldPostJSONViaCurlFunc
+	}()
+
+	originalErr := errors.New("post console.example failed before response: request_error: EOF")
+	postJSONFunc = func(endpointURL string, headers map[string]string, payload any, out any) error {
+		return originalErr
+	}
+	curlCalls := 0
+	postJSONViaCurlFunc = func(endpointURL string, headers map[string]string, payload any, out any) error {
+		curlCalls++
+		return nil
+	}
+
+	rejected := []string{
+		"http://console.example:8200/api/workers/commands/abc/next",
+		"http://console.example:8200/api/workers/commands/abc/result?" + "token" + "=secret",
+	}
+	for _, endpoint := range rejected {
+		err := postJSONWithCurlFallback(
+			endpoint,
+			map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"},
+			map[string]any{"result": "ok"},
+			&map[string]any{},
+		)
+		if !errors.Is(err, originalErr) {
+			t.Fatalf("postJSONWithCurlFallback(%q) error = %v, want original error", endpoint, err)
+		}
+	}
+	if curlCalls != 0 {
+		t.Fatalf("curl fallback called %d times for rejected endpoints", curlCalls)
 	}
 }
