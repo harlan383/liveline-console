@@ -1324,6 +1324,16 @@ upgrade Worker, does not trigger Worker commands, does not create routes, does
 not bind listeners, does not modify firewall/Xray/`nodes.share_link`, and does
 not perform cutover.
 
+Stage 3.3.72d-worker-result-large-post-timeout-hotfix compacts
+`transit_route_create` Worker dry-run result and fail payloads after production
+showed that roughly 2 KB result bodies could hit timeout / EOF on the
+Worker-to-console result path. The backend now normalizes compact
+`transit_route_create` dry-run results and tests large-body fast rejection before
+body read for missing auth / missing commands. This stage does not create a real
+transit route, bind `23843/TCP`, start or stop `socat` / `gost`, modify
+firewall rules, modify Xray, read or modify `nodes.share_link`, generate client
+links, or perform cutover.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2556,6 +2566,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.70 Transit route create approval | Formal pre-execution approval packet recorded for the planned Hong Kong socat transit route; no real creation, listener, firewall change, or cutover |
 | Stage 3.3.71 Transit route Worker create path | Controlled Worker dry-run create path added for the approved Hong Kong socat route; real route creation remains deferred |
 | Stage 3.3.72a Legacy SSH/RQ flow removal | Old SSH private-key / Redis temp credential / RQ operation paths removed from active code; Worker command model remains the supported remote path |
+| Stage 3.3.72d Worker result large POST timeout hotfix | `transit_route_create` Worker dry-run result/fail payloads are compacted to avoid large POST timeout/EOF; no real route creation or cutover |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
