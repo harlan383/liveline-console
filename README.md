@@ -1187,6 +1187,17 @@ source also classifies submit timeouts by phase for future authorized Worker
 upgrades; this stage does not auto-upgrade remote Workers or retry production
 commands.
 
+Stage 3.3.68-hotfix-7-worker-result-payload-diagnosis adds a local Worker
+diagnostic subcommand for transit readonly preflight payloads. The command can
+generate the real readonly preflight result on the Worker host, but it does not
+submit the result to the console. It prints only a redacted structural summary:
+payload sizes, top-level keys, check counts, per-check status and detail
+length, largest field path and length, NUL and sensitive-link marker flags, and
+whether the sanitized submit payload would exceed the soft limit. The Linux
+amd64 Worker binary is rebuilt as Worker `0.1.9-stage-3.3.68` for a later
+separately authorized Worker replacement; this stage does not auto-deploy or
+retry production commands.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2407,6 +2418,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 hotfix Worker result submit EOF | Worker result submit now sanitizes payloads, reports HTTP diagnostics, uses fallback failure submit, and requires Worker 0.1.8 for transit readonly preflight |
 | Stage 3.3.68 hotfix Worker result endpoint timeout | Worker result/fail endpoints now use bounded fast-path ingestion, ingress logs, fallback failure handling, and idempotent already-completed responses |
 | Stage 3.3.68 hotfix Worker authenticated result path | Worker-authenticated result/fail paths now log phase timings, apply short DB statement timeout, and classify Worker submit timeout phases |
+| Stage 3.3.68 hotfix Worker result payload diagnosis | Worker can locally generate transit readonly preflight results and print redacted payload diagnostics without submitting to the console |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

@@ -17,13 +17,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-const workerVersion = "0.1.8-stage-3.3.68"
+const workerVersion = "0.1.9-stage-3.3.68"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -140,6 +141,8 @@ func main() {
 		err = runRegister(os.Args[2:])
 	case "run":
 		err = runWorker(os.Args[2:])
+	case "diagnose-transit-readonly-payload":
+		err = runDiagnoseTransitReadonlyPayload(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(workerVersion)
 		return
@@ -158,6 +161,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  liveline-worker register --config /etc/liveline-worker/config.yaml --console-url URL --token TOKEN --role landing|transit --interface eth0")
 	fmt.Fprintln(os.Stderr, "  liveline-worker run --config /etc/liveline-worker/config.yaml")
+	fmt.Fprintln(os.Stderr, "  liveline-worker diagnose-transit-readonly-payload --config /etc/liveline-worker/config.yaml --payload-json JSON")
 	fmt.Fprintln(os.Stderr, "  liveline-worker version")
 }
 
@@ -289,6 +293,53 @@ func runWorker(args []string) error {
 			}
 		}
 	}
+}
+
+func runDiagnoseTransitReadonlyPayload(args []string) error {
+	fs := flag.NewFlagSet("diagnose-transit-readonly-payload", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", "/etc/liveline-worker/config.yaml", "config file path")
+	payloadJSON := fs.String("payload-json", "", "transit_readonly_preflight payload JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*payloadJSON) == "" {
+		return errors.New("payload-json is required")
+	}
+
+	cfg, err := readConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := validateConfig(cfg); err != nil {
+		return err
+	}
+	if cfg.Role != "transit" {
+		return errors.New("diagnose-transit-readonly-payload requires transit worker role")
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(*payloadJSON), &payload); err != nil {
+		return fmt.Errorf("payload-json must be a JSON object: %w", err)
+	}
+	if payload == nil {
+		return errors.New("payload-json must be a JSON object")
+	}
+
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "unknown"
+	}
+	result, err := collectTransitReadonlyPreflight(cfg, hostname, payload)
+	if err != nil {
+		return err
+	}
+	result["timestamp"] = time.Now().UTC().Format(time.RFC3339)
+
+	summary := buildResultSubmitDebugSummary("transit_readonly_preflight", result)
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(summary)
 }
 
 func validateConfig(cfg config) error {
@@ -1650,6 +1701,358 @@ func payloadSize(payload any) int {
 		return resultPayloadSoftLimit + 1
 	}
 	return len(body)
+}
+
+type resultSubmitDebugSummary struct {
+	CommandType                      string                    `json:"command_type"`
+	RawResultSize                    int                       `json:"raw_result_size"`
+	SanitizedResultSize              int                       `json:"sanitized_result_size"`
+	SubmitPayloadSize                int                       `json:"submit_payload_size"`
+	ResultKeys                       []string                  `json:"result_keys"`
+	ChecksCount                      int                       `json:"checks_count"`
+	Checks                           []resultCheckDebugSummary `json:"checks"`
+	LargestFieldPath                 string                    `json:"largest_field_path"`
+	LargestFieldLength               int                       `json:"largest_field_length"`
+	TruncationFlags                  map[string]bool           `json:"truncation_flags"`
+	SensitiveMarkerDetected          bool                      `json:"sensitive_marker_detected"`
+	ContainsNUL                      bool                      `json:"contains_nul"`
+	SanitizedPayloadExceedsSoftLimit bool                      `json:"sanitized_payload_exceeds_soft_limit"`
+	FallbackWouldBeTriggered         bool                      `json:"fallback_would_be_triggered"`
+	NonJSONFriendlyTypes             []string                  `json:"non_json_friendly_types"`
+	NoToken                          bool                      `json:"no_token"`
+	NoWorkerSecret                   bool                      `json:"no_worker_secret"`
+	NoFullBody                       bool                      `json:"no_full_body"`
+	SafetyBoundary                   []string                  `json:"safety_boundary"`
+}
+
+type resultCheckDebugSummary struct {
+	ID           string `json:"id"`
+	Status       string `json:"status"`
+	Passed       bool   `json:"passed"`
+	DetailLength int    `json:"detail_length"`
+}
+
+func buildResultSubmitDebugSummary(commandType string, result map[string]any) resultSubmitDebugSummary {
+	sanitized := sanitizeCommandResult(commandType, result)
+	submitPayload := commandResultPayload{Result: sanitized}
+	submitPayloadSize := payloadSize(submitPayload)
+	largestPath, largestLength := largestStringField(result)
+	containsNUL := valueContainsNUL(result)
+	sensitiveMarkerDetected := valueContainsSensitiveMarker(result)
+	nonJSONFriendlyTypes := collectNonJSONFriendlyTypes(result)
+
+	return resultSubmitDebugSummary{
+		CommandType:                      commandType,
+		RawResultSize:                    jsonSize(result),
+		SanitizedResultSize:              jsonSize(sanitized),
+		SubmitPayloadSize:                submitPayloadSize,
+		ResultKeys:                       safeSortedMapKeys(result),
+		ChecksCount:                      checksCount(result["checks"]),
+		Checks:                           summarizeResultChecks(result["checks"]),
+		LargestFieldPath:                 largestPath,
+		LargestFieldLength:               largestLength,
+		TruncationFlags:                  resultTruncationFlags(result),
+		SensitiveMarkerDetected:          sensitiveMarkerDetected,
+		ContainsNUL:                      containsNUL,
+		SanitizedPayloadExceedsSoftLimit: submitPayloadSize > resultPayloadSoftLimit,
+		FallbackWouldBeTriggered:         submitPayloadSize > resultPayloadSoftLimit,
+		NonJSONFriendlyTypes:             nonJSONFriendlyTypes,
+		NoToken:                          true,
+		NoWorkerSecret:                   true,
+		NoFullBody:                       true,
+		SafetyBoundary: []string{
+			"diagnostic summary only",
+			"no result submission",
+			"no arbitrary shell accepted",
+			"no socat/gost install, start, stop, or restart",
+			"no listener binding",
+			"no firewall mutation",
+			"no Xray mutation",
+			"no nodes.share_link read or modification",
+			"no cutover",
+			"no full result body included",
+		},
+	}
+}
+
+func jsonSize(value any) int {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return -1
+	}
+	return len(body)
+}
+
+func sortedMapKeys(value map[string]any) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func safeSortedMapKeys(value map[string]any) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		if sensitiveResultKey(key) {
+			keys = append(keys, "[redacted_sensitive_key]")
+		} else {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func checksCount(value any) int {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return len(typed)
+	case []any:
+		return len(typed)
+	default:
+		return 0
+	}
+}
+
+func summarizeResultChecks(value any) []resultCheckDebugSummary {
+	summaries := []resultCheckDebugSummary{}
+	appendCheck := func(check map[string]any) {
+		summaries = append(summaries, resultCheckDebugSummary{
+			ID:           stringResultValue(check["id"]),
+			Status:       stringResultValue(check["status"]),
+			Passed:       boolResultValue(check["passed"]),
+			DetailLength: len(fmt.Sprint(check["detail"])),
+		})
+	}
+	switch typed := value.(type) {
+	case []map[string]any:
+		for _, check := range typed {
+			appendCheck(check)
+		}
+	case []any:
+		for _, item := range typed {
+			if check, ok := item.(map[string]any); ok {
+				appendCheck(check)
+			}
+		}
+	}
+	return summaries
+}
+
+func largestStringField(value any) (string, int) {
+	path, length := largestStringFieldAt("$", value)
+	return path, length
+}
+
+func largestStringFieldAt(path string, value any) (string, int) {
+	switch typed := value.(type) {
+	case map[string]any:
+		bestPath := path
+		bestLength := 0
+		keys := sortedMapKeys(typed)
+		for _, key := range keys {
+			pathKey := key
+			if sensitiveResultKey(key) {
+				pathKey = "[redacted_sensitive_key]"
+			}
+			childPath, childLength := largestStringFieldAt(path+"."+pathKey, typed[key])
+			if childLength > bestLength {
+				bestPath = childPath
+				bestLength = childLength
+			}
+		}
+		return bestPath, bestLength
+	case []any:
+		bestPath := path
+		bestLength := 0
+		for index, item := range typed {
+			childPath, childLength := largestStringFieldAt(fmt.Sprintf("%s[%d]", path, index), item)
+			if childLength > bestLength {
+				bestPath = childPath
+				bestLength = childLength
+			}
+		}
+		return bestPath, bestLength
+	case []map[string]any:
+		bestPath := path
+		bestLength := 0
+		for index, item := range typed {
+			childPath, childLength := largestStringFieldAt(fmt.Sprintf("%s[%d]", path, index), item)
+			if childLength > bestLength {
+				bestPath = childPath
+				bestLength = childLength
+			}
+		}
+		return bestPath, bestLength
+	case string:
+		return path, len(typed)
+	case fmt.Stringer:
+		text := typed.String()
+		return path, len(text)
+	default:
+		return path, 0
+	}
+}
+
+func valueContainsNUL(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, item := range typed {
+			if valueContainsNUL(item) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if valueContainsNUL(item) {
+				return true
+			}
+		}
+	case []map[string]any:
+		for _, item := range typed {
+			if valueContainsNUL(item) {
+				return true
+			}
+		}
+	case string:
+		return strings.Contains(typed, "\x00")
+	case fmt.Stringer:
+		return strings.Contains(typed.String(), "\x00")
+	}
+	return false
+}
+
+func valueContainsSensitiveMarker(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, item := range typed {
+			if valueContainsSensitiveMarker(item) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if valueContainsSensitiveMarker(item) {
+				return true
+			}
+		}
+	case []map[string]any:
+		for _, item := range typed {
+			if valueContainsSensitiveMarker(item) {
+				return true
+			}
+		}
+	case string:
+		return stringContainsSensitiveMarker(typed)
+	case fmt.Stringer:
+		return stringContainsSensitiveMarker(typed.String())
+	}
+	return false
+}
+
+func stringContainsSensitiveMarker(value string) bool {
+	lowered := strings.ToLower(value)
+	for _, marker := range []string{"vless://", "vmess://", "ss://", "trojan://"} {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func resultTruncationFlags(value any) map[string]bool {
+	flags := map[string]bool{
+		"string_over_limit": false,
+		"list_over_limit":   false,
+		"map_over_limit":    false,
+		"checks_over_limit": false,
+	}
+	markTruncationFlags(value, flags)
+	if checksCount(valueFromMap(value, "checks")) > resultListLimit {
+		flags["checks_over_limit"] = true
+	}
+	return flags
+}
+
+func markTruncationFlags(value any, flags map[string]bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		if len(typed) > resultListLimit {
+			flags["map_over_limit"] = true
+		}
+		for _, item := range typed {
+			markTruncationFlags(item, flags)
+		}
+	case []any:
+		if len(typed) > resultListLimit {
+			flags["list_over_limit"] = true
+		}
+		for _, item := range typed {
+			markTruncationFlags(item, flags)
+		}
+	case []map[string]any:
+		if len(typed) > resultListLimit {
+			flags["list_over_limit"] = true
+		}
+		for _, item := range typed {
+			markTruncationFlags(item, flags)
+		}
+	case string:
+		if len(typed) > resultStringLimit {
+			flags["string_over_limit"] = true
+		}
+	case fmt.Stringer:
+		if len(typed.String()) > resultStringLimit {
+			flags["string_over_limit"] = true
+		}
+	}
+}
+
+func valueFromMap(value any, key string) any {
+	if typed, ok := value.(map[string]any); ok {
+		return typed[key]
+	}
+	return nil
+}
+
+func collectNonJSONFriendlyTypes(value any) []string {
+	seen := map[string]bool{}
+	collectNonJSONFriendlyTypesAt("$", value, seen)
+	items := make([]string, 0, len(seen))
+	for item := range seen {
+		items = append(items, item)
+	}
+	sort.Strings(items)
+	return items
+}
+
+func collectNonJSONFriendlyTypesAt(path string, value any, seen map[string]bool) {
+	switch typed := value.(type) {
+	case nil, bool, string, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
+		return
+	case map[string]any:
+		for key, item := range typed {
+			pathKey := key
+			if sensitiveResultKey(key) {
+				pathKey = "[redacted_sensitive_key]"
+			}
+			collectNonJSONFriendlyTypesAt(path+"."+pathKey, item, seen)
+		}
+	case []any:
+		for index, item := range typed {
+			collectNonJSONFriendlyTypesAt(fmt.Sprintf("%s[%d]", path, index), item, seen)
+		}
+	case []map[string]any:
+		for index, item := range typed {
+			collectNonJSONFriendlyTypesAt(fmt.Sprintf("%s[%d]", path, index), item, seen)
+		}
+	case fmt.Stringer:
+		return
+	default:
+		seen[fmt.Sprintf("%s:%T", path, value)] = true
+	}
 }
 
 func postJSON(url string, headers map[string]string, payload any, out any) error {

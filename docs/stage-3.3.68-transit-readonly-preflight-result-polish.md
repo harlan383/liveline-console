@@ -175,6 +175,57 @@ hotfix only changes local source, backend code, and documentation.
 This hotfix does not create or retry remote readonly preflight commands and
 does not add real transit creation capability.
 
+## Hotfix 7: Worker Result Payload Diagnosis
+
+Stage 3.3.68-hotfix-7-worker-result-payload-diagnosis adds a Worker-side local
+diagnostic command for the remaining case where authenticated fake submissions,
+already-completed submissions, small `ping` results, and minimal
+`transit_readonly_preflight` results all complete quickly, but the Worker
+automatically generated real readonly preflight result still times out while
+waiting for response headers.
+
+The new command is:
+
+```bash
+liveline-worker diagnose-transit-readonly-payload \
+  --config /etc/liveline-worker/config.yaml \
+  --payload-json '<transit_readonly_preflight payload JSON>'
+```
+
+The command reuses the existing `transit_readonly_preflight` readonly collection
+path and then stops locally. It does not submit `/result` or `/fail` to the
+console. The output is a JSON diagnostic summary only, with these fields:
+
+- raw result JSON size in bytes,
+- sanitized result JSON size in bytes,
+- submit payload JSON size in bytes,
+- top-level result keys,
+- check count,
+- per-check `id`, `status`, `passed`, and `detail_length`,
+- largest string field path and length,
+- NUL detection,
+- sensitive protocol marker detection for `vless://`, `vmess://`, `ss://`, and
+  `trojan://`,
+- whether the sanitized submit payload exceeds the Worker soft limit,
+- whether fallback submission would be triggered,
+- non-JSON-friendly type paths.
+
+The summary deliberately omits the full result body, Worker token, Worker
+secret, SSH private keys, database passwords, full client links, and
+`nodes.share_link`. It reports lengths and booleans instead of printing full
+details.
+
+The Linux amd64 Worker binary is rebuilt and committed as Worker
+`0.1.9-stage-3.3.68` so a later authorized Worker replacement can run the
+diagnostic command on the transit Worker host. This stage does not
+automatically deploy or restart any remote Worker.
+
+This hotfix does not change the console `/result` or `/fail` main logic, does
+not create or retry readonly preflight commands, does not install, start, stop,
+or restart `socat` / `gost`, does not create transit routes, does not add
+listening ports, does not modify firewall rules, does not modify Xray, does not
+read or modify `nodes.share_link`, and does not perform cutover.
+
 ## Safety Boundary
 
 This stage does not:

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -114,5 +115,114 @@ func TestDescribeHTTPPostErrorClassifiesHeadersTimeout(t *testing.T) {
 	got := describeHTTPPostError(err)
 	if !strings.Contains(got, "response_headers_timeout") {
 		t.Fatalf("describeHTTPPostError = %q, want response_headers_timeout", got)
+	}
+}
+
+func TestBuildResultSubmitDebugSummaryRedactsBodyAndSensitiveValues(t *testing.T) {
+	fakeLinkMarker := "vless" + "://fake-redacted-example"
+	result := map[string]any{
+		"status":        "blocked",
+		"worker_secret": "secret-value-that-must-not-appear",
+		"token":         "token-value-that-must-not-appear",
+		"checks": []any{
+			map[string]any{
+				"id":     "planned_port_available",
+				"status": "blocked",
+				"passed": false,
+				"detail": fakeLinkMarker + " should be detected but not emitted",
+			},
+		},
+	}
+
+	summary := buildResultSubmitDebugSummary("transit_readonly_preflight", result)
+	body, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, forbidden := range []string{
+		"secret-value-that-must-not-appear",
+		"token-value-that-must-not-appear",
+		fakeLinkMarker,
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("debug summary leaked %q: %s", forbidden, text)
+		}
+	}
+	if !summary.SensitiveMarkerDetected {
+		t.Fatal("SensitiveMarkerDetected = false, want true")
+	}
+	if summary.ChecksCount != 1 {
+		t.Fatalf("ChecksCount = %d, want 1", summary.ChecksCount)
+	}
+	if len(summary.Checks) != 1 || summary.Checks[0].DetailLength == 0 {
+		t.Fatalf("check detail length missing: %#v", summary.Checks)
+	}
+}
+
+func TestBuildResultSubmitDebugSummaryLargestFieldAndTruncation(t *testing.T) {
+	longDetail := strings.Repeat("x", resultStringLimit+25)
+	result := map[string]any{
+		"summary": "short",
+		"nested":  map[string]any{"long_detail": longDetail},
+		"checks": []any{
+			map[string]any{"id": "one", "status": "passed", "passed": true, "detail": longDetail},
+		},
+	}
+
+	summary := buildResultSubmitDebugSummary("transit_readonly_preflight", result)
+	if summary.LargestFieldPath != "$.checks[0].detail" && summary.LargestFieldPath != "$.nested.long_detail" {
+		t.Fatalf("LargestFieldPath = %q, want a long field path", summary.LargestFieldPath)
+	}
+	if summary.LargestFieldLength != len(longDetail) {
+		t.Fatalf("LargestFieldLength = %d, want %d", summary.LargestFieldLength, len(longDetail))
+	}
+	if !summary.TruncationFlags["string_over_limit"] {
+		t.Fatalf("string_over_limit = false, flags=%#v", summary.TruncationFlags)
+	}
+	if summary.Checks[0].DetailLength != len(longDetail) {
+		t.Fatalf("DetailLength = %d, want %d", summary.Checks[0].DetailLength, len(longDetail))
+	}
+}
+
+func TestBuildResultSubmitDebugSummarySoftLimitAndNUL(t *testing.T) {
+	result := map[string]any{
+		"summary": strings.Repeat("a", resultPayloadSoftLimit+100),
+		"checks": []any{
+			map[string]any{"id": "nul", "status": "passed", "passed": true, "detail": "ok\x00with-nul"},
+		},
+	}
+
+	summary := buildResultSubmitDebugSummary("transit_readonly_preflight", result)
+	if !summary.ContainsNUL {
+		t.Fatal("ContainsNUL = false, want true")
+	}
+	if !summary.TruncationFlags["string_over_limit"] {
+		t.Fatalf("string_over_limit = false, flags=%#v", summary.TruncationFlags)
+	}
+	if summary.SanitizedPayloadExceedsSoftLimit || summary.FallbackWouldBeTriggered {
+		t.Fatalf("sanitized payload should be truncated below soft limit, got size=%d fallback=%v", summary.SubmitPayloadSize, summary.FallbackWouldBeTriggered)
+	}
+}
+
+func TestBuildResultSubmitDebugSummaryNonJSONFriendlyTypes(t *testing.T) {
+	result := map[string]any{
+		"status": "passed",
+		"bad":    func() {},
+		"checks": []any{},
+	}
+
+	summary := buildResultSubmitDebugSummary("transit_readonly_preflight", result)
+	if len(summary.NonJSONFriendlyTypes) != 1 {
+		t.Fatalf("NonJSONFriendlyTypes = %#v, want one item", summary.NonJSONFriendlyTypes)
+	}
+	if !strings.Contains(summary.NonJSONFriendlyTypes[0], "$.bad") {
+		t.Fatalf("NonJSONFriendlyTypes = %#v, want $.bad path", summary.NonJSONFriendlyTypes)
+	}
+	if summary.RawResultSize != -1 {
+		t.Fatalf("RawResultSize = %d, want -1 for non JSON-friendly raw result", summary.RawResultSize)
+	}
+	if summary.SubmitPayloadSize <= 0 {
+		t.Fatalf("SubmitPayloadSize = %d, want positive sanitized payload size", summary.SubmitPayloadSize)
 	}
 }
