@@ -1445,7 +1445,7 @@ def create_admin_worker_command(
         return error_response(
             400,
             "WORKER_COMMAND_NOT_ALLOWED",
-            "只允许 ping、collect_status、service_status、landing_preflight、landing_node_create、transit_readonly_preflight。",
+            "只允许 ping、collect_status、service_status、landing_preflight、landing_node_create、transit_readonly_preflight、transit_route_create。",
         )
     if payload.command_type == "landing_node_create":
         return error_response(
@@ -1458,6 +1458,12 @@ def create_admin_worker_command(
             400,
             "TRANSIT_READONLY_PREFLIGHT_ENDPOINT_REQUIRED",
             "中转远程只读预检必须通过 /api/transit-routes/readonly-preflight-command 创建，不能传入任意 payload。",
+        )
+    if payload.command_type == "transit_route_create":
+        return error_response(
+            400,
+            "TRANSIT_ROUTE_CREATE_PLAN_ENDPOINT_REQUIRED",
+            "中转链路 Worker 创建路径必须通过 /api/transit-routes/worker-create-plan 创建，不能传入任意 payload。",
         )
 
     server_id = payload.server_id or worker.server_id

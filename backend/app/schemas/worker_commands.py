@@ -9,6 +9,7 @@ WORKER_COMMAND_TYPES = {
     "landing_preflight",
     "landing_node_create",
     "transit_readonly_preflight",
+    "transit_route_create",
 }
 WORKER_COMMAND_STATUSES = {
     "pending",
@@ -33,7 +34,7 @@ class WorkerCommandCreate(BaseModel):
         cleaned = value.strip().lower()
         if cleaned not in WORKER_COMMAND_TYPES:
             raise ValueError(
-                "command_type must be ping, collect_status, service_status, landing_preflight, landing_node_create, or transit_readonly_preflight"
+                "command_type must be ping, collect_status, service_status, landing_preflight, landing_node_create, transit_readonly_preflight, or transit_route_create"
             )
         return cleaned
 

@@ -382,6 +382,104 @@ func TestPrepareCommandResultForSubmitLeavesNonTransitUntouched(t *testing.T) {
 	}
 }
 
+func approvedTransitRouteCreatePayload() map[string]any {
+	return map[string]any{
+		"transit_resource_id": approvedTransitResourceID,
+		"landing_node_id":     approvedTransitLandingNodeID,
+		"planned_listen_port": approvedTransitListenPort,
+		"landing_target_host": approvedTransitLandingTargetHost,
+		"landing_target_port": approvedTransitLandingTargetPort,
+		"forwarding_method":   approvedTransitForwardingMethod,
+		"purpose":             "直播",
+		"approval_stage":      approvedTransitCreateStage,
+		"dry_run":             true,
+		"approval_required":   true,
+		"route_name":          "hk-socat-live-23843",
+		"safety_boundary":     []any{"dry-run plan only", "no arbitrary shell accepted"},
+	}
+}
+
+func TestTransitRouteCreateDryRunReturnsPlanOnly(t *testing.T) {
+	command := workerCommand{
+		ID:          "12345678-1234-1234-1234-123456789abc",
+		CommandType: "transit_route_create",
+		Payload:     approvedTransitRouteCreatePayload(),
+	}
+	result, err := executeTransitRouteCreateDryRun(
+		config{Role: "transit", InterfaceName: "eth0"},
+		"WEPC202605221223335",
+		command,
+	)
+	if err != nil {
+		t.Fatalf("executeTransitRouteCreateDryRun returned error: %v", err)
+	}
+	if result["execution_mode"] != "dry_run" {
+		t.Fatalf("execution_mode = %#v, want dry_run", result["execution_mode"])
+	}
+	if result["real_execution"] != false {
+		t.Fatalf("real_execution = %#v, want false", result["real_execution"])
+	}
+	if intResultValue(result["planned_listen_port"]) != approvedTransitListenPort {
+		t.Fatalf("planned_listen_port = %#v, want %d", result["planned_listen_port"], approvedTransitListenPort)
+	}
+	if intResultValue(result["landing_target_port"]) != approvedTransitLandingTargetPort {
+		t.Fatalf("landing_target_port = %#v, want %d", result["landing_target_port"], approvedTransitLandingTargetPort)
+	}
+	plannedService := result["planned_service"].(map[string]any)
+	serviceName := stringResultValue(plannedService["name"])
+	if !strings.HasPrefix(serviceName, "liveline-socat-") || !strings.HasSuffix(serviceName, ".service") {
+		t.Fatalf("planned service name = %q, want liveline-socat service", serviceName)
+	}
+	forbiddenTopLevelKeys := []string{"service_written", "listener_bound", "service_started", "share_link"}
+	for _, forbidden := range forbiddenTopLevelKeys {
+		if _, exists := result[forbidden]; exists {
+			t.Fatalf("dry-run result contains forbidden top-level key %q: %#v", forbidden, result)
+		}
+	}
+}
+
+func TestTransitRouteCreateDryRunRejectsArbitraryShellPayload(t *testing.T) {
+	payload := approvedTransitRouteCreatePayload()
+	payload["shell"] = "systemctl start something"
+	_, err := parseTransitRouteCreateRequest(payload)
+	if err == nil {
+		t.Fatal("parseTransitRouteCreateRequest returned nil for shell payload")
+	}
+	if !strings.Contains(err.Error(), "unsupported execution field") {
+		t.Fatalf("error = %q, want unsupported execution field", err.Error())
+	}
+}
+
+func TestTransitRouteCreateDryRunRejectsNonApprovedPort(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreatePayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.PlannedListenPort = 24731
+	err = validateTransitRouteCreateRequest(request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRequest returned nil for non-approved port")
+	}
+	if !strings.Contains(err.Error(), "planned_listen_port is not approved") {
+		t.Fatalf("error = %q, want planned_listen_port approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateDryRunRejectsNonApprovedLandingTarget(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreatePayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.LandingTargetHost = "203.0.113.10"
+	err = validateTransitRouteCreateRequest(request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRequest returned nil for non-approved target")
+	}
+	if !strings.Contains(err.Error(), "landing_target_host is not approved") {
+		t.Fatalf("error = %q, want landing_target_host approval error", err.Error())
+	}
+}
+
 func TestTraceTransitReadonlyCompactResultRedactsBodyAndSecret(t *testing.T) {
 	oldStderr := os.Stderr
 	defer func() {

@@ -1299,6 +1299,18 @@ perform cutover. The next possible execution stage is
 `Stage 3.3.71-transit-route-create-execution`, and it requires explicit user
 authorization before any real action.
 
+Stage 3.3.71-transit-route-worker-create-path adds the controlled Worker create
+path needed before any real Hong Kong transit route execution. It introduces
+the `transit_route_create` Worker command type, a dedicated backend dry-run
+entry point, and a Worker dry-run handler that validates the approved
+`23843/TCP` socat route parameters and returns the planned service name,
+target, checks, and safety boundary. This stage is still not real execution:
+the endpoint requires `dry_run=true`, does not create `transit_routes` records,
+does not bind a listener, does not write systemd services, does not install or
+start `socat`, does not modify firewall rules, does not read or modify
+`nodes.share_link`, and does not perform cutover. Real creation is reserved for
+`Stage 3.3.72-transit-route-create-execution` with fresh explicit approval.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2529,6 +2541,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 hotfix Worker compact result payload | Transit readonly preflight Worker result payload is compacted below the small-body target before submission |
 | Stage 3.3.69 Transit readonly UI validation record | Production UI readonly preflight validation passed with Worker 0.1.16 compact result submission; no real route creation or cutover |
 | Stage 3.3.70 Transit route create approval | Formal pre-execution approval packet recorded for the planned Hong Kong socat transit route; no real creation, listener, firewall change, or cutover |
+| Stage 3.3.71 Transit route Worker create path | Controlled Worker dry-run create path added for the approved Hong Kong socat route; real route creation remains deferred |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
