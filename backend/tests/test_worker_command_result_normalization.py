@@ -6,9 +6,11 @@ from app.api.routes.workers import (
     decode_worker_command_report_body,
     worker_command_status_is_terminal,
 )
-from app.services.worker_commands import normalize_worker_command_result
+from app.services.worker_commands import normalize_worker_command_result, sanitize_command_payload
 from app.schemas.transit_route import (
     APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
+    APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
+    TransitRouteWorkerCreateExecuteRequest,
     TransitRouteWorkerCreatePlanRequest,
 )
 from app.schemas.worker_commands import WorkerCommandCreate
@@ -95,8 +97,19 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertEqual(command.command_type, "transit_route_create")
         self.assertEqual(
             minimum_worker_version_for_command("transit_route_create"),
-            "0.1.18-stage-3.3.72",
+            "0.1.19-stage-3.3.73",
         )
+
+    def test_sanitize_command_payload_preserves_share_link_confirmation_boolean_only(self):
+        payload = sanitize_command_payload(
+            {
+                "no_node_share_link_change_confirmed": True,
+                "share_link": "vless://fake-redacted-example",
+            }
+        )
+
+        self.assertEqual(payload["no_node_share_link_change_confirmed"], True)
+        self.assertEqual(payload["share_link"], "[redacted]")
 
     def test_transit_route_create_result_is_normalized_as_compact_dry_run(self):
         result = normalize_worker_command_result(
@@ -106,7 +119,7 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
                 "real_execution": False,
                 "status": "approval_required",
                 "summary": "x" * 1200,
-                "worker_version": "0.1.18-stage-3.3.72",
+                "worker_version": "0.1.19-stage-3.3.73",
                 "hostname": "WEPC202605221223335",
                 "role": "transit",
                 "interface_name": "eth0",
@@ -177,6 +190,54 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         }
         with self.assertRaises(Exception):
             TransitRouteWorkerCreatePlanRequest(**payload)
+
+    def test_transit_route_worker_create_execute_schema_accepts_confirmed_request(self):
+        payload = {
+            "transit_resource_id": "1e222459-9fa2-4c62-800f-a3b35edb7df8",
+            "landing_node_id": "a71472c6-f62c-43b5-a223-9f5f070ae4ef",
+            "planned_listen_port": 23843,
+            "landing_target_host": "64.90.13.19",
+            "landing_target_port": 27939,
+            "forwarding_method": "socat",
+            "route_name": "hk-socat-live-23843",
+            "approval_stage": APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
+            "dry_run": False,
+            "approval_required": False,
+            "user_approved_real_execution": True,
+            "firewall_security_group_confirmed": True,
+            "cloud_firewall_confirmed": True,
+            "server_firewall_confirmed": True,
+            "no_node_share_link_change_confirmed": True,
+            "no_full_client_link_confirmed": True,
+            "no_cutover_confirmed": True,
+        }
+        parsed = TransitRouteWorkerCreateExecuteRequest(**payload)
+        self.assertFalse(parsed.dry_run)
+        self.assertEqual(parsed.route_name, "hk-socat-live-23843")
+
+    def test_transit_route_worker_create_execute_schema_rejects_extra_systemd_unit(self):
+        payload = {
+            "transit_resource_id": "1e222459-9fa2-4c62-800f-a3b35edb7df8",
+            "landing_node_id": "a71472c6-f62c-43b5-a223-9f5f070ae4ef",
+            "planned_listen_port": 23843,
+            "landing_target_host": "64.90.13.19",
+            "landing_target_port": 27939,
+            "forwarding_method": "socat",
+            "route_name": "hk-socat-live-23843",
+            "approval_stage": APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
+            "dry_run": False,
+            "approval_required": False,
+            "user_approved_real_execution": True,
+            "firewall_security_group_confirmed": True,
+            "cloud_firewall_confirmed": True,
+            "server_firewall_confirmed": True,
+            "no_node_share_link_change_confirmed": True,
+            "no_full_client_link_confirmed": True,
+            "no_cutover_confirmed": True,
+            "systemd_unit": "[Service]\nExecStart=/bin/true",
+        }
+        with self.assertRaises(Exception):
+            TransitRouteWorkerCreateExecuteRequest(**payload)
 
 
 if __name__ == "__main__":

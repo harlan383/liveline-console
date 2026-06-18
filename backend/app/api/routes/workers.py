@@ -49,6 +49,10 @@ from app.services.landing_node_create import (
     LandingNodeCreateError,
     persist_successful_landing_node_result,
 )
+from app.services.transit_route_create import (
+    TransitRouteCreateResultError,
+    persist_successful_transit_route_create_result,
+)
 from app.services.worker_targeting import (
     WorkerTargetError,
     minimum_worker_version_for_command,
@@ -1044,10 +1048,12 @@ async def worker_command_result(
     try:
         if command.command_type == "landing_node_create":
             result_payload = persist_successful_landing_node_result(db=db, command=command, result=result_payload)
+        elif command.command_type == "transit_route_create":
+            result_payload = persist_successful_transit_route_create_result(db=db, command=command, result=result_payload)
         else:
             result_payload = normalize_worker_command_result(command.command_type, result_payload)
         timings["normalize_ms"] = elapsed_ms_since(normalize_started)
-    except LandingNodeCreateError as exc:
+    except (LandingNodeCreateError, TransitRouteCreateResultError) as exc:
         timings["normalize_ms"] = elapsed_ms_since(normalize_started)
         response = fail_worker_command_result_ingest(db, command, worker, exc.code, exc.message, timings=timings)
         log_worker_result_endpoint(

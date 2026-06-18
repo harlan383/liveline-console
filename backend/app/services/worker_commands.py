@@ -28,6 +28,9 @@ SENSITIVE_MARKERS = (
     "vmess://",
     "ss://",
 )
+SAFE_SENSITIVE_NAMED_CONFIRMATION_KEYS = {
+    "no_node_share_link_change_confirmed",
+}
 
 
 def now_utc() -> datetime:
@@ -51,6 +54,9 @@ def sanitize_value(value: Any) -> Any:
             key_text = str(key)
             lowered_key = key_text.lower()
             if any(marker in lowered_key for marker in SENSITIVE_MARKERS):
+                if lowered_key in SAFE_SENSITIVE_NAMED_CONFIRMATION_KEYS and isinstance(item, bool):
+                    result[key_text] = item
+                    continue
                 result[key_text] = "[redacted]"
                 continue
             result[key_text] = sanitize_value(item)
@@ -142,6 +148,8 @@ def normalize_transit_route_create_result(result: dict[str, Any]) -> dict[str, A
         "forwarding_method": _safe_result_text(result.get("forwarding_method")),
         "route_name": _safe_result_text(result.get("route_name")),
         "planned_service_name": _safe_result_text(result.get("planned_service_name")),
+        "service_name": _safe_result_text(result.get("service_name")),
+        "service_path": _safe_result_text(result.get("service_path")),
         "checks_count": _safe_result_int(result.get("checks_count")) or len(checks),
         "planned_actions_count": _safe_result_int(result.get("planned_actions_count")),
         "safety_boundary": _normalize_text_list(result.get("safety_boundary"))[:5],
