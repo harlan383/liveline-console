@@ -140,6 +140,41 @@ The backend changes are:
 This hotfix does not add any real transit creation path, does not retry the
 previous production commands, and does not auto-upgrade remote Workers.
 
+## Hotfix 6: Worker Authenticated Result Path
+
+Stage 3.3.68-hotfix-6-worker-authenticated-result-path adds deeper
+instrumentation around the authenticated Worker submission path after
+unauthenticated `/result` and `/fail` probes returned quickly but real
+authenticated transit Worker submissions still timed out while waiting for
+response headers.
+
+The backend changes are:
+
+- Worker authentication now logs begin / end metadata for Worker endpoints:
+  request path, method, remote address, whether Worker auth headers are
+  present, Worker id, elapsed time, and outcome.
+- `/result` and `/fail` log an entry record before reading the request body,
+  including command id, path, method, content length, remote address, Worker id
+  when present, and begin timestamp.
+- Authenticated `/result` and `/fail` requests now emit segmented timings:
+  `auth_ms`, `statement_timeout_ms`, `command_lookup_ms`, `body_read_ms`,
+  `json_parse_ms`, `normalize_ms`, `db_update_ms`, and total elapsed time.
+- A short DB statement timeout is applied for command result handling so
+  unexpected database waits return explicit JSON instead of hanging until the
+  Worker HTTP client times out.
+- Body-limit, invalid JSON, missing command, already-completed command, result
+  normalization, and DB update failures all return explicit JSON responses.
+- Terminal commands remain idempotent with `already_completed=true`.
+
+The Worker source also classifies submit failures such as
+`response_headers_timeout`, `tls_handshake_timeout`, `dns_resolution_failed`,
+`connect_refused`, `io_timeout`, and generic request timeouts. Updating the
+remote Worker still requires a separate user-authorized deployment stage; this
+hotfix only changes local source, backend code, and documentation.
+
+This hotfix does not create or retry remote readonly preflight commands and
+does not add real transit creation capability.
+
 ## Safety Boundary
 
 This stage does not:

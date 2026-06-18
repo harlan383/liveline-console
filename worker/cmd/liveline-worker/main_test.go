@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,5 +106,13 @@ func TestValidateManagedXrayBaseDirForPreflightRejectsNonEmptyKnownSubdir(t *tes
 	}
 	if !strings.Contains(err.Error(), "not empty") {
 		t.Fatalf("error = %q, want not empty", err.Error())
+	}
+}
+
+func TestDescribeHTTPPostErrorClassifiesHeadersTimeout(t *testing.T) {
+	err := errors.New("context deadline exceeded (Client.Timeout exceeded while awaiting headers)")
+	got := describeHTTPPostError(err)
+	if !strings.Contains(got, "response_headers_timeout") {
+		t.Fatalf("describeHTTPPostError = %q, want response_headers_timeout", got)
 	}
 }
