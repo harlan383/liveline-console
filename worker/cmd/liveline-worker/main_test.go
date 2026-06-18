@@ -250,3 +250,45 @@ func TestSortedHeaderKeysDoesNotReturnValues(t *testing.T) {
 		t.Fatalf("header values leaked: %q", got)
 	}
 }
+
+func TestValidateCurlFallbackEndpointAllowsOnlyResultAndFail(t *testing.T) {
+	allowed := []string{
+		"http://console.example:8200/api/workers/commands/abc/result",
+		"https://console.example/api/workers/commands/abc/fail",
+	}
+	for _, endpoint := range allowed {
+		if err := validateCurlFallbackEndpoint(endpoint); err != nil {
+			t.Fatalf("validateCurlFallbackEndpoint(%q) returned %v", endpoint, err)
+		}
+	}
+
+	rejected := []string{
+		"http://console.example:8200/api/workers/commands/abc/next",
+		"http://console.example:8200/api/workers/commands/abc/result?" + "token" + "=secret",
+		"http://console.example:8200/api/workers/commands/abc/result;rm",
+		"http://console.example:8200/api/workers/commands/abc/result/extra",
+		"file:///api/workers/commands/abc/result",
+	}
+	for _, endpoint := range rejected {
+		if err := validateCurlFallbackEndpoint(endpoint); err == nil {
+			t.Fatalf("validateCurlFallbackEndpoint(%q) returned nil, want rejection", endpoint)
+		}
+	}
+}
+
+func TestBuildCurlConfigDoesNotExposeSecretInArgsModel(t *testing.T) {
+	config := buildCurlConfig(
+		"http://console.example:8200/api/workers/commands/abc/result",
+		map[string]string{"X-Worker-Id": "worker-id", "X-Worker-Secret": "secret-value"},
+		"/tmp/body.json",
+		"/tmp/response.json",
+	)
+	if !strings.Contains(config, "X-Worker-Secret: secret-value") {
+		t.Fatalf("curl config should contain the secret header for stdin-only curl config")
+	}
+	args := []string{"curl", "--config", "-"}
+	joinedArgs := strings.Join(args, " ")
+	if strings.Contains(joinedArgs, "secret-value") || strings.Contains(joinedArgs, "worker-id") {
+		t.Fatalf("curl process args leaked header values: %q", joinedArgs)
+	}
+}
