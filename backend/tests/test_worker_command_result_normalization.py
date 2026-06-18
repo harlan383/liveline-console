@@ -14,7 +14,7 @@ from app.schemas.transit_route import (
     TransitRouteWorkerCreatePlanRequest,
 )
 from app.schemas.worker_commands import WorkerCommandCreate
-from app.services.worker_targeting import minimum_worker_version_for_command
+from app.services.worker_targeting import minimum_worker_version_for_command, minimum_worker_version_key_for_command
 
 
 class WorkerCommandResultNormalizationTests(unittest.TestCase):
@@ -97,7 +97,11 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertEqual(command.command_type, "transit_route_create")
         self.assertEqual(
             minimum_worker_version_for_command("transit_route_create"),
-            "0.1.19-stage-3.3.73",
+            "0.1.20-stage-3.3.73",
+        )
+        self.assertEqual(
+            minimum_worker_version_key_for_command("transit_route_create"),
+            (0, 1, 20, 3, 3, 73),
         )
 
     def test_sanitize_command_payload_preserves_share_link_confirmation_boolean_only(self):
@@ -119,7 +123,7 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
                 "real_execution": False,
                 "status": "approval_required",
                 "summary": "x" * 1200,
-                "worker_version": "0.1.19-stage-3.3.73",
+                "worker_version": "0.1.20-stage-3.3.73",
                 "hostname": "WEPC202605221223335",
                 "role": "transit",
                 "interface_name": "eth0",
@@ -152,6 +156,56 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertNotIn("worker_token", result)
         self.assertEqual(result["checks"][0]["name"], "dry_run_required")
         self.assertTrue(str(result["summary"]).endswith("...[truncated]"))
+
+    def test_transit_route_create_real_failed_result_preserves_diagnostics(self):
+        result = normalize_worker_command_result(
+            "transit_route_create",
+            {
+                "execution_mode": "real_create",
+                "real_execution": True,
+                "status": "failed",
+                "summary": "Approved socat transit route creation failed.",
+                "redacted_error": "approved TCP port 23843 is not listening after socat start retries",
+                "worker_version": "0.1.20-stage-3.3.73",
+                "hostname": "WEPC202605221223335",
+                "role": "transit",
+                "interface_name": "eth0",
+                "planned_listen_port": 23843,
+                "landing_target_host": "64.90.13.19",
+                "landing_target_port": 27939,
+                "forwarding_method": "socat",
+                "route_name": "hk-socat-live-23843",
+                "service_name": "liveline-socat-23843.service",
+                "service_path": "/etc/systemd/system/liveline-socat-23843.service",
+                "listen_verification_attempts": [
+                    {"attempt": 1, "service_active": "active", "listener_detected": False},
+                    {"attempt": 2, "service_active": "active", "listener_detected": True},
+                ],
+                "last_listen_attempt": {"attempt": 2, "service_active": "active", "listener_detected": True},
+                "diagnostics": {
+                    "systemctl_is_active": {"status": "ok", "detail": "active", "error": ""},
+                    "journal": {"status": "ok", "detail": "Started LiveLine", "error": ""},
+                    "service_file": {
+                        "exists": True,
+                        "size_bytes": 280,
+                        "contains_fixed_exec": True,
+                        "contains_approved_name": True,
+                    },
+                },
+                "rollback_attempted": True,
+            },
+        )
+
+        self.assertEqual(result["execution_mode"], "real_create")
+        self.assertTrue(result["real_execution"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["planned_listen_port"], 23843)
+        self.assertEqual(result["service_name"], "liveline-socat-23843.service")
+        self.assertTrue(result["rollback_attempted"])
+        self.assertEqual(result["listen_verification_attempts"][0]["service_active"], "active")
+        self.assertEqual(result["last_listen_attempt"]["attempt"], 2)
+        self.assertEqual(result["diagnostics"]["journal"]["detail"], "Started LiveLine")
+        self.assertTrue(result["diagnostics"]["service_file"]["contains_fixed_exec"])
 
     def test_transit_route_worker_create_plan_schema_requires_current_stage(self):
         payload = {
