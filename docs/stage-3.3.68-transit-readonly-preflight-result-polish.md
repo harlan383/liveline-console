@@ -479,6 +479,38 @@ transit creation capability. The rebuilt Worker binary is committed for a
 later separately authorized Worker replacement; this stage does not deploy or
 restart the remote Worker.
 
+## Hotfix 14: Worker Compact Result Payload
+
+Stage 3.3.68-hotfix-14-worker-compact-result-payload follows the next
+production finding: manual small-body curl result submission succeeds, while
+manual and automatic result submissions around two kilobytes can time out on
+the transit Worker to console network path. That points to a payload-size /
+MTU / fragmentation class of problem rather than a backend route, token,
+database row, curl argument, or command-row issue.
+
+Worker `0.1.16-stage-3.3.68` therefore compacts only the
+`transit_readonly_preflight` `/result` submission payload. The readonly
+collection result remains unchanged inside the Worker, but the posted result is
+reduced before serialization:
+
+- `passed`, `status`, short `summary`, Worker metadata, planned listener port,
+  landing target port, forwarding method, and `checks_count` are retained,
+- each check keeps only a compact `name`, `passed`, and short detail when the
+  payload stays within the target,
+- if the compact body remains above the 1200 byte target, details are removed
+  and the payload keeps only `checks_count` plus failed check names,
+- the safety boundary is reduced to a short no-write / no-cutover list,
+- compact trace logs include original size, compact size, check count, maximum
+  detail length, and endpoint path, but never include Worker secrets or the
+  full body.
+
+This hotfix does not change backend result/fail main logic, does not change the
+readonly collection checks, and does not add route creation, listener binding,
+firewall mutation, Xray mutation, `nodes.share_link` access, client link export,
+or cutover behavior. The rebuilt Worker binary is committed for a later
+separately authorized Worker replacement; this stage does not deploy or restart
+the remote Worker.
+
 This hotfix does not change the console `/result` or `/fail` main logic, does
 not change `transit_readonly_preflight` collection logic, does not add transit
 creation capability, does not install, start, stop, or restart `socat` /

@@ -1265,6 +1265,18 @@ only Worker result/fail fallback transport behavior; it does not change backend
 result/fail logic, readonly collection, route creation behavior, or deploy the
 rebuilt Worker automatically.
 
+Stage 3.3.68-hotfix-14-worker-compact-result-payload adds compact result
+submission for `transit_readonly_preflight` after production isolated the
+remaining failure to roughly 2 KB POST bodies on the transit Worker to console
+path. Worker `0.1.16-stage-3.3.68` keeps the readonly collection result
+unchanged internally, but compacts the `/result` submit payload to preserve only
+the essential status, ports, method, Worker metadata, compact check names /
+pass flags, short summaries, and a short safety boundary before posting. If the
+compact payload is still above the 1200 byte target, check details are removed
+and only `checks_count` plus failed check names are retained. The backend
+result/fail logic, curl fallback behavior, route creation behavior, and no
+auto-deploy boundary remain unchanged.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
