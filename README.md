@@ -1176,6 +1176,17 @@ The `/fail` endpoint accepts the Worker minimal fallback failure report without
 requiring a large structured result. This stage does not auto-upgrade remote
 Workers or retry production commands.
 
+Stage 3.3.68-hotfix-6-worker-authenticated-result-path adds authenticated-path
+instrumentation and fast-failure protection for real Worker result submissions.
+Worker authentication, command lookup, request-body read, JSON parse,
+normalization, and DB update phases now emit elapsed timings without printing
+Worker secrets or payload data. The result endpoints apply a short DB statement
+timeout before command result updates, return explicit JSON for locked or
+malformed paths, and keep terminal command submissions idempotent. The Worker
+source also classifies submit timeouts by phase for future authorized Worker
+upgrades; this stage does not auto-upgrade remote Workers or retry production
+commands.
+
 The base stage changes frontend result presentation and later hotfixes harden
 the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
@@ -2395,6 +2406,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 hotfix transit readonly result EOF | Transit readonly preflight result ingestion now normalizes returned results and fails malformed payloads instead of leaving commands running |
 | Stage 3.3.68 hotfix Worker result submit EOF | Worker result submit now sanitizes payloads, reports HTTP diagnostics, uses fallback failure submit, and requires Worker 0.1.8 for transit readonly preflight |
 | Stage 3.3.68 hotfix Worker result endpoint timeout | Worker result/fail endpoints now use bounded fast-path ingestion, ingress logs, fallback failure handling, and idempotent already-completed responses |
+| Stage 3.3.68 hotfix Worker authenticated result path | Worker-authenticated result/fail paths now log phase timings, apply short DB statement timeout, and classify Worker submit timeout phases |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

@@ -9,8 +9,8 @@ from json import JSONDecodeError
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import FileResponse, PlainTextResponse
-from sqlalchemy import select
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import auth_error, csrf_error, csrf_valid, require_admin_session
@@ -95,8 +95,22 @@ def worker_remote_addr(request: Request) -> str:
     return client.host or "unknown"
 
 
+def request_content_length(request: Request) -> str:
+    return request.headers.get("content-length") or "unknown"
+
+
 def worker_command_status_is_terminal(status: str | None) -> bool:
     return status in WORKER_COMMAND_TERMINAL_STATUSES
+
+
+def elapsed_ms_since(started_perf: float) -> float:
+    return (perf_counter() - started_perf) * 1000
+
+
+def format_timings(timings: dict[str, float] | None) -> str:
+    if not timings:
+        return "-"
+    return " ".join(f"{key}={value:.2f}" for key, value in timings.items())
 
 
 def log_worker_result_endpoint(
@@ -111,19 +125,48 @@ def log_worker_result_endpoint(
     started_at: datetime,
     started_perf: float,
     outcome: str | None = None,
+    timings: dict[str, float] | None = None,
 ) -> None:
     logger.info(
-        "worker command %s %s command_id=%s command_type=%s worker_id=%s body_size=%s remote_addr=%s begin=%s end=%s elapsed_ms=%.2f outcome=%s",
+        "worker command %s %s command_id=%s command_type=%s worker_id=%s method=%s path=%s content_length=%s body_size=%s remote_addr=%s begin=%s end=%s elapsed_ms=%.2f outcome=%s timings=%s",
         endpoint,
         phase,
         command_id,
         command_type or "-",
         worker_id or "-",
+        request.method,
+        request.url.path,
+        request_content_length(request),
         body_size if body_size is not None else "-",
         worker_remote_addr(request),
         started_at.isoformat(),
         now_utc().isoformat(),
-        (perf_counter() - started_perf) * 1000,
+        elapsed_ms_since(started_perf),
+        outcome or "-",
+        format_timings(timings),
+    )
+
+
+def log_worker_auth_event(
+    *,
+    phase: str,
+    request: Request | None,
+    worker_id: str | None,
+    has_worker_id_header: bool,
+    has_worker_secret_header: bool,
+    started_perf: float,
+    outcome: str | None = None,
+) -> None:
+    logger.info(
+        "worker auth %s method=%s path=%s remote_addr=%s has_worker_id_header=%s has_worker_secret_header=%s worker_id=%s elapsed_ms=%.2f outcome=%s",
+        phase,
+        request.method if request else "-",
+        request.url.path if request else "-",
+        worker_remote_addr(request) if request else "unknown",
+        has_worker_id_header,
+        has_worker_secret_header,
+        worker_id or "-",
+        elapsed_ms_since(started_perf),
         outcome or "-",
     )
 
@@ -169,10 +212,10 @@ def decode_worker_command_report_body(
     return payload
 
 
-async def read_worker_command_report_payload(
+async def read_limited_worker_command_report_body(
     request: Request,
     limit_bytes: int = WORKER_RESULT_BODY_LIMIT_BYTES,
-) -> tuple[dict[str, Any], int]:
+) -> tuple[bytes, int]:
     body = bytearray()
     body_size = 0
     async for chunk in request.stream():
@@ -187,7 +230,24 @@ async def read_worker_command_report_payload(
             )
         body.extend(chunk)
 
-    return decode_worker_command_report_body(bytes(body), body_size, limit_bytes), body_size
+    return bytes(body), body_size
+
+
+async def parse_worker_command_report_request(
+    request: Request,
+    timings: dict[str, float],
+) -> tuple[dict[str, Any], int]:
+    body_started = perf_counter()
+    raw_body, body_size = await read_limited_worker_command_report_body(request)
+    timings["body_read_ms"] = elapsed_ms_since(body_started)
+    parse_started = perf_counter()
+    payload = decode_worker_command_report_body(raw_body, body_size)
+    timings["json_parse_ms"] = elapsed_ms_since(parse_started)
+    return payload, body_size
+
+
+def apply_worker_result_statement_timeout(db: Session) -> None:
+    db.execute(text("SET LOCAL statement_timeout = '3000ms'"))
 
 
 def mask_token(token: str) -> str:
@@ -275,15 +335,64 @@ def authenticate_worker(
     db: Session,
     x_worker_id: str | None,
     x_worker_secret: str | None,
+    request: Request | None = None,
 ):
+    started_perf = perf_counter()
     worker_id = clean_token(x_worker_id)
     worker_secret = clean_token(x_worker_secret)
+    log_worker_auth_event(
+        phase="begin",
+        request=request,
+        worker_id=worker_id,
+        has_worker_id_header=bool(worker_id),
+        has_worker_secret_header=bool(worker_secret),
+        started_perf=started_perf,
+    )
     if not worker_id or not worker_secret:
+        log_worker_auth_event(
+            phase="end",
+            request=request,
+            worker_id=worker_id,
+            has_worker_id_header=bool(worker_id),
+            has_worker_secret_header=bool(worker_secret),
+            started_perf=started_perf,
+            outcome="missing_header",
+        )
         return None, error_response(401, "WORKER_AUTH_REQUIRED", "Worker 认证信息缺失。")
+
+    if request and request.url.path.startswith("/api/workers/commands/"):
+        try:
+            apply_worker_result_statement_timeout(db)
+        except Exception as exc:
+            logger.warning(
+                "worker auth statement_timeout setup failed path=%s worker_id=%s error=%s",
+                request.url.path,
+                worker_id,
+                type(exc).__name__,
+            )
+            db.rollback()
 
     worker = db.get(Worker, worker_id)
     if not worker or not token_matches(worker_secret, worker.worker_secret_hash):
+        log_worker_auth_event(
+            phase="end",
+            request=request,
+            worker_id=worker_id,
+            has_worker_id_header=True,
+            has_worker_secret_header=True,
+            started_perf=started_perf,
+            outcome="invalid",
+        )
         return None, error_response(401, "WORKER_AUTH_INVALID", "Worker 认证失败。")
+    log_worker_auth_event(
+        phase="end",
+        request=request,
+        worker_id=worker_id,
+        has_worker_id_header=True,
+        has_worker_secret_header=True,
+        started_perf=started_perf,
+        outcome="success",
+    )
     return worker, None
 
 
@@ -623,11 +732,12 @@ def register_worker(payload: WorkerRegisterRequest, db: Session = Depends(get_db
 @router.post("/workers/heartbeat")
 def worker_heartbeat(
     payload: WorkerHeartbeatRequest,
+    request: Request,
     x_worker_id: str | None = Header(None, alias="X-Worker-Id"),
     x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
     db: Session = Depends(get_db),
 ):
-    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
+    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret, request=request)
     if auth_response:
         return auth_response
     assert worker is not None
@@ -668,11 +778,12 @@ def worker_heartbeat(
 
 @router.post("/workers/commands/next")
 def next_worker_command(
+    request: Request,
     x_worker_id: str | None = Header(None, alias="X-Worker-Id"),
     x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
     db: Session = Depends(get_db),
 ):
-    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
+    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret, request=request)
     if auth_response:
         return auth_response
     assert worker is not None
@@ -705,18 +816,49 @@ def fail_worker_command_result_ingest(
     worker: Worker,
     code: str,
     message: str,
-) -> dict:
-    fail_worker_command(db, command, message, {"code": code, "summary": message})
-    db.commit()
-    db.refresh(command)
-    return success_response(
-        {
+    status_code: int = 200,
+    timings: dict[str, float] | None = None,
+) -> dict | JSONResponse:
+    db_update_started = perf_counter()
+    try:
+        fail_worker_command(db, command, message, {"code": code, "summary": message})
+        db.commit()
+        db.refresh(command)
+        if timings is not None:
+            timings["db_update_ms"] = elapsed_ms_since(db_update_started)
+    except Exception as exc:
+        if timings is not None:
+            timings["db_update_ms"] = elapsed_ms_since(db_update_started)
+        logger.exception(
+            "Worker command failed-state persistence failed command_id=%s command_type=%s worker_id=%s error_code=%s",
+            command.id,
+            command.command_type,
+            worker.id,
+            code,
+        )
+        db.rollback()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error_code": "WORKER_RESULT_FAILED_STATE_PERSIST_FAILED",
+                "message": f"Worker 命令失败状态落库失败：{type(exc).__name__}",
+            },
+        )
+    payload = {
+        "success": status_code < 400,
+        "data": {
             "command": serialize_worker_command(command, worker=worker),
             "accepted_failure": True,
             "error_code": code,
         },
-        "Worker 命令结果无法接收，已标记失败。",
-    )
+        "message": "Worker 命令结果无法接收，已标记失败。",
+    }
+    if status_code >= 400:
+        payload["error_code"] = code
+    if status_code == 200:
+        return payload
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 def worker_command_already_completed_response(command: WorkerCommand, worker: Worker) -> dict:
@@ -740,6 +882,7 @@ async def worker_command_result(
     started_at = now_utc()
     started_perf = perf_counter()
     body_size: int | None = None
+    timings: dict[str, float] = {}
     log_worker_result_endpoint(
         endpoint="result",
         phase="begin",
@@ -750,8 +893,11 @@ async def worker_command_result(
         request=request,
         started_at=started_at,
         started_perf=started_perf,
+        timings=timings,
     )
-    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
+    auth_started = perf_counter()
+    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret, request=request)
+    timings["auth_ms"] = elapsed_ms_since(auth_started)
     if auth_response:
         log_worker_result_endpoint(
             endpoint="result",
@@ -764,11 +910,27 @@ async def worker_command_result(
             started_at=started_at,
             started_perf=started_perf,
             outcome="auth_failed",
+            timings=timings,
         )
         return auth_response
     assert worker is not None
 
+    timeout_started = perf_counter()
+    try:
+        apply_worker_result_statement_timeout(db)
+    except Exception as exc:
+        logger.warning(
+            "worker command result statement_timeout setup failed command_id=%s worker_id=%s error=%s",
+            command_id,
+            worker.id,
+            type(exc).__name__,
+        )
+        db.rollback()
+    timings["statement_timeout_ms"] = elapsed_ms_since(timeout_started)
+
+    lookup_started = perf_counter()
     command = db.get(WorkerCommand, command_id)
+    timings["command_lookup_ms"] = elapsed_ms_since(lookup_started)
     if not command or command.worker_id != worker.id:
         log_worker_result_endpoint(
             endpoint="result",
@@ -781,10 +943,11 @@ async def worker_command_result(
             started_at=started_at,
             started_perf=started_perf,
             outcome="not_found",
+            timings=timings,
         )
         return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在或不属于当前 Worker。")
     try:
-        payload, body_size = await read_worker_command_report_payload(request)
+        payload, body_size = await parse_worker_command_report_request(request, timings)
     except WorkerReportBodyError as exc:
         logger.warning(
             "worker command result body rejected command_id=%s command_type=%s worker_id=%s error_code=%s body_size=%s",
@@ -807,9 +970,18 @@ async def worker_command_result(
                 started_at=started_at,
                 started_perf=started_perf,
                 outcome="already_completed",
+                timings=timings,
             )
             return response
-        response = fail_worker_command_result_ingest(db, command, worker, exc.code, exc.message)
+        response = fail_worker_command_result_ingest(
+            db,
+            command,
+            worker,
+            exc.code,
+            exc.message,
+            status_code=413 if exc.code == "WORKER_RESULT_BODY_TOO_LARGE" else 200,
+            timings=timings,
+        )
         log_worker_result_endpoint(
             endpoint="result",
             phase="end",
@@ -821,6 +993,7 @@ async def worker_command_result(
             started_at=started_at,
             started_perf=started_perf,
             outcome=f"failed_{exc.code}",
+            timings=timings,
         )
         return response
 
@@ -837,6 +1010,7 @@ async def worker_command_result(
             started_at=started_at,
             started_perf=started_perf,
             outcome="already_completed",
+            timings=timings,
         )
         return response
 
@@ -849,6 +1023,7 @@ async def worker_command_result(
             worker,
             "WORKER_RESULT_INVALID_RESULT",
             "Worker 命令 result 字段必须是 JSON object。",
+            timings=timings,
         )
         log_worker_result_endpoint(
             endpoint="result",
@@ -861,16 +1036,20 @@ async def worker_command_result(
             started_at=started_at,
             started_perf=started_perf,
             outcome="failed_WORKER_RESULT_INVALID_RESULT",
+            timings=timings,
         )
         return response
 
+    normalize_started = perf_counter()
     try:
         if command.command_type == "landing_node_create":
             result_payload = persist_successful_landing_node_result(db=db, command=command, result=result_payload)
         else:
             result_payload = normalize_worker_command_result(command.command_type, result_payload)
+        timings["normalize_ms"] = elapsed_ms_since(normalize_started)
     except LandingNodeCreateError as exc:
-        response = fail_worker_command_result_ingest(db, command, worker, exc.code, exc.message)
+        timings["normalize_ms"] = elapsed_ms_since(normalize_started)
+        response = fail_worker_command_result_ingest(db, command, worker, exc.code, exc.message, timings=timings)
         log_worker_result_endpoint(
             endpoint="result",
             phase="end",
@@ -882,15 +1061,18 @@ async def worker_command_result(
             started_at=started_at,
             started_perf=started_perf,
             outcome=f"failed_{exc.code}",
+            timings=timings,
         )
         return response
     except ValueError as exc:
+        timings["normalize_ms"] = elapsed_ms_since(normalize_started)
         response = fail_worker_command_result_ingest(
             db,
             command,
             worker,
             "WORKER_RESULT_SCHEMA_ERROR",
             str(exc)[:1000],
+            timings=timings,
         )
         log_worker_result_endpoint(
             endpoint="result",
@@ -903,9 +1085,11 @@ async def worker_command_result(
             started_at=started_at,
             started_perf=started_perf,
             outcome="failed_WORKER_RESULT_SCHEMA_ERROR",
+            timings=timings,
         )
         return response
     except Exception as exc:
+        timings["normalize_ms"] = elapsed_ms_since(normalize_started)
         logger.exception(
             "Worker command result normalization failed command_id=%s command_type=%s worker_id=%s",
             command.id,
@@ -918,6 +1102,7 @@ async def worker_command_result(
             worker,
             "WORKER_RESULT_NORMALIZE_FAILED",
             f"Worker 命令结果规范化失败，已标记失败：{type(exc).__name__}",
+            timings=timings,
         )
         log_worker_result_endpoint(
             endpoint="result",
@@ -930,13 +1115,17 @@ async def worker_command_result(
             started_at=started_at,
             started_perf=started_perf,
             outcome="failed_WORKER_RESULT_NORMALIZE_FAILED",
+            timings=timings,
         )
         return response
 
+    db_update_started = perf_counter()
     try:
         complete_worker_command(db, command, result_payload)
         db.commit()
+        timings["db_update_ms"] = elapsed_ms_since(db_update_started)
     except Exception as exc:
+        timings["db_update_ms"] = elapsed_ms_since(db_update_started)
         logger.exception(
             "Worker command result persistence failed command_id=%s command_type=%s worker_id=%s",
             command.id,
@@ -954,6 +1143,7 @@ async def worker_command_result(
                 worker,
                 "WORKER_RESULT_PERSIST_FAILED",
                 f"Worker 命令结果落库失败，已标记失败：{type(exc).__name__}",
+                timings=timings,
             )
             log_worker_result_endpoint(
                 endpoint="result",
@@ -966,6 +1156,7 @@ async def worker_command_result(
                 started_at=started_at,
                 started_perf=started_perf,
                 outcome="failed_WORKER_RESULT_PERSIST_FAILED",
+                timings=timings,
             )
             return response
         return error_response(500, "WORKER_RESULT_PERSIST_FAILED", "Worker 命令结果落库失败。")
@@ -986,6 +1177,7 @@ async def worker_command_result(
         started_at=started_at,
         started_perf=started_perf,
         outcome="succeeded",
+        timings=timings,
     )
     return response
 
@@ -1001,6 +1193,7 @@ async def worker_command_fail(
     started_at = now_utc()
     started_perf = perf_counter()
     body_size: int | None = None
+    timings: dict[str, float] = {}
     log_worker_result_endpoint(
         endpoint="fail",
         phase="begin",
@@ -1011,8 +1204,11 @@ async def worker_command_fail(
         request=request,
         started_at=started_at,
         started_perf=started_perf,
+        timings=timings,
     )
-    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
+    auth_started = perf_counter()
+    worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret, request=request)
+    timings["auth_ms"] = elapsed_ms_since(auth_started)
     if auth_response:
         log_worker_result_endpoint(
             endpoint="fail",
@@ -1025,11 +1221,27 @@ async def worker_command_fail(
             started_at=started_at,
             started_perf=started_perf,
             outcome="auth_failed",
+            timings=timings,
         )
         return auth_response
     assert worker is not None
 
+    timeout_started = perf_counter()
+    try:
+        apply_worker_result_statement_timeout(db)
+    except Exception as exc:
+        logger.warning(
+            "worker command failure statement_timeout setup failed command_id=%s worker_id=%s error=%s",
+            command_id,
+            worker.id,
+            type(exc).__name__,
+        )
+        db.rollback()
+    timings["statement_timeout_ms"] = elapsed_ms_since(timeout_started)
+
+    lookup_started = perf_counter()
     command = db.get(WorkerCommand, command_id)
+    timings["command_lookup_ms"] = elapsed_ms_since(lookup_started)
     if not command or command.worker_id != worker.id:
         log_worker_result_endpoint(
             endpoint="fail",
@@ -1042,11 +1254,12 @@ async def worker_command_fail(
             started_at=started_at,
             started_perf=started_perf,
             outcome="not_found",
+            timings=timings,
         )
         return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在或不属于当前 Worker。")
 
     try:
-        payload, body_size = await read_worker_command_report_payload(request)
+        payload, body_size = await parse_worker_command_report_request(request, timings)
     except WorkerReportBodyError as exc:
         logger.warning(
             "worker command failure body rejected command_id=%s command_type=%s worker_id=%s error_code=%s body_size=%s",
@@ -1069,9 +1282,18 @@ async def worker_command_fail(
                 started_at=started_at,
                 started_perf=started_perf,
                 outcome="already_completed",
+                timings=timings,
             )
             return response
-        response = fail_worker_command_result_ingest(db, command, worker, exc.code, exc.message)
+        response = fail_worker_command_result_ingest(
+            db,
+            command,
+            worker,
+            exc.code,
+            exc.message,
+            status_code=413 if exc.code == "WORKER_RESULT_BODY_TOO_LARGE" else 200,
+            timings=timings,
+        )
         log_worker_result_endpoint(
             endpoint="fail",
             phase="end",
@@ -1083,6 +1305,7 @@ async def worker_command_fail(
             started_at=started_at,
             started_perf=started_perf,
             outcome=f"failed_{exc.code}",
+            timings=timings,
         )
         return response
 
@@ -1099,6 +1322,7 @@ async def worker_command_fail(
             started_at=started_at,
             started_perf=started_perf,
             outcome="already_completed",
+            timings=timings,
         )
         return response
 
@@ -1117,14 +1341,18 @@ async def worker_command_fail(
         }
     result_payload: dict[str, Any] | None
     if isinstance(raw_result, dict):
+        normalize_started = perf_counter()
         try:
             result_payload = normalize_worker_command_result(command.command_type, raw_result)
+            timings["normalize_ms"] = elapsed_ms_since(normalize_started)
         except ValueError:
+            timings["normalize_ms"] = elapsed_ms_since(normalize_started)
             result_payload = {
                 "code": "WORKER_FAILURE_RESULT_SCHEMA_ERROR",
                 "summary": "Worker failure result could not be normalized.",
             }
         except Exception as exc:
+            timings["normalize_ms"] = elapsed_ms_since(normalize_started)
             logger.exception(
                 "Worker command failure result normalization failed command_id=%s command_type=%s worker_id=%s",
                 command.id,
@@ -1141,8 +1369,41 @@ async def worker_command_fail(
             "summary": "Worker failure result was not a JSON object.",
         }
 
-    fail_worker_command(db, command, error_message, result_payload)
-    db.commit()
+    db_update_started = perf_counter()
+    try:
+        fail_worker_command(db, command, error_message, result_payload)
+        db.commit()
+        timings["db_update_ms"] = elapsed_ms_since(db_update_started)
+    except Exception as exc:
+        timings["db_update_ms"] = elapsed_ms_since(db_update_started)
+        logger.exception(
+            "Worker command failure persistence failed command_id=%s command_type=%s worker_id=%s",
+            command.id,
+            command.command_type,
+            worker.id,
+        )
+        db.rollback()
+        log_worker_result_endpoint(
+            endpoint="fail",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="failed_WORKER_FAILURE_PERSIST_FAILED",
+            timings=timings,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error_code": "WORKER_FAILURE_PERSIST_FAILED",
+                "message": f"Worker 命令失败结果落库失败：{type(exc).__name__}",
+            },
+        )
     db.refresh(command)
     response = success_response(
         {"command": serialize_worker_command(command, worker=worker)},
@@ -1159,6 +1420,7 @@ async def worker_command_fail(
         started_at=started_at,
         started_perf=started_perf,
         outcome="failed_recorded",
+        timings=timings,
     )
     return response
 

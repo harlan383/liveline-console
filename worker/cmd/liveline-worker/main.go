@@ -1676,13 +1676,13 @@ func postJSON(url string, headers map[string]string, payload any, out any) error
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return fmt.Errorf("post %s failed before response: %w", url, err)
+		return fmt.Errorf("post %s failed before response: %s", url, describeHTTPPostError(err))
 	}
 	defer response.Body.Close()
 
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return fmt.Errorf("read console response status=%d failed: %w", response.StatusCode, err)
+		return fmt.Errorf("read console response status=%d failed: %s", response.StatusCode, describeHTTPPostError(err))
 	}
 	if err := json.Unmarshal(responseBody, out); err != nil {
 		return fmt.Errorf("invalid console response status=%d body=%s", response.StatusCode, responseBodySummary(responseBody))
@@ -1691,6 +1691,36 @@ func postJSON(url string, headers map[string]string, payload any, out any) error
 		return fmt.Errorf("console returned status=%d body=%s", response.StatusCode, responseBodySummary(responseBody))
 	}
 	return nil
+}
+
+func describeHTTPPostError(err error) string {
+	if err == nil {
+		return "unknown_error"
+	}
+	phase := "request_error"
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	text := err.Error()
+	lowered := strings.ToLower(text)
+	var netErr net.Error
+	isTimeout := errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout())
+	switch {
+	case strings.Contains(lowered, "awaiting headers"):
+		phase = "response_headers_timeout"
+	case strings.Contains(lowered, "tls handshake timeout"):
+		phase = "tls_handshake_timeout"
+	case strings.Contains(lowered, "no such host"):
+		phase = "dns_resolution_failed"
+	case strings.Contains(lowered, "connection refused"):
+		phase = "connect_refused"
+	case strings.Contains(lowered, "i/o timeout"):
+		phase = "io_timeout"
+	case isTimeout:
+		phase = "request_timeout"
+	}
+	return fmt.Sprintf("%s: %s", phase, truncateResultString(text, responseBodyLogLimit))
 }
 
 func responseBodySummary(body []byte) string {
