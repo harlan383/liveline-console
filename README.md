@@ -1167,11 +1167,22 @@ backend minimum version for `transit_readonly_preflight` is raised to
 readonly preflight commands can be created. This stage does not auto-upgrade
 remote Workers or retry real commands.
 
-This stage only changes frontend result presentation. It reuses the existing
+Stage 3.3.68-hotfix-5-worker-result-endpoint-timeout hardens the console-side
+Worker command result endpoints. The `/result` and `/fail` endpoints now log
+ingress metadata, read and bound request bodies before parsing, return
+idempotent JSON for already finished commands, and mark malformed or
+non-normalizable reports as failed instead of leaving commands in `running`.
+The `/fail` endpoint accepts the Worker minimal fallback failure report without
+requiring a large structured result. This stage does not auto-upgrade remote
+Workers or retry production commands.
+
+The base stage changes frontend result presentation and later hotfixes harden
+the readonly preflight result transport. It reuses the existing
 `transit_readonly_preflight` Worker command result shape and does not change
-backend APIs, add migrations, execute Worker commands during validation, create
-transit routes, add listening ports, modify firewall or cloud security group
-rules, modify Xray, modify `nodes.share_link`, export client links, or perform
+real creation behavior, add migrations, execute Worker commands during
+validation, create transit routes, add listening ports, modify firewall or
+cloud security group rules, modify Xray, modify `nodes.share_link`, export
+client links, or perform
 cutover.
 
 ## Stage 3.3.14 C cutover decision pack scope
@@ -2383,6 +2394,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.68 hotfix preflight panel prominent | Simplified readonly preflight panel moved above the transit route table so the action and result area are visible near the top |
 | Stage 3.3.68 hotfix transit readonly result EOF | Transit readonly preflight result ingestion now normalizes returned results and fails malformed payloads instead of leaving commands running |
 | Stage 3.3.68 hotfix Worker result submit EOF | Worker result submit now sanitizes payloads, reports HTTP diagnostics, uses fallback failure submit, and requires Worker 0.1.8 for transit readonly preflight |
+| Stage 3.3.68 hotfix Worker result endpoint timeout | Worker result/fail endpoints now use bounded fast-path ingestion, ingress logs, fallback failure handling, and idempotent already-completed responses |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

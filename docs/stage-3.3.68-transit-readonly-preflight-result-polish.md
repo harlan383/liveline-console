@@ -111,6 +111,35 @@ the submit fallback. This stage only updates code and the packaged Worker
 binary; it does not auto-upgrade any remote Worker or retry any production
 command.
 
+## Hotfix 5: Worker Result Endpoint Timeout
+
+Stage 3.3.68-hotfix-5-worker-result-endpoint-timeout hardens the console-side
+`/api/workers/commands/{command_id}/result` and
+`/api/workers/commands/{command_id}/fail` endpoints after production showed the
+upgraded transit Worker timing out while waiting for response headers.
+
+The backend changes are:
+
+- Both endpoints log ingress metadata with command id, command type, Worker id,
+  request body size, remote address, begin / end timestamps, elapsed time, and
+  outcome.
+- Request bodies are read through a bounded fast path before JSON parsing.
+- NUL bytes are stripped before JSON parsing, and oversized / invalid / non-
+  object reports are converted into a failed Worker command with a clear
+  redacted error.
+- `transit_readonly_preflight` results continue to be normalized into the safe
+  result contract before persistence.
+- `/fail` accepts a minimal fallback failure report from the Worker and does
+  not require the full result shape.
+- Commands that are already `succeeded`, `failed`, `cancelled`, `expired`, or
+  `completed` return an idempotent JSON response with `already_completed=true`
+  instead of a retry-triggering error.
+- Persistence and normalization errors are caught, logged without sensitive
+  payload content, and converted into a failed command whenever possible.
+
+This hotfix does not add any real transit creation path, does not retry the
+previous production commands, and does not auto-upgrade remote Workers.
+
 ## Safety Boundary
 
 This stage does not:

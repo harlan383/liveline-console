@@ -1,8 +1,11 @@
 import logging
+import json
 import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 from typing import Any
+from json import JSONDecodeError
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -17,7 +20,7 @@ from app.db.session import get_db
 from app.models.worker import Worker, WorkerToken
 from app.models.worker_command import WorkerCommand
 from app.schemas.common import error_response, success_response
-from app.schemas.worker_commands import WorkerCommandCreate, WorkerCommandFailure
+from app.schemas.worker_commands import WorkerCommandCreate
 from app.schemas.workers import (
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     OFFLINE_THRESHOLD_SECONDS,
@@ -69,10 +72,122 @@ SENSITIVE_METADATA_MARKERS = (
     "share_link",
 )
 LOCAL_WORKER_INSTALL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+WORKER_COMMAND_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "expired", "completed"}
+WORKER_RESULT_BODY_LIMIT_BYTES = 128 * 1024
 
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+class WorkerReportBodyError(Exception):
+    def __init__(self, code: str, message: str, body_size: int):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.body_size = body_size
+
+
+def worker_remote_addr(request: Request) -> str:
+    client = request.client
+    if not client:
+        return "unknown"
+    return client.host or "unknown"
+
+
+def worker_command_status_is_terminal(status: str | None) -> bool:
+    return status in WORKER_COMMAND_TERMINAL_STATUSES
+
+
+def log_worker_result_endpoint(
+    *,
+    endpoint: str,
+    phase: str,
+    command_id: str,
+    command_type: str | None,
+    worker_id: str | None,
+    body_size: int | None,
+    request: Request,
+    started_at: datetime,
+    started_perf: float,
+    outcome: str | None = None,
+) -> None:
+    logger.info(
+        "worker command %s %s command_id=%s command_type=%s worker_id=%s body_size=%s remote_addr=%s begin=%s end=%s elapsed_ms=%.2f outcome=%s",
+        endpoint,
+        phase,
+        command_id,
+        command_type or "-",
+        worker_id or "-",
+        body_size if body_size is not None else "-",
+        worker_remote_addr(request),
+        started_at.isoformat(),
+        now_utc().isoformat(),
+        (perf_counter() - started_perf) * 1000,
+        outcome or "-",
+    )
+
+
+def decode_worker_command_report_body(
+    raw_body: bytes,
+    body_size: int,
+    limit_bytes: int = WORKER_RESULT_BODY_LIMIT_BYTES,
+) -> dict[str, Any]:
+    if body_size > limit_bytes:
+        raise WorkerReportBodyError(
+            "WORKER_RESULT_BODY_TOO_LARGE",
+            f"Worker command report body exceeds {limit_bytes} bytes.",
+            body_size,
+        )
+    cleaned_body = raw_body.replace(b"\x00", b"")
+    if not cleaned_body.strip():
+        raise WorkerReportBodyError(
+            "WORKER_RESULT_EMPTY_BODY",
+            "Worker command report body is empty.",
+            body_size,
+        )
+    try:
+        payload = json.loads(cleaned_body.decode("utf-8"))
+    except UnicodeDecodeError:
+        raise WorkerReportBodyError(
+            "WORKER_RESULT_BODY_ENCODING_ERROR",
+            "Worker command report body must be UTF-8 JSON.",
+            body_size,
+        )
+    except JSONDecodeError:
+        raise WorkerReportBodyError(
+            "WORKER_RESULT_PARSE_ERROR",
+            "Worker command report body is not valid JSON.",
+            body_size,
+        )
+    if not isinstance(payload, dict):
+        raise WorkerReportBodyError(
+            "WORKER_RESULT_INVALID_PAYLOAD",
+            "Worker command report payload must be a JSON object.",
+            body_size,
+        )
+    return payload
+
+
+async def read_worker_command_report_payload(
+    request: Request,
+    limit_bytes: int = WORKER_RESULT_BODY_LIMIT_BYTES,
+) -> tuple[dict[str, Any], int]:
+    body = bytearray()
+    body_size = 0
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        body_size += len(chunk)
+        if body_size > limit_bytes:
+            raise WorkerReportBodyError(
+                "WORKER_RESULT_BODY_TOO_LARGE",
+                f"Worker command report body exceeds {limit_bytes} bytes.",
+                body_size,
+            )
+        body.extend(chunk)
+
+    return decode_worker_command_report_body(bytes(body), body_size, limit_bytes), body_size
 
 
 def mask_token(token: str) -> str:
@@ -595,8 +710,22 @@ def fail_worker_command_result_ingest(
     db.commit()
     db.refresh(command)
     return success_response(
-        {"command": serialize_worker_command(command, worker=worker)},
+        {
+            "command": serialize_worker_command(command, worker=worker),
+            "accepted_failure": True,
+            "error_code": code,
+        },
         "Worker 命令结果无法接收，已标记失败。",
+    )
+
+
+def worker_command_already_completed_response(command: WorkerCommand, worker: Worker) -> dict:
+    return success_response(
+        {
+            "command": serialize_worker_command(command, worker=worker),
+            "already_completed": True,
+        },
+        "Worker 命令已结束，重复提交已忽略。",
     )
 
 
@@ -608,54 +737,132 @@ async def worker_command_result(
     x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
     db: Session = Depends(get_db),
 ):
+    started_at = now_utc()
+    started_perf = perf_counter()
+    body_size: int | None = None
+    log_worker_result_endpoint(
+        endpoint="result",
+        phase="begin",
+        command_id=command_id,
+        command_type=None,
+        worker_id=clean_token(x_worker_id),
+        body_size=None,
+        request=request,
+        started_at=started_at,
+        started_perf=started_perf,
+    )
     worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
     if auth_response:
+        log_worker_result_endpoint(
+            endpoint="result",
+            phase="end",
+            command_id=command_id,
+            command_type=None,
+            worker_id=clean_token(x_worker_id),
+            body_size=None,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="auth_failed",
+        )
         return auth_response
     assert worker is not None
 
     command = db.get(WorkerCommand, command_id)
     if not command or command.worker_id != worker.id:
+        log_worker_result_endpoint(
+            endpoint="result",
+            phase="end",
+            command_id=command_id,
+            command_type=command.command_type if command else None,
+            worker_id=worker.id,
+            body_size=None,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="not_found",
+        )
         return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在或不属于当前 Worker。")
-    if command.status in {"succeeded", "failed", "cancelled", "expired"}:
-        return error_response(409, "WORKER_COMMAND_ALREADY_FINISHED", "Worker 命令已结束。")
-
     try:
-        payload = await request.json()
-    except Exception as exc:
+        payload, body_size = await read_worker_command_report_payload(request)
+    except WorkerReportBodyError as exc:
         logger.warning(
-            "Worker command result JSON parse failed command_id=%s command_type=%s worker_id=%s error=%s",
+            "worker command result body rejected command_id=%s command_type=%s worker_id=%s error_code=%s body_size=%s",
             command.id,
             command.command_type,
             worker.id,
-            type(exc).__name__,
+            exc.code,
+            exc.body_size,
         )
-        return fail_worker_command_result_ingest(
-            db,
-            command,
-            worker,
-            "WORKER_RESULT_PARSE_ERROR",
-            "Worker 命令结果不是有效 JSON，已标记失败。",
+        if worker_command_status_is_terminal(command.status):
+            response = worker_command_already_completed_response(command, worker)
+            log_worker_result_endpoint(
+                endpoint="result",
+                phase="end",
+                command_id=command.id,
+                command_type=command.command_type,
+                worker_id=worker.id,
+                body_size=exc.body_size,
+                request=request,
+                started_at=started_at,
+                started_perf=started_perf,
+                outcome="already_completed",
+            )
+            return response
+        response = fail_worker_command_result_ingest(db, command, worker, exc.code, exc.message)
+        log_worker_result_endpoint(
+            endpoint="result",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=exc.body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome=f"failed_{exc.code}",
         )
+        return response
 
-    if not isinstance(payload, dict):
-        return fail_worker_command_result_ingest(
-            db,
-            command,
-            worker,
-            "WORKER_RESULT_INVALID_PAYLOAD",
-            "Worker 命令结果 payload 必须是 JSON object。",
+    if worker_command_status_is_terminal(command.status):
+        response = worker_command_already_completed_response(command, worker)
+        log_worker_result_endpoint(
+            endpoint="result",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="already_completed",
         )
+        return response
 
     raw_result = payload.get("result")
     result_payload: dict[str, Any] | None = raw_result if isinstance(raw_result, dict) else None
     if raw_result is not None and not isinstance(raw_result, dict):
-        return fail_worker_command_result_ingest(
+        response = fail_worker_command_result_ingest(
             db,
             command,
             worker,
             "WORKER_RESULT_INVALID_RESULT",
             "Worker 命令 result 字段必须是 JSON object。",
         )
+        log_worker_result_endpoint(
+            endpoint="result",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="failed_WORKER_RESULT_INVALID_RESULT",
+        )
+        return response
 
     try:
         if command.command_type == "landing_node_create":
@@ -663,18 +870,68 @@ async def worker_command_result(
         else:
             result_payload = normalize_worker_command_result(command.command_type, result_payload)
     except LandingNodeCreateError as exc:
-        fail_worker_command(db, command, exc.message, {"code": exc.code})
-        db.commit()
-        db.refresh(command)
-        return error_response(400, exc.code, exc.message)
+        response = fail_worker_command_result_ingest(db, command, worker, exc.code, exc.message)
+        log_worker_result_endpoint(
+            endpoint="result",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome=f"failed_{exc.code}",
+        )
+        return response
     except ValueError as exc:
-        return fail_worker_command_result_ingest(
+        response = fail_worker_command_result_ingest(
             db,
             command,
             worker,
             "WORKER_RESULT_SCHEMA_ERROR",
             str(exc)[:1000],
         )
+        log_worker_result_endpoint(
+            endpoint="result",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="failed_WORKER_RESULT_SCHEMA_ERROR",
+        )
+        return response
+    except Exception as exc:
+        logger.exception(
+            "Worker command result normalization failed command_id=%s command_type=%s worker_id=%s",
+            command.id,
+            command.command_type,
+            worker.id,
+        )
+        response = fail_worker_command_result_ingest(
+            db,
+            command,
+            worker,
+            "WORKER_RESULT_NORMALIZE_FAILED",
+            f"Worker 命令结果规范化失败，已标记失败：{type(exc).__name__}",
+        )
+        log_worker_result_endpoint(
+            endpoint="result",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="failed_WORKER_RESULT_NORMALIZE_FAILED",
+        )
+        return response
 
     try:
         complete_worker_command(db, command, result_payload)
@@ -690,49 +947,220 @@ async def worker_command_result(
         command = db.get(WorkerCommand, command_id)
         if not command:
             return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在。")
-        if command.status not in {"succeeded", "failed", "cancelled", "expired"}:
-            return fail_worker_command_result_ingest(
+        if not worker_command_status_is_terminal(command.status):
+            response = fail_worker_command_result_ingest(
                 db,
                 command,
                 worker,
                 "WORKER_RESULT_PERSIST_FAILED",
                 f"Worker 命令结果落库失败，已标记失败：{type(exc).__name__}",
             )
+            log_worker_result_endpoint(
+                endpoint="result",
+                phase="end",
+                command_id=command.id,
+                command_type=command.command_type,
+                worker_id=worker.id,
+                body_size=body_size,
+                request=request,
+                started_at=started_at,
+                started_perf=started_perf,
+                outcome="failed_WORKER_RESULT_PERSIST_FAILED",
+            )
+            return response
         return error_response(500, "WORKER_RESULT_PERSIST_FAILED", "Worker 命令结果落库失败。")
 
     db.refresh(command)
-    return success_response(
+    response = success_response(
         {"command": serialize_worker_command(command, worker=worker)},
         "Worker 命令结果已记录。",
     )
+    log_worker_result_endpoint(
+        endpoint="result",
+        phase="end",
+        command_id=command.id,
+        command_type=command.command_type,
+        worker_id=worker.id,
+        body_size=body_size,
+        request=request,
+        started_at=started_at,
+        started_perf=started_perf,
+        outcome="succeeded",
+    )
+    return response
 
 
 @router.post("/workers/commands/{command_id}/fail")
-def worker_command_fail(
+async def worker_command_fail(
     command_id: str,
-    payload: WorkerCommandFailure,
+    request: Request,
     x_worker_id: str | None = Header(None, alias="X-Worker-Id"),
     x_worker_secret: str | None = Header(None, alias="X-Worker-Secret"),
     db: Session = Depends(get_db),
 ):
+    started_at = now_utc()
+    started_perf = perf_counter()
+    body_size: int | None = None
+    log_worker_result_endpoint(
+        endpoint="fail",
+        phase="begin",
+        command_id=command_id,
+        command_type=None,
+        worker_id=clean_token(x_worker_id),
+        body_size=None,
+        request=request,
+        started_at=started_at,
+        started_perf=started_perf,
+    )
     worker, auth_response = authenticate_worker(db, x_worker_id, x_worker_secret)
     if auth_response:
+        log_worker_result_endpoint(
+            endpoint="fail",
+            phase="end",
+            command_id=command_id,
+            command_type=None,
+            worker_id=clean_token(x_worker_id),
+            body_size=None,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="auth_failed",
+        )
         return auth_response
     assert worker is not None
 
     command = db.get(WorkerCommand, command_id)
     if not command or command.worker_id != worker.id:
+        log_worker_result_endpoint(
+            endpoint="fail",
+            phase="end",
+            command_id=command_id,
+            command_type=command.command_type if command else None,
+            worker_id=worker.id,
+            body_size=None,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="not_found",
+        )
         return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在或不属于当前 Worker。")
-    if command.status in {"succeeded", "failed", "cancelled", "expired"}:
-        return error_response(409, "WORKER_COMMAND_ALREADY_FINISHED", "Worker 命令已结束。")
 
-    fail_worker_command(db, command, payload.error_message, payload.result)
+    try:
+        payload, body_size = await read_worker_command_report_payload(request)
+    except WorkerReportBodyError as exc:
+        logger.warning(
+            "worker command failure body rejected command_id=%s command_type=%s worker_id=%s error_code=%s body_size=%s",
+            command.id,
+            command.command_type,
+            worker.id,
+            exc.code,
+            exc.body_size,
+        )
+        if worker_command_status_is_terminal(command.status):
+            response = worker_command_already_completed_response(command, worker)
+            log_worker_result_endpoint(
+                endpoint="fail",
+                phase="end",
+                command_id=command.id,
+                command_type=command.command_type,
+                worker_id=worker.id,
+                body_size=exc.body_size,
+                request=request,
+                started_at=started_at,
+                started_perf=started_perf,
+                outcome="already_completed",
+            )
+            return response
+        response = fail_worker_command_result_ingest(db, command, worker, exc.code, exc.message)
+        log_worker_result_endpoint(
+            endpoint="fail",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=exc.body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome=f"failed_{exc.code}",
+        )
+        return response
+
+    if worker_command_status_is_terminal(command.status):
+        response = worker_command_already_completed_response(command, worker)
+        log_worker_result_endpoint(
+            endpoint="fail",
+            phase="end",
+            command_id=command.id,
+            command_type=command.command_type,
+            worker_id=worker.id,
+            body_size=body_size,
+            request=request,
+            started_at=started_at,
+            started_perf=started_perf,
+            outcome="already_completed",
+        )
+        return response
+
+    raw_error_message = payload.get("error_message") or payload.get("message") or payload.get("error")
+    error_message = str(raw_error_message).strip()[:1000] if raw_error_message else "Worker reported command failure."
+    raw_result = payload.get("result")
+    if raw_result is None:
+        raw_result = {
+            "status": "failed",
+            "summary": error_message,
+            "redacted_summary": error_message,
+            "safety_boundary": [
+                "Worker failure report is redacted.",
+                "No sensitive client link, token, SSH key, or database password is included.",
+            ],
+        }
+    result_payload: dict[str, Any] | None
+    if isinstance(raw_result, dict):
+        try:
+            result_payload = normalize_worker_command_result(command.command_type, raw_result)
+        except ValueError:
+            result_payload = {
+                "code": "WORKER_FAILURE_RESULT_SCHEMA_ERROR",
+                "summary": "Worker failure result could not be normalized.",
+            }
+        except Exception as exc:
+            logger.exception(
+                "Worker command failure result normalization failed command_id=%s command_type=%s worker_id=%s",
+                command.id,
+                command.command_type,
+                worker.id,
+            )
+            result_payload = {
+                "code": "WORKER_FAILURE_RESULT_NORMALIZE_FAILED",
+                "summary": f"Worker failure result normalization failed: {type(exc).__name__}",
+            }
+    else:
+        result_payload = {
+            "code": "WORKER_FAILURE_RESULT_INVALID",
+            "summary": "Worker failure result was not a JSON object.",
+        }
+
+    fail_worker_command(db, command, error_message, result_payload)
     db.commit()
     db.refresh(command)
-    return success_response(
+    response = success_response(
         {"command": serialize_worker_command(command, worker=worker)},
         "Worker 命令失败结果已记录。",
     )
+    log_worker_result_endpoint(
+        endpoint="fail",
+        phase="end",
+        command_id=command.id,
+        command_type=command.command_type,
+        worker_id=worker.id,
+        body_size=body_size,
+        request=request,
+        started_at=started_at,
+        started_perf=started_perf,
+        outcome="failed_recorded",
+    )
+    return response
 
 
 @router.post("/workers/{worker_id}/commands")
