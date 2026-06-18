@@ -226,3 +226,27 @@ func TestBuildResultSubmitDebugSummaryNonJSONFriendlyTypes(t *testing.T) {
 		t.Fatalf("SubmitPayloadSize = %d, want positive sanitized payload size", summary.SubmitPayloadSize)
 	}
 }
+
+func TestSafeEndpointLabelDropsQuery(t *testing.T) {
+	got := safeEndpointLabel("http://console.example:8200/api/workers/commands/abc/result?" + "token" + "=secret")
+	if got != "console.example:8200/api/workers/commands/abc/result" {
+		t.Fatalf("safeEndpointLabel = %q", got)
+	}
+	if strings.Contains(got, "secret") || strings.Contains(got, "token") {
+		t.Fatalf("safeEndpointLabel leaked query: %q", got)
+	}
+}
+
+func TestSortedHeaderKeysDoesNotReturnValues(t *testing.T) {
+	keys := sortedHeaderKeys(map[string]string{
+		"X-Worker-Secret": "secret-value",
+		"X-Worker-Id":     "worker-id",
+	})
+	got := strings.Join(keys, ",")
+	if !strings.Contains(got, "X-Worker-Secret") || !strings.Contains(got, "X-Worker-Id") {
+		t.Fatalf("header keys missing: %q", got)
+	}
+	if strings.Contains(got, "secret-value") || strings.Contains(got, "worker-id") {
+		t.Fatalf("header values leaked: %q", got)
+	}
+}
