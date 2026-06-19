@@ -2571,6 +2571,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.73f Transit route real create listen verification hotfix | Worker real-create verification now retries service/listener checks and reports compact diagnostics before rollback; no command triggered, no route created, no cutover |
 | Stage 3.3.73h Production success record | Approved Hong Kong socat 23843 transit route created successfully; service active, route active, share_link remains NULL, no cutover |
 | Stage 3.3.74c Client candidate success record | Hong Kong socat 23843 candidate validated by client import; browsing works, exit remains landing region, no cutover |
+| Stage 3.3.75 Formal route promotion approval | Formal approval pack for promoting hk-socat-live-23843 as client candidate; no cutover, no share_link mutation |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
