@@ -15,6 +15,8 @@ APPROVED_LANDING_TARGET_HOST = "64.90.13.19"
 APPROVED_LANDING_TARGET_PORT = 27939
 APPROVED_TRANSIT_FORWARDING_METHOD = "socat"
 APPROVED_TRANSIT_ROUTE_NAME = "hk-socat-live-23843"
+APPROVED_TRANSIT_ROUTE_ID = "d10d3dcc-679f-4f85-ae37-9e5dfa37e6af"
+APPROVED_TRANSIT_CANDIDATE_NAME = "hk-socat-live-23843-test"
 APPROVED_TRANSIT_SERVICE_NAME = "liveline-socat-23843.service"
 APPROVED_TRANSIT_SERVICE_PATH = "/etc/systemd/system/liveline-socat-23843.service"
 PROTECTED_CREATE_PORT_MESSAGES = {
@@ -75,6 +77,73 @@ class TransitRouteData(BaseModel):
 
 class TransitRouteListResult(BaseModel):
     routes: list[TransitRouteData]
+
+
+class TransitRouteCandidateSummary(BaseModel):
+    route_id: str
+    route_name: str
+    transit_resource_id: str
+    transit_resource_name: str | None = None
+    entry_host: str
+    listen_port: int
+    target_host: str
+    target_port: int
+    forwarding_method: str
+    service_name: str
+    service_path: str
+    status: str
+    landing_node_id: str
+    landing_node_name: str | None = None
+    landing_vps_ip: str | None = None
+    route_share_link_present: bool = False
+    share_link_present: bool = False
+    recommended_candidate: bool = True
+    cutover_status: str = "not_cutover"
+    safety_boundary: list[str]
+
+
+class TransitRouteCandidateExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_transient_export: bool = False
+    confirm_no_database_write: bool = False
+    confirm_no_share_link_mutation: bool = False
+    confirm_no_cutover: bool = False
+    reason: str = Field(default="client_candidate_test", min_length=1, max_length=120)
+
+    @field_validator("reason")
+    @classmethod
+    def clean_candidate_export_reason(cls, value: str) -> str:
+        cleaned = value.strip()
+        lowered = cleaned.lower()
+        if "://" in lowered or "private key" in lowered or "token" in lowered or "password" in lowered:
+            raise ValueError("reason 不能包含链接、token、密码或私钥内容")
+        return cleaned or "client_candidate_test"
+
+
+class TransitRouteCandidateExportResult(BaseModel):
+    route_id: str
+    route_name: str
+    candidate_name: str
+    server: str
+    port: int
+    protocol: str
+    security: str
+    network: str
+    flow: str | None = None
+    sni: str | None = None
+    fingerprint: str | None = None
+    reality_public_key_present: bool
+    reality_short_id_present: bool
+    uuid_present: bool
+    masked_candidate_link: str
+    candidate_link: str
+    warning: str
+    cutover_status: str = "not_cutover"
+    database_write_performed: bool = False
+    nodes_share_link_mutated: bool = False
+    transit_route_share_link_mutated: bool = False
+    safety_boundary: list[str]
 
 
 class ReadonlyPreflightPlanRequest(BaseModel):

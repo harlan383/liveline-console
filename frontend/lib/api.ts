@@ -188,6 +188,62 @@ export type TransitRouteListResult = {
   routes: TransitRouteData[];
 };
 
+export type TransitRouteCandidateSummary = {
+  route_id: string;
+  route_name: string;
+  transit_resource_id: string;
+  transit_resource_name: string | null;
+  entry_host: string;
+  listen_port: number;
+  target_host: string;
+  target_port: number;
+  forwarding_method: string;
+  service_name: string;
+  service_path: string;
+  status: string;
+  landing_node_id: string;
+  landing_node_name: string | null;
+  landing_vps_ip: string | null;
+  route_share_link_present: boolean;
+  share_link_present: boolean;
+  recommended_candidate: boolean;
+  cutover_status: string;
+  safety_boundary: string[];
+};
+
+export type TransitRouteCandidateExportRequest = {
+  confirm_transient_export: boolean;
+  confirm_no_database_write: boolean;
+  confirm_no_share_link_mutation: boolean;
+  confirm_no_cutover: boolean;
+  reason: string;
+};
+
+export type TransitRouteCandidateExportResult = {
+  route_id: string;
+  route_name: string;
+  candidate_name: string;
+  server: string;
+  port: number;
+  protocol: string;
+  security: string;
+  network: string;
+  flow: string | null;
+  sni: string | null;
+  fingerprint: string | null;
+  reality_public_key_present: boolean;
+  reality_short_id_present: boolean;
+  uuid_present: boolean;
+  masked_candidate_link: string;
+  candidate_link: string;
+  warning: string;
+  cutover_status: string;
+  database_write_performed: boolean;
+  nodes_share_link_mutated: boolean;
+  transit_route_share_link_mutated: boolean;
+  safety_boundary: string[];
+};
+
 export type ReadonlyPreflightPlanRequest = {
   transit_resource_id: string | null;
   transit_resource_name: string | null;
@@ -638,6 +694,24 @@ export async function createTransitReadonlyPreflightCommand(
   csrfToken: string,
 ): Promise<ApiResponse<TransitReadonlyPreflightCommandResponse>> {
   return apiFetch<TransitReadonlyPreflightCommandResponse>("/api/transit-routes/readonly-preflight-command", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getTransitRouteCandidateSummary(
+  routeId: string,
+): Promise<ApiResponse<TransitRouteCandidateSummary>> {
+  return apiFetch<TransitRouteCandidateSummary>(`/api/transit-routes/${routeId}/candidate-summary`);
+}
+
+export async function exportTransitRouteCandidate(
+  routeId: string,
+  payload: TransitRouteCandidateExportRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitRouteCandidateExportResult>> {
+  return apiFetch<TransitRouteCandidateExportResult>(`/api/transit-routes/${routeId}/candidate-export`, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),

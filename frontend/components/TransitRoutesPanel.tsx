@@ -8,6 +8,8 @@ import {
   createTransitReadonlyPreflightCommand,
   createTransitWorkerBootstrap,
   createWorkerCommand,
+  exportTransitRouteCandidate,
+  getTransitRouteCandidateSummary,
   listWorkerCommands,
   regenerateTransitWorkerBootstrap,
   requestReadonlyPreflightPlan,
@@ -16,6 +18,8 @@ import {
   type NodeListResult,
   type ReadonlyPreflightPlanRequest,
   type ReadonlyPreflightPlanResponse,
+  type TransitRouteCandidateExportResult,
+  type TransitRouteCandidateSummary,
   type TransitReadonlyPreflightCommandRequest,
   type TransitResourceData,
   type TransitResourceListResult,
@@ -54,6 +58,14 @@ type TransitRouteWorkerCreatePlanResult = {
   safety_boundary: string[];
 };
 
+type CandidateExportConfirmations = {
+  transientExport: boolean;
+  noDatabaseWrite: boolean;
+  noShareLinkMutation: boolean;
+  noCutover: boolean;
+  keepOriginalNode: boolean;
+};
+
 const emptyBootstrapForm: TransitWorkerBootstrapFormState = {
   name: "",
   ip: "",
@@ -66,6 +78,16 @@ const emptyRouteDraft: TransitRouteDraftState = {
   plannedListenPort: "23843",
   forwardingMethod: "socat",
   purpose: "直播",
+};
+
+const approvedCandidateRouteId = "d10d3dcc-679f-4f85-ae37-9e5dfa37e6af";
+
+const emptyCandidateExportConfirmations: CandidateExportConfirmations = {
+  transientExport: false,
+  noDatabaseWrite: false,
+  noShareLinkMutation: false,
+  noCutover: false,
+  keepOriginalNode: false,
 };
 
 function statusClass(status: string) {
@@ -538,9 +560,20 @@ export function TransitRoutesPanel() {
   const [preflightSummaryCopied, setPreflightSummaryCopied] = useState(false);
   const [workerCreatePlan, setWorkerCreatePlan] = useState<TransitRouteWorkerCreatePlanResult | null>(null);
   const [workerCreateLoading, setWorkerCreateLoading] = useState(false);
+  const [candidateSummary, setCandidateSummary] = useState<TransitRouteCandidateSummary | null>(null);
+  const [candidateExport, setCandidateExport] = useState<TransitRouteCandidateExportResult | null>(null);
+  const [candidateExportConfirmations, setCandidateExportConfirmations] = useState<CandidateExportConfirmations>(
+    emptyCandidateExportConfirmations,
+  );
+  const [candidateLoading, setCandidateLoading] = useState(false);
+  const [candidateMessage, setCandidateMessage] = useState("候选链路摘要尚未加载；不会自动导出完整测试配置。");
 
   const selectableResources = useMemo(() => resources.filter(isPlanningSelectableTransitResource), [resources]);
   const activeNodes = useMemo(() => nodes.filter((node) => node.status === "active"), [nodes]);
+  const approvedCandidateRoute = useMemo(
+    () => routes.find((route) => route.id === approvedCandidateRouteId) ?? null,
+    [routes],
+  );
   const selectedResource = selectableResources.find((resource) => resource.id === draft.transitResourceId) ?? selectableResources[0] ?? null;
   const selectedNode = activeNodes.find((node) => node.id === draft.landingNodeId) ?? activeNodes[0] ?? null;
   const plannedPort = parsePort(draft.plannedListenPort);
@@ -587,6 +620,88 @@ export function TransitRoutesPanel() {
   useEffect(() => {
     void loadData();
   }, []);
+
+  const candidateExportReady =
+    candidateExportConfirmations.transientExport &&
+    candidateExportConfirmations.noDatabaseWrite &&
+    candidateExportConfirmations.noShareLinkMutation &&
+    candidateExportConfirmations.noCutover &&
+    candidateExportConfirmations.keepOriginalNode;
+
+  async function loadCandidateSummary() {
+    const routeId = approvedCandidateRoute?.id ?? approvedCandidateRouteId;
+    setCandidateLoading(true);
+    setCandidateMessage("正在读取候选链路安全摘要；不会读取或导出完整 nodes.share_link。");
+    try {
+      const result = await getTransitRouteCandidateSummary(routeId);
+      if (!result.success) {
+        setCandidateMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setCandidateSummary(result.data);
+      setCandidateMessage("候选链路摘要已加载；未导出完整测试配置。");
+    } catch (error) {
+      setCandidateMessage(error instanceof Error ? error.message : "读取候选链路摘要失败。");
+    } finally {
+      setCandidateLoading(false);
+    }
+  }
+
+  async function exportCandidateConfig() {
+    const routeId = approvedCandidateRoute?.id ?? candidateSummary?.route_id ?? approvedCandidateRouteId;
+    if (!candidateExportReady) {
+      setCandidateMessage("临时导出前必须完成全部安全确认。");
+      return;
+    }
+    setCandidateLoading(true);
+    setCandidateMessage("正在临时导出候选测试配置；不会写入数据库或执行 cutover。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await exportTransitRouteCandidate(
+        routeId,
+        {
+          confirm_transient_export: true,
+          confirm_no_database_write: true,
+          confirm_no_share_link_mutation: true,
+          confirm_no_cutover: true,
+          reason: "client_candidate_test",
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setCandidateMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setCandidateExport(result.data);
+      setCandidateSummary((current) => current ?? {
+        route_id: result.data.route_id,
+        route_name: result.data.route_name,
+        transit_resource_id: "",
+        transit_resource_name: null,
+        entry_host: result.data.server,
+        listen_port: result.data.port,
+        target_host: "",
+        target_port: 0,
+        forwarding_method: "socat",
+        service_name: "",
+        service_path: "",
+        status: "active",
+        landing_node_id: "",
+        landing_node_name: null,
+        landing_vps_ip: null,
+        route_share_link_present: false,
+        share_link_present: false,
+        recommended_candidate: true,
+        cutover_status: result.data.cutover_status,
+        safety_boundary: result.data.safety_boundary,
+      });
+      setCandidateMessage("候选测试配置已临时导出；完整链接仅保存在本次响应内，请只用于手动导入测试。");
+    } catch (error) {
+      setCandidateMessage(error instanceof Error ? error.message : "临时导出候选测试配置失败。");
+    } finally {
+      setCandidateLoading(false);
+    }
+  }
 
   useEffect(() => {
     setDraft((current) => {
@@ -767,6 +882,133 @@ export function TransitRoutesPanel() {
           </ul>
         </div>
       </details>
+
+      <div className="warning-box">
+        <div className="status-row">
+          <div>
+            <h3>候选中转链路</h3>
+            <p className="message">
+              展示 `hk-socat-live-23843` 的安全摘要，并允许管理员临时导出测试配置；不写入数据库、不替换原节点、不 cutover。
+            </p>
+          </div>
+          <div className="server-actions">
+            <button className="secondary" disabled={candidateLoading} type="button" onClick={() => void loadCandidateSummary()}>
+              查看候选配置摘要
+            </button>
+            <button className="secondary" disabled={candidateLoading || !candidateExportReady} type="button" onClick={() => void exportCandidateConfig()}>
+              临时导出测试配置
+            </button>
+          </div>
+        </div>
+
+        <div className="route-safety-body">
+          <div className="candidate-summary-grid">
+            <span>链路</span>
+            <strong>{candidateSummary?.route_name ?? approvedCandidateRoute?.name ?? "hk-socat-live-23843"}</strong>
+            <span>入口</span>
+            <strong>
+              {candidateSummary
+                ? `${candidateSummary.entry_host}:${candidateSummary.listen_port}`
+                : approvedCandidateRoute
+                  ? `${displayValue(approvedCandidateRoute.transit_resource_name)} / ${approvedCandidateRoute.listen_port}`
+                  : "163.223.216.108:23843"}
+            </strong>
+            <span>目标</span>
+            <strong>
+              {candidateSummary
+                ? `${candidateSummary.target_host}:${candidateSummary.target_port}`
+                : approvedCandidateRoute
+                  ? `${approvedCandidateRoute.target_host}:${approvedCandidateRoute.target_port}`
+                  : "64.90.13.19:27939"}
+            </strong>
+            <span>状态</span>
+            <strong>{displayStatusLabel(candidateSummary?.status ?? approvedCandidateRoute?.status ?? "active")}</strong>
+            <span>服务</span>
+            <strong>{candidateSummary?.service_name ?? approvedCandidateRoute?.service_name ?? "liveline-socat-23843.service"}</strong>
+            <span>share_link</span>
+            <strong>{candidateSummary?.route_share_link_present ? "已写入" : "NULL / 未写入"}</strong>
+            <span>cutover</span>
+            <strong>{candidateSummary?.cutover_status === "not_cutover" || !candidateSummary ? "未切换" : candidateSummary.cutover_status}</strong>
+          </div>
+
+          <div className="candidate-confirmations">
+            <label>
+              <input
+                checked={candidateExportConfirmations.transientExport}
+                type="checkbox"
+                onChange={(event) =>
+                  setCandidateExportConfirmations({ ...candidateExportConfirmations, transientExport: event.target.checked })
+                }
+              />
+              我确认这是临时导出，只用于手动测试。
+            </label>
+            <label>
+              <input
+                checked={candidateExportConfirmations.noDatabaseWrite}
+                type="checkbox"
+                onChange={(event) =>
+                  setCandidateExportConfirmations({ ...candidateExportConfirmations, noDatabaseWrite: event.target.checked })
+                }
+              />
+              我确认不写入数据库。
+            </label>
+            <label>
+              <input
+                checked={candidateExportConfirmations.noShareLinkMutation}
+                type="checkbox"
+                onChange={(event) =>
+                  setCandidateExportConfirmations({ ...candidateExportConfirmations, noShareLinkMutation: event.target.checked })
+                }
+              />
+              我确认不修改 `nodes.share_link`。
+            </label>
+            <label>
+              <input
+                checked={candidateExportConfirmations.noCutover}
+                type="checkbox"
+                onChange={(event) =>
+                  setCandidateExportConfirmations({ ...candidateExportConfirmations, noCutover: event.target.checked })
+                }
+              />
+              我确认不 cutover。
+            </label>
+            <label>
+              <input
+                checked={candidateExportConfirmations.keepOriginalNode}
+                type="checkbox"
+                onChange={(event) =>
+                  setCandidateExportConfirmations({ ...candidateExportConfirmations, keepOriginalNode: event.target.checked })
+                }
+              />
+              我确认原直连节点仍保留。
+            </label>
+          </div>
+
+          {candidateExport ? (
+            <div className="candidate-export-result">
+              <strong>临时测试配置已生成</strong>
+              <span>名称：{candidateExport.candidate_name}</span>
+              <span>服务器：{candidateExport.server}</span>
+              <span>端口：{candidateExport.port}</span>
+              <span>协议：{candidateExport.protocol} / {candidateExport.security} / {candidateExport.network}</span>
+              <span>masked link：{candidateExport.masked_candidate_link}</span>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => {
+                  void copyText(candidateExport.candidate_link);
+                  setCandidateMessage("完整候选链接已复制。请勿写入聊天、PR、日志或文档。");
+                }}
+              >
+                复制完整候选链接
+              </button>
+              <p className="message">只用于手动导入测试；不代表正式切换，也没有写入 `nodes.share_link`。</p>
+            </div>
+          ) : null}
+
+          <p className="message">{candidateMessage}</p>
+        </div>
+      </div>
 
       <div className="form route-form">
         <label>

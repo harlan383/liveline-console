@@ -1420,6 +1420,51 @@ details[open] .when-closed {
   line-height: 1.45;
 }
 
+.candidate-summary-grid {
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: minmax(120px, 0.36fr) minmax(0, 1fr);
+}
+
+.candidate-summary-grid span {
+  color: #ffd28a;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.candidate-summary-grid strong {
+  color: #fff3d3;
+  overflow-wrap: anywhere;
+}
+
+.candidate-confirmations,
+.candidate-export-result {
+  background: rgba(7, 16, 24, 0.52);
+  border: 1px solid rgba(253, 176, 34, 0.22);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.candidate-confirmations label {
+  align-items: flex-start;
+  color: #ffe0a3;
+  display: flex;
+  gap: 8px;
+  line-height: 1.35;
+}
+
+.candidate-confirmations input {
+  margin-top: 2px;
+}
+
+.candidate-export-result span {
+  color: #ffe0a3;
+  overflow-wrap: anywhere;
+}
+
 .collapsible-notice.warning-box {
   display: block;
   padding: 0;

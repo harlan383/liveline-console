@@ -1,3 +1,5 @@
+from urllib.parse import quote, urlencode
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,9 +18,12 @@ from app.schemas.transit_route import (
     APPROVED_TRANSIT_FORWARDING_METHOD,
     APPROVED_TRANSIT_INTERFACE_NAME,
     APPROVED_TRANSIT_LISTEN_PORT,
+    APPROVED_TRANSIT_CANDIDATE_NAME,
+    APPROVED_TRANSIT_ROUTE_ID,
     APPROVED_TRANSIT_ROUTE_NAME,
     APPROVED_TRANSIT_RESOURCE_ID,
     APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
+    APPROVED_TRANSIT_SERVICE_NAME,
     APPROVED_TRANSIT_WORKER_ID,
     APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
     PROTECTED_CREATE_PORT_MESSAGES,
@@ -27,10 +32,12 @@ from app.schemas.transit_route import (
     ReadonlyPreflightPlanRequest,
     ReadonlyPreflightPlanResponse,
     TransitReadonlyPreflightCommandRequest,
+    TransitRouteCandidateExportRequest,
     TransitRouteWorkerCreateExecuteRequest,
     TransitRouteWorkerCreatePlanRequest,
 )
 from app.services.auth_service import record_audit
+from app.services.redaction import mask_share_link
 from app.services.worker_commands import create_worker_command, serialize_worker_command
 from app.services.worker_targeting import (
     WorkerTargetError,
@@ -93,6 +100,19 @@ READONLY_PREFLIGHT_SAFETY_BOUNDARY = [
     "no real forwarding created",
     "no real listening port added",
     "no node.share_link modification",
+    "no cutover",
+]
+TRANSIT_CANDIDATE_EXPORT_BOUNDARY = [
+    "transient candidate export only",
+    "no database write",
+    "no nodes.share_link mutation",
+    "no transit_routes.share_link mutation",
+    "no original direct node replacement",
+    "no full link stored in audit logs",
+    "no Worker command created",
+    "no socat restart, stop, disable, or delete",
+    "no Xray modification",
+    "no firewall or cloud security group change",
     "no cutover",
 ]
 
@@ -432,6 +452,89 @@ def serialize_transit_route(route: TransitRoute) -> dict:
     }
 
 
+def route_entry_host(route: TransitRoute) -> str | None:
+    resource = route.transit_resource
+    return resource.entry_host if resource and resource.entry_host else None
+
+
+def is_approved_candidate_route(route: TransitRoute) -> bool:
+    return (
+        route.id == APPROVED_TRANSIT_ROUTE_ID
+        and route.name == APPROVED_TRANSIT_ROUTE_NAME
+        and route.transit_resource_id == APPROVED_TRANSIT_RESOURCE_ID
+        and route.node_id == APPROVED_LANDING_NODE_ID
+        and route.listen_port == APPROVED_TRANSIT_LISTEN_PORT
+        and route.target_host == APPROVED_LANDING_TARGET_HOST
+        and route.target_port == APPROVED_LANDING_TARGET_PORT
+        and route.forwarding_method == APPROVED_TRANSIT_FORWARDING_METHOD
+        and route.service_name == APPROVED_TRANSIT_SERVICE_NAME
+        and route.deleted_at is None
+    )
+
+
+def candidate_summary_payload(route: TransitRoute) -> dict:
+    resource = route.transit_resource
+    node = route.node
+    vps = route.landing_vps
+    entry_host = route_entry_host(route) or ""
+    return {
+        "route_id": route.id,
+        "route_name": route.name,
+        "transit_resource_id": route.transit_resource_id,
+        "transit_resource_name": resource.name if resource else None,
+        "entry_host": entry_host,
+        "listen_port": route.listen_port,
+        "target_host": route.target_host,
+        "target_port": route.target_port,
+        "forwarding_method": route.forwarding_method,
+        "service_name": route.service_name,
+        "service_path": route.service_path,
+        "status": route.status,
+        "landing_node_id": route.node_id,
+        "landing_node_name": node.node_name if node else None,
+        "landing_vps_ip": vps.ip if vps else None,
+        "route_share_link_present": bool(route.share_link),
+        "share_link_present": bool(route.share_link),
+        "recommended_candidate": True,
+        "cutover_status": "not_cutover",
+        "safety_boundary": TRANSIT_CANDIDATE_EXPORT_BOUNDARY,
+    }
+
+
+def build_transient_candidate_link(route: TransitRoute, node: Node) -> tuple[str | None, str | None]:
+    entry_host = route_entry_host(route)
+    if not entry_host:
+        return None, "中转入口 IP 缺失，不能生成临时候选配置。"
+    required_values = {
+        "uuid": node.uuid,
+        "reality_public_key": node.reality_public_key,
+        "reality_short_id": node.reality_short_id,
+        "sni": node.sni,
+    }
+    missing = [name for name, value in required_values.items() if not value]
+    if missing:
+        return None, f"落地节点缺少必要 Reality 参数：{', '.join(missing)}。"
+
+    values = {
+        "encryption": "none",
+        "security": "reality",
+        "sni": node.sni or "",
+        "fp": node.fingerprint or "",
+        "pbk": node.reality_public_key or "",
+        "sid": node.reality_short_id or "",
+        "type": node.transport or "tcp",
+    }
+    if node.flow:
+        values["flow"] = node.flow
+    scheme = "vless"
+    fragment = quote(APPROVED_TRANSIT_CANDIDATE_NAME, safe="")
+    link = (
+        f"{scheme}://{quote(node.uuid or '', safe='')}@{entry_host}:{route.listen_port}"
+        f"?{urlencode(values)}#{fragment}"
+    )
+    return link, None
+
+
 def get_route_or_error(db: Session, route_id: str) -> TransitRoute | None:
     return db.scalar(
         select(TransitRoute).where(
@@ -469,6 +572,108 @@ def get_transit_route(
         return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
 
     return success_response(serialize_transit_route(route), "ok")
+
+
+@router.get("/{route_id}/candidate-summary")
+def get_transit_route_candidate_summary(
+    route_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    if not require_admin_session(db, request):
+        return auth_error()
+
+    route = get_route_or_error(db, route_id)
+    if not route:
+        return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
+    if not is_approved_candidate_route(route):
+        return error_response(400, "TRANSIT_ROUTE_NOT_APPROVED_CANDIDATE", "该中转链路不是当前审批候选链路。")
+    if route.status != "active":
+        return error_response(400, "TRANSIT_ROUTE_NOT_ACTIVE", "只有 active 候选链路可以查看候选摘要。")
+
+    return success_response(candidate_summary_payload(route), "candidate summary generated")
+
+
+@router.post("/{route_id}/candidate-export")
+def export_transit_route_candidate(
+    route_id: str,
+    payload: TransitRouteCandidateExportRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    if not payload.confirm_transient_export:
+        return error_response(400, "TRANSIENT_EXPORT_CONFIRMATION_REQUIRED", "必须确认这是临时导出。")
+    if not payload.confirm_no_database_write:
+        return error_response(400, "NO_DATABASE_WRITE_CONFIRMATION_REQUIRED", "必须确认本次导出不写入数据库。")
+    if not payload.confirm_no_share_link_mutation:
+        return error_response(400, "NO_SHARE_LINK_MUTATION_CONFIRMATION_REQUIRED", "必须确认不修改 nodes.share_link。")
+    if not payload.confirm_no_cutover:
+        return error_response(400, "NO_CUTOVER_CONFIRMATION_REQUIRED", "必须确认本次导出不执行 cutover。")
+
+    route = get_route_or_error(db, route_id)
+    if not route:
+        return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
+    if not is_approved_candidate_route(route):
+        return error_response(400, "TRANSIT_ROUTE_NOT_APPROVED_CANDIDATE", "该中转链路不是当前审批候选链路。")
+    if route.status != "active":
+        return error_response(400, "TRANSIT_ROUTE_NOT_ACTIVE", "只有 active 候选链路可以临时导出测试配置。")
+
+    node = route.node
+    if not node or node.deleted_at is not None:
+        return error_response(404, "LANDING_NODE_NOT_FOUND", "候选链路关联的落地节点不存在。")
+    if node.status != "active":
+        return error_response(400, "LANDING_NODE_NOT_ACTIVE", "只有 active 落地节点可以临时导出测试配置。")
+    if node.xray_port != route.target_port:
+        return error_response(400, "LANDING_TARGET_PORT_MISMATCH", "落地节点端口与候选链路目标端口不一致。")
+
+    candidate_link, link_error = build_transient_candidate_link(route, node)
+    if not candidate_link:
+        return error_response(409, "CANDIDATE_LINK_MATERIAL_INCOMPLETE", link_error or "候选配置参数不完整。")
+
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="export_transit_route_candidate",
+        result="success",
+        request=request,
+        resource_type="transit_route",
+        resource_id=route.id,
+    )
+    db.commit()
+
+    return success_response(
+        {
+            "route_id": route.id,
+            "route_name": route.name,
+            "candidate_name": APPROVED_TRANSIT_CANDIDATE_NAME,
+            "server": route_entry_host(route),
+            "port": route.listen_port,
+            "protocol": node.protocol,
+            "security": node.security,
+            "network": node.transport or "tcp",
+            "flow": node.flow,
+            "sni": node.sni,
+            "fingerprint": node.fingerprint,
+            "reality_public_key_present": bool(node.reality_public_key),
+            "reality_short_id_present": bool(node.reality_short_id),
+            "uuid_present": bool(node.uuid),
+            "masked_candidate_link": mask_share_link(candidate_link),
+            "candidate_link": candidate_link,
+            "warning": "This is a transient export. It is not written to nodes.share_link and does not perform cutover.",
+            "cutover_status": "not_cutover",
+            "database_write_performed": False,
+            "nodes_share_link_mutated": False,
+            "transit_route_share_link_mutated": False,
+            "safety_boundary": TRANSIT_CANDIDATE_EXPORT_BOUNDARY,
+        },
+        "候选测试配置已临时导出。本响应是唯一明文返回位置，请勿写入日志、文档或 PR。",
+    )
 
 
 @router.post("/readonly-preflight-plan")
