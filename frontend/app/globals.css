@@ -1465,6 +1465,26 @@ details[open] .when-closed {
   overflow-wrap: anywhere;
 }
 
+.candidate-manual-copy {
+  color: #ffe0a3;
+  display: grid;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.candidate-manual-copy textarea {
+  background: rgba(4, 10, 18, 0.72);
+  border: 1px solid rgba(253, 176, 34, 0.3);
+  border-radius: 8px;
+  color: #fff3d3;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  min-height: 92px;
+  padding: 10px;
+  resize: vertical;
+  width: 100%;
+}
+
 .collapsible-notice.warning-box {
   display: block;
   padding: 0;

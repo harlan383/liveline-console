@@ -2575,6 +2575,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.75b Route promotion implementation plan | Plan candidate promotion approaches without cutover or share_link mutation |
 | Stage 3.3.76 Longer stability observation | Observation plan for hk-socat-live-23843 before any promotion; no cutover or share_link mutation |
 | Stage 3.3.77 Transit candidate UI and transient export | Add safe candidate route display and transient client export without cutover or share_link mutation |
+| Stage 3.3.77c Candidate export copy fallback hotfix | Add HTTP-safe manual copy fallback for transient candidate export; no cutover or share_link mutation |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
