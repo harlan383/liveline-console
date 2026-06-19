@@ -102,14 +102,6 @@ function SafetyConfirmRow({
   );
 }
 
-type CandidateExportConfirmations = {
-  transientExport: boolean;
-  noDatabaseWrite: boolean;
-  noShareLinkMutation: boolean;
-  noCutover: boolean;
-  keepOriginalNode: boolean;
-};
-
 const emptyBootstrapForm: TransitWorkerBootstrapFormState = {
   name: "",
   ip: "",
@@ -133,14 +125,6 @@ const emptyRouteCreatePreviewForm: TransitRouteCreatePreviewFormState = {
 };
 
 const approvedCandidateRouteId = "d10d3dcc-679f-4f85-ae37-9e5dfa37e6af";
-
-const emptyCandidateExportConfirmations: CandidateExportConfirmations = {
-  transientExport: false,
-  noDatabaseWrite: false,
-  noShareLinkMutation: false,
-  noCutover: false,
-  keepOriginalNode: false,
-};
 
 const emptyRouteCreatePreviewConfirmations: TransitRouteCreatePreviewConfirmations = {
   previewOnly: false,
@@ -613,9 +597,6 @@ export function TransitRoutesPanel() {
   const [workerCreateLoading, setWorkerCreateLoading] = useState(false);
   const [candidateSummary, setCandidateSummary] = useState<TransitRouteCandidateSummary | null>(null);
   const [candidateExport, setCandidateExport] = useState<TransitRouteCandidateExportResult | null>(null);
-  const [candidateExportConfirmations, setCandidateExportConfirmations] = useState<CandidateExportConfirmations>(
-    emptyCandidateExportConfirmations,
-  );
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [candidateMessage, setCandidateMessage] = useState("候选链路摘要尚未加载；不会自动导出完整测试配置。");
   const [candidateCopyFallbackRequired, setCandidateCopyFallbackRequired] = useState(false);
@@ -703,13 +684,6 @@ export function TransitRoutesPanel() {
     void loadData();
   }, []);
 
-  const candidateExportReady =
-    candidateExportConfirmations.transientExport &&
-    candidateExportConfirmations.noDatabaseWrite &&
-    candidateExportConfirmations.noShareLinkMutation &&
-    candidateExportConfirmations.noCutover &&
-    candidateExportConfirmations.keepOriginalNode;
-
   function routeTransitResource(route: TransitRouteData) {
     return resources.find((resource) => resource.id === route.transit_resource_id) ?? null;
   }
@@ -787,7 +761,6 @@ export function TransitRoutesPanel() {
       setCandidateSummary(null);
       setCandidateExport(null);
       setCandidateCopyFallbackRequired(false);
-      setCandidateExportConfirmations(emptyCandidateExportConfirmations);
     }
   }
 
@@ -796,8 +769,7 @@ export function TransitRoutesPanel() {
     setCandidateExportModalOpen(true);
     setCandidateExport(null);
     setCandidateCopyFallbackRequired(false);
-    setCandidateExportConfirmations(emptyCandidateExportConfirmations);
-    setCandidateMessage("请先确认临时导出安全边界，再生成测试配置。");
+    setCandidateMessage("临时导出只用于手动导入测试；不会写入数据库、修改 nodes.share_link 或 cutover。");
   }
 
   function closeCandidateExportModal() {
@@ -805,7 +777,6 @@ export function TransitRoutesPanel() {
     setCandidateExportRouteId("");
     setCandidateExport(null);
     setCandidateCopyFallbackRequired(false);
-    setCandidateExportConfirmations(emptyCandidateExportConfirmations);
     setCandidateMessage("候选链路摘要尚未加载；不会自动导出完整测试配置。");
   }
 
@@ -831,10 +802,6 @@ export function TransitRoutesPanel() {
   async function exportCandidateConfig(routeId = candidateExportRouteId) {
     if (!routeId) {
       setCandidateMessage("请先选择一条中转链路。");
-      return;
-    }
-    if (!candidateExportReady) {
-      setCandidateMessage("临时导出前必须完成弹窗内全部安全确认。");
       return;
     }
     setCandidateLoading(true);
@@ -1326,37 +1293,13 @@ export function TransitRoutesPanel() {
               <p className="message">未选择中转链路。</p>
             )}
 
-            <div className="safety-confirm-list">
-              <SafetyConfirmRow
-                checked={candidateExportConfirmations.transientExport}
-                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, transientExport: checked })}
-              >
-                我确认这是临时导出，只用于手动测试。
-              </SafetyConfirmRow>
-              <SafetyConfirmRow
-                checked={candidateExportConfirmations.noDatabaseWrite}
-                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, noDatabaseWrite: checked })}
-              >
-                我确认不写入数据库。
-              </SafetyConfirmRow>
-              <SafetyConfirmRow
-                checked={candidateExportConfirmations.noShareLinkMutation}
-                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, noShareLinkMutation: checked })}
-              >
-                我确认不修改 `nodes.share_link`。
-              </SafetyConfirmRow>
-              <SafetyConfirmRow
-                checked={candidateExportConfirmations.noCutover}
-                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, noCutover: checked })}
-              >
-                我确认不 cutover。
-              </SafetyConfirmRow>
-              <SafetyConfirmRow
-                checked={candidateExportConfirmations.keepOriginalNode}
-                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, keepOriginalNode: checked })}
-              >
-                我确认原直连节点仍保留。
-              </SafetyConfirmRow>
+            <div className="transit-export-safety-notice">
+              <strong>安全说明</strong>
+              <span>仅用于手动导入客户端测试。</span>
+              <span>不会写入数据库。</span>
+              <span>不会修改 `nodes.share_link`。</span>
+              <span>不会 cutover。</span>
+              <span>原直连节点仍保留。</span>
             </div>
 
             {candidateExport ? (
@@ -1404,7 +1347,7 @@ export function TransitRoutesPanel() {
               <button className="secondary" type="button" onClick={closeCandidateExportModal}>
                 {candidateExport ? "关闭" : "取消"}
               </button>
-              <button disabled={!candidateExportReady || candidateLoading || !candidateExportRoute} type="button" onClick={() => void exportCandidateConfig(candidateExportRouteId)}>
+              <button disabled={candidateLoading || !candidateExportRoute} type="button" onClick={() => void exportCandidateConfig(candidateExportRouteId)}>
                 {candidateLoading ? "生成中" : candidateExport ? "重新生成" : "生成测试配置"}
               </button>
             </div>

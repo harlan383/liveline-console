@@ -2589,6 +2589,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.86 Transit export modal layout hotfix | Fix transient export modal overflow and checkbox alignment; no backend or production action |
 | Stage 3.3.87 Transit export modal confirmation layout fix | Fix modal confirmation checklist alignment and remove horizontal overflow; no backend or production action |
 | Stage 3.3.88 Transit add-route modal confirmation layout fix | Fix add-route preview modal confirmation checklist alignment and remove horizontal overflow; no backend or production action |
+| Stage 3.3.89 Transit export modal simplify no checkbox | Replace transient export checkbox checklist with simple safety notice and generate action; no backend or production action |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
