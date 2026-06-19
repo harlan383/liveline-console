@@ -227,6 +227,15 @@ function maskShareLink(shareLink: string) {
   return `${shareLink.slice(0, 24)}...${shareLink.slice(-12)}`;
 }
 
+function nodeEntryLabel(node: ServerNodeSummary, serverIp: string) {
+  const host = node.ip || node.address || serverIp;
+  return node.port ? `${host}:${node.port}` : host;
+}
+
+function nodeProtocolSummary(node: ServerNodeSummary) {
+  return node.protocol === "vless" ? "vless / reality / tcp" : node.protocol;
+}
+
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value : "未返回";
 }
@@ -268,6 +277,7 @@ async function copyTextWithFallback(text: string, textArea: HTMLTextAreaElement 
 
 export function ServerManagementPanel() {
   const workerInstallCommandRef = useRef<HTMLTextAreaElement | null>(null);
+  const nodeShareLinkRef = useRef<HTMLTextAreaElement | null>(null);
   const [servers, setServers] = useState<VpsServerData[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("落地服务器管理只读取本地系统记录；不会在页面加载时执行 SSH。");
@@ -653,8 +663,13 @@ export function ServerManagementPanel() {
     setShowFullShareLink(Boolean(options.reveal));
     setShowNodeQrCode(Boolean(options.showQr));
     if (options.copy) {
-      await navigator.clipboard.writeText(link);
-      setMessage("节点链接已复制到剪贴板，请妥善保存，不要公开分享。");
+      const copied = await copyTextWithFallback(link, nodeShareLinkRef.current);
+      if (copied) {
+        setMessage("客户端链接已复制到剪贴板，请妥善保存，不要公开分享。");
+      } else {
+        setShowFullShareLink(true);
+        setMessage("当前浏览器不支持自动复制。请在节点详情弹窗中使用链接框手动复制，勿公开分享。");
+      }
     } else {
       setMessage("节点链接已临时导出，请勿公开分享。");
     }
@@ -665,6 +680,17 @@ export function ServerManagementPanel() {
     if (!node.share_link_present) {
       setMessage("该节点还没有可复制的分享链接。");
       return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      setMessage("当前 HTTP 环境可能无法自动复制，正在打开节点详情以便手动复制。");
+      const detail = await fetchNodeDetail(node.id);
+      if (!detail) {
+        return;
+      }
+      setSelectedNodeDetail(detail);
+      setShowFullShareLink(false);
+      setShowNodeQrCode(false);
+      setExportedNodeShareLink(null);
     }
     await exportSelectedNodeShareLink(node.id, "client_import", { copy: true });
   }
@@ -848,12 +874,20 @@ export function ServerManagementPanel() {
     }
   }
 
+  const directNodeCount = servers.reduce((count, server) => count + server.nodes.length, 0);
+  const copyReadyNodeCount = servers.reduce(
+    (count, server) => count + server.nodes.filter((node) => node.share_link_present).length,
+    0,
+  );
+  const workerOnlineCount = servers.filter((server) => server.worker_online).length;
+  const activeServerCount = servers.filter((server) => server.display_status === "active" || server.display_status === "online").length;
+
   return (
     <section className="panel wide server-management-panel">
       <div className="server-management-header">
         <div>
           <h2>落地服务器</h2>
-          <p className="message">管理本地系统中的落地服务器记录和下级节点摘要。页面加载不会执行 SSH 或远程命令。</p>
+          <p className="message">管理落地 VPS 和直连 Reality 节点。日常使用只需要查看状态、创建计划、复制客户端配置。</p>
         </div>
         <button type="button" onClick={openAddServer}>
           添加落地服务器
@@ -861,7 +895,30 @@ export function ServerManagementPanel() {
       </div>
 
       <div className="server-management-note">
-        share_link 仅显示是否存在；本页面不允许修改 `node.share_link`。删除落地服务器只处理系统记录，不清理远程 Xray / 节点配置。
+        完整节点链接默认隐藏；只有点击复制、临时查看或二维码时才会短暂导出。本页面不修改 `node.share_link`，不执行 cutover。
+      </div>
+
+      <div className="landing-status-strip" aria-label="落地服务器与直连节点状态摘要">
+        <div className="landing-status-card">
+          <span>落地服务器</span>
+          <strong>{servers.length}</strong>
+          <small>可用记录：{activeServerCount}</small>
+        </div>
+        <div className="landing-status-card">
+          <span>直连节点</span>
+          <strong>{directNodeCount}</strong>
+          <small>当前仅展示已支持的单 VPS / 单节点摘要</small>
+        </div>
+        <div className="landing-status-card">
+          <span>客户端配置</span>
+          <strong>{copyReadyNodeCount}</strong>
+          <small>可复制 / 导出</small>
+        </div>
+        <div className="landing-status-card">
+          <span>Worker 在线</span>
+          <strong>{workerOnlineCount}</strong>
+          <small>高级检查默认收起</small>
+        </div>
       </div>
 
       <details className="route-safety-guardrail collapsible-notice server-node-merge-notice" aria-label="节点合并说明">
@@ -903,7 +960,10 @@ export function ServerManagementPanel() {
                   <strong>{server.name || server.ip}</strong>
                   <span>{server.ip}</span>
                   <span>SSH {server.ssh_port}</span>
-                  <span className={`pill ${statusClass(server.display_status)}`}>{displayStatusLabel(server.display_status)}</span>
+                  <span>
+                    <span className={`pill ${statusClass(server.display_status)}`}>{displayStatusLabel(server.display_status)}</span>
+                    <small className="node-share-status">直连节点：{server.nodes.length} 个</small>
+                  </span>
                   <div className="server-actions">
                     <button
                       className="secondary"
@@ -919,31 +979,37 @@ export function ServerManagementPanel() {
                     <button className="secondary" type="button" onClick={() => openEdit(server)}>
                       编辑
                     </button>
-                    {server.worker_id ? (
-                      <>
-                        <button
-                          className="secondary"
-                          disabled={!server.worker_online || workerCommandLoadingId === server.worker_id}
-                          title={!server.worker_online ? "Worker 未在线，不能创建检查命令" : "创建只读 Worker 检查命令"}
-                          type="button"
-                          onClick={() => void runWorkerCheck(server)}
-                        >
-                          Worker 检查
+                    <details className="server-advanced-actions">
+                      <summary>高级读取与调试</summary>
+                      <div className="server-advanced-actions-body">
+                        <span>这些功能主要用于开发或排障。日常搭建网络时一般不需要展开。</span>
+                        {server.worker_id ? (
+                          <>
+                            <button
+                              className="secondary"
+                              disabled={!server.worker_online || workerCommandLoadingId === server.worker_id}
+                              title={!server.worker_online ? "Worker 未在线，不能创建检查命令" : "创建只读 Worker 检查命令"}
+                              type="button"
+                              onClick={() => void runWorkerCheck(server)}
+                            >
+                              Worker 检查
+                            </button>
+                            <button
+                              className="secondary"
+                              disabled={!server.worker_online || workerCommandLoadingId === server.worker_id}
+                              title={!server.worker_online ? "Worker 未在线，不能创建只读预检命令" : "创建落地服务器只读预检命令"}
+                              type="button"
+                              onClick={() => void runLandingPreflight(server)}
+                            >
+                              只读预检
+                            </button>
+                          </>
+                        ) : null}
+                        <button className="danger" type="button" onClick={() => openDelete(server)}>
+                          删除系统记录
                         </button>
-                        <button
-                          className="secondary"
-                          disabled={!server.worker_online || workerCommandLoadingId === server.worker_id}
-                          title={!server.worker_online ? "Worker 未在线，不能创建只读预检命令" : "创建落地服务器只读预检命令"}
-                          type="button"
-                          onClick={() => void runLandingPreflight(server)}
-                        >
-                          只读预检
-                        </button>
-                      </>
-                    ) : null}
-                    <button className="danger" type="button" onClick={() => openDelete(server)}>
-                      删除
-                    </button>
+                      </div>
+                    </details>
                   </div>
                 </div>
                 {server.connection_mode === "worker" ? (
@@ -960,18 +1026,18 @@ export function ServerManagementPanel() {
                     {server.nodes.map((node) => (
                       <div className="server-table-row node-child-row" key={node.id}>
                         <span>
-                          └ {node.name}
-                          <small className="node-meta-line">协议：{node.protocol}</small>
+                          <strong>直连节点：{node.name}</strong>
+                          <small className="node-meta-line">协议：{nodeProtocolSummary(node)}</small>
                         </span>
-                        <span>{node.ip || node.address || server.ip}</span>
-                        <span>节点 {node.port ?? "-"}</span>
+                        <span className="node-entry-label">入口：{nodeEntryLabel(node, server.ip)}</span>
+                        <span className="node-config-status">配置：{node.share_link_present ? "可复制" : "未生成"}</span>
                         <span>
                           <span className={`pill ${statusClass(node.status)}`}>{nodeStatusLabel(node.status)}</span>
                           <small className="node-share-status">share_link：{node.share_link_present ? "已生成" : "未生成"}</small>
                         </span>
                         <span className="server-actions">
                           <button className="secondary" type="button" onClick={() => void openNodeDetail(node)}>
-                            查看
+                            查看摘要
                           </button>
                           <button
                             className="secondary"
@@ -979,7 +1045,7 @@ export function ServerManagementPanel() {
                             type="button"
                             onClick={() => void copyNodeShareLink(node)}
                           >
-                            复制
+                            复制客户端链接
                           </button>
                           <button
                             className="secondary"
@@ -987,7 +1053,7 @@ export function ServerManagementPanel() {
                             type="button"
                             onClick={() => void openNodeDetail(node, true)}
                           >
-                            二维码
+                            临时二维码
                           </button>
                         </span>
                       </div>
@@ -1579,7 +1645,7 @@ export function ServerManagementPanel() {
           <div className="modal-header">
             <div>
               <h3>{selectedNodeDetail.node_name}</h3>
-              <p className="message">节点详情按需读取；完整 share_link 默认隐藏，不会修改 `node.share_link`。</p>
+              <p className="message">直连 Reality 节点摘要按需读取；完整客户端链接默认隐藏，不会修改 `node.share_link`。</p>
             </div>
             <button className="ghost-button" type="button" onClick={closeNodeDetail}>
               关闭
@@ -1591,14 +1657,19 @@ export function ServerManagementPanel() {
           <div className="detail-grid">
             <span>节点名称</span>
             <strong>{selectedNodeDetail.node_name}</strong>
-            <span>VPS IP / 服务器 IP</span>
-            <strong>{selectedNodeDetail.vps_ip ?? "-"}</strong>
-            <span>协议</span>
-            <strong>{selectedNodeDetail.protocol}</strong>
-            <span>端口</span>
-            <strong>{selectedNodeDetail.port ?? "-"}</strong>
+            <span>入口</span>
+            <strong>
+              {selectedNodeDetail.vps_ip ?? "-"}
+              {selectedNodeDetail.port ? `:${selectedNodeDetail.port}` : ""}
+            </strong>
+            <span>协议 / 安全 / 传输</span>
+            <strong>
+              {selectedNodeDetail.protocol} / {selectedNodeDetail.security} / {selectedNodeDetail.transport ?? "tcp"}
+            </strong>
             <span>状态</span>
             <strong>{nodeStatusLabel(selectedNodeDetail.status)}</strong>
+            <span>服务状态</span>
+            <strong>{selectedNodeDetail.service_status ?? "-"}</strong>
             <span>share_link 状态</span>
             <strong>
               {shareLinkAvailable
@@ -1617,9 +1688,10 @@ export function ServerManagementPanel() {
 
           <div className="share-export">
             <label className="wide-field">
-              分享链接
+              客户端配置链接
               <textarea
                 className="share-link-value"
+                ref={nodeShareLinkRef}
                 readOnly
                 value={
                   shareLink
@@ -1629,7 +1701,9 @@ export function ServerManagementPanel() {
                     : selectedNodeDetail.masked_share_link ?? ""
                 }
               />
-              <small>节点链接属于敏感信息；完整链接只在二次确认导出后临时用于复制或二维码。</small>
+              <small>
+                节点链接属于敏感信息；完整链接只在二次确认导出后临时用于复制、手动复制或二维码。
+              </small>
             </label>
 
             <div className="node-actions export-actions">
@@ -1639,7 +1713,7 @@ export function ServerManagementPanel() {
                 type="button"
                 onClick={() => void exportSelectedNodeShareLink(selectedNodeDetail.id, "client_import", { copy: true })}
               >
-                导出并复制链接
+                复制客户端链接
               </button>
               <button
                 className="secondary"
@@ -1653,7 +1727,7 @@ export function ServerManagementPanel() {
                   void exportSelectedNodeShareLink(selectedNodeDetail.id, "temporary_reveal", { reveal: true });
                 }}
               >
-                {showFullShareLink ? "隐藏完整链接" : "显示完整链接"}
+                {showFullShareLink ? "隐藏完整链接" : "临时查看链接"}
               </button>
               <button
                 className="secondary"
@@ -1667,7 +1741,7 @@ export function ServerManagementPanel() {
                   void exportSelectedNodeShareLink(selectedNodeDetail.id, "qr_code", { showQr: true });
                 }}
               >
-                {showNodeQrCode ? "隐藏二维码" : "显示二维码"}
+                {showNodeQrCode ? "隐藏二维码" : "临时显示二维码"}
               </button>
             </div>
 
