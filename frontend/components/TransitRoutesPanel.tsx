@@ -181,6 +181,9 @@ async function ensureCsrfToken() {
 }
 
 async function copyText(value: string) {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    throw new Error("Clipboard API unavailable");
+  }
   await navigator.clipboard.writeText(value);
 }
 
@@ -523,8 +526,9 @@ export function TransitServersPanel() {
                       className="secondary"
                       type="button"
                       onClick={() => {
-                        void copyText(workerTokenResult.install_command);
-                        setMessage("安装命令已复制。请勿写入聊天、Git、README、PR 或日志。");
+                        void copyText(workerTokenResult.install_command)
+                          .then(() => setMessage("安装命令已复制。请勿写入聊天、Git、README、PR 或日志。"))
+                          .catch(() => setMessage("当前 HTTP 环境可能不支持自动复制，请手动复制上方安装命令。"));
                       }}
                     >
                       复制命令
@@ -567,6 +571,7 @@ export function TransitRoutesPanel() {
   );
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [candidateMessage, setCandidateMessage] = useState("候选链路摘要尚未加载；不会自动导出完整测试配置。");
+  const [candidateCopyFallbackRequired, setCandidateCopyFallbackRequired] = useState(false);
 
   const selectableResources = useMemo(() => resources.filter(isPlanningSelectableTransitResource), [resources]);
   const activeNodes = useMemo(() => nodes.filter((node) => node.status === "active"), [nodes]);
@@ -673,6 +678,7 @@ export function TransitRoutesPanel() {
         return;
       }
       setCandidateExport(result.data);
+      setCandidateCopyFallbackRequired(false);
       setCandidateSummary((current) => current ?? {
         route_id: result.data.route_id,
         route_name: result.data.route_name,
@@ -810,8 +816,12 @@ export function TransitRoutesPanel() {
       `只读预检：${remotePreflightCommand?.status ?? "未执行"}`,
       "安全边界：未创建真实转发，未新增监听端口，未修改防火墙、Xray 或 nodes.share_link。",
     ].join("\n");
-    await copyText(summary);
-    setPreflightSummaryCopied(true);
+    try {
+      await copyText(summary);
+      setPreflightSummaryCopied(true);
+    } catch {
+      setReadonlyPreflightApiMessage("当前 HTTP 环境可能不支持自动复制，请手动复制只读预检摘要。");
+    }
   }
 
   async function createWorkerDryRunPlan() {
@@ -995,13 +1005,30 @@ export function TransitRoutesPanel() {
               <button
                 className="secondary"
                 type="button"
-                onClick={() => {
-                  void copyText(candidateExport.candidate_link);
-                  setCandidateMessage("完整候选链接已复制。请勿写入聊天、PR、日志或文档。");
+                onClick={async () => {
+                  try {
+                    await copyText(candidateExport.candidate_link);
+                    setCandidateCopyFallbackRequired(false);
+                    setCandidateMessage("完整候选链接已复制。请妥善保存，仅用于手动导入测试，不要公开分享。");
+                  } catch {
+                    setCandidateCopyFallbackRequired(true);
+                    setCandidateMessage("当前 HTTP 环境不支持自动复制，请使用下方文本框手动复制。");
+                  }
                 }}
               >
                 复制完整候选链接
               </button>
+              {candidateCopyFallbackRequired ? (
+                <label className="candidate-manual-copy">
+                  手动复制完整候选链接
+                  <textarea
+                    readOnly
+                    value={candidateExport.candidate_link}
+                    onClick={(event) => event.currentTarget.select()}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                </label>
+              ) : null}
               <p className="message">只用于手动导入测试；不代表正式切换，也没有写入 `nodes.share_link`。</p>
             </div>
           ) : null}
