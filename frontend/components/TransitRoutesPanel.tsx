@@ -572,6 +572,7 @@ export function TransitRoutesPanel() {
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [candidateMessage, setCandidateMessage] = useState("候选链路摘要尚未加载；不会自动导出完整测试配置。");
   const [candidateCopyFallbackRequired, setCandidateCopyFallbackRequired] = useState(false);
+  const [advancedTransitOpsOpen, setAdvancedTransitOpsOpen] = useState(false);
 
   const selectableResources = useMemo(() => resources.filter(isPlanningSelectableTransitResource), [resources]);
   const activeNodes = useMemo(() => nodes.filter((node) => node.status === "active"), [nodes]);
@@ -1037,108 +1038,136 @@ export function TransitRoutesPanel() {
         </div>
       </div>
 
-      <div className="form route-form">
-        <label>
-          中转服务器
-          <select
-            value={selectedResource?.id ?? ""}
-            onChange={(event) => setDraft({ ...draft, transitResourceId: event.target.value })}
-          >
-            {selectableResources.length === 0 ? <option value="">暂无可用于本地规划的中转服务器</option> : null}
-            {selectableResources.map((resource) => (
-              <option key={resource.id} value={resource.id}>
-                {resource.name} / {displayValue(resource.entry_host)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          落地节点
-          <select
-            value={selectedNode?.id ?? ""}
-            onChange={(event) => {
-              setDraft({
-                ...draft,
-                landingNodeId: event.target.value,
-              });
-            }}
-          >
-            {activeNodes.length === 0 ? <option value="">暂无 active 落地节点</option> : null}
-            {activeNodes.map((node) => (
-              <option key={node.id} value={node.id}>
-                {node.node_name} / {displayValue(node.vps_ip)}:{displayValue(node.port)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          监听端口
-          <input value={draft.plannedListenPort} onChange={(event) => setDraft({ ...draft, plannedListenPort: event.target.value })} />
-        </label>
-        <label>
-          转发方式
-          <select value={draft.forwardingMethod} onChange={(event) => setDraft({ ...draft, forwardingMethod: event.target.value as ForwardingMethod })}>
-            <option value="socat">socat</option>
-            <option value="gost">gost</option>
-          </select>
-        </label>
-        <label>
-          用途
-          <input value={draft.purpose} onChange={(event) => setDraft({ ...draft, purpose: event.target.value })} />
-        </label>
-        <div className="warning-box wide-field">
-          <strong>端口放行提醒</strong>
-          <span>新增或变更监听端口后，必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙是否放行对应 TCP 端口。</span>
-          <span>当前面板不会创建真实转发，也不会绑定端口或修改防火墙。</span>
-        </div>
-      </div>
+      <details
+        className="advanced-section transit-advanced-section"
+        open={advancedTransitOpsOpen}
+        onToggle={(event) => setAdvancedTransitOpsOpen(event.currentTarget.open)}
+      >
+        <summary className="advanced-section-toggle">
+          <div>
+            <span className="page-eyebrow">高级操作（默认折叠）</span>
+            <strong>高级调试与审批操作</strong>
+            <p>
+              这些功能主要用于开发、审批或故障排查。日常搭建网络时一般不需要展开。展开前请确认不会误触发 Worker command
+              或远程操作。
+            </p>
+          </div>
+          <span className="notice-toggle-text">
+            <span className="when-closed">展开高级调试</span>
+            <span className="when-open">收起高级调试</span>
+          </span>
+        </summary>
+        <div className="advanced-section-body">
+          <div className="advanced-section-warning">
+            <strong>高级区安全提示</strong>
+            <span>本区域包含本地规划、只读预检、Worker allowlist 和 dry-run 创建路径入口；按钮不会自动触发，但点击后可能创建 Worker command。</span>
+            <span>不需要调试或重新审批时，请保持折叠，只使用上方候选摘要、临时导出和下方中转链路列表。</span>
+          </div>
 
-      <TransitReadonlyPreflightSimplePanel
-        ready={preflightReady}
-        statusLabel={planningIssues.length === 0 ? "可预检" : "待确认"}
-        resourceName={selectedResource?.name ?? ""}
-        nodeName={selectedNode?.node_name ?? ""}
-        plannedListenPort={draft.plannedListenPort}
-        targetPort={targetPort ? String(targetPort) : ""}
-        issues={planningIssues}
-        healthConfirmed={healthConfirmed}
-        boundaryConfirmed={boundaryConfirmed}
-        workerBoundaryConfirmed={workerBoundaryConfirmed}
-        readonlyPreflightLoading={readonlyPreflightLoading}
-        remotePreflightLoading={remotePreflightLoading}
-        readonlyPreflightApiMessage={readonlyPreflightApiMessage}
-        remotePreflightMessage={remotePreflightMessage}
-        readonlyPreflightPlan={readonlyPlan}
-        remotePreflightCommand={remotePreflightCommand}
-        preflightSummaryCopied={preflightSummaryCopied}
-        onHealthConfirmedChange={setHealthConfirmed}
-        onBoundaryConfirmedChange={setBoundaryConfirmed}
-        onWorkerBoundaryConfirmedChange={setWorkerBoundaryConfirmed}
-        onGeneratePlan={() => void generateReadonlyPlan()}
-        onRunCommand={() => void runRemoteReadonlyPreflight()}
-        onRefreshCommand={() => void refreshRemoteCommand()}
-        onCopySummary={() => void copyPreflightSummary()}
-      />
+          <div className="form route-form">
+            <label>
+              中转服务器
+              <select
+                value={selectedResource?.id ?? ""}
+                onChange={(event) => setDraft({ ...draft, transitResourceId: event.target.value })}
+              >
+                {selectableResources.length === 0 ? <option value="">暂无可用于本地规划的中转服务器</option> : null}
+                {selectableResources.map((resource) => (
+                  <option key={resource.id} value={resource.id}>
+                    {resource.name} / {displayValue(resource.entry_host)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              落地节点
+              <select
+                value={selectedNode?.id ?? ""}
+                onChange={(event) => {
+                  setDraft({
+                    ...draft,
+                    landingNodeId: event.target.value,
+                  });
+                }}
+              >
+                {activeNodes.length === 0 ? <option value="">暂无 active 落地节点</option> : null}
+                {activeNodes.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {node.node_name} / {displayValue(node.vps_ip)}:{displayValue(node.port)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              监听端口
+              <input value={draft.plannedListenPort} onChange={(event) => setDraft({ ...draft, plannedListenPort: event.target.value })} />
+            </label>
+            <label>
+              转发方式
+              <select value={draft.forwardingMethod} onChange={(event) => setDraft({ ...draft, forwardingMethod: event.target.value as ForwardingMethod })}>
+                <option value="socat">socat</option>
+                <option value="gost">gost</option>
+              </select>
+            </label>
+            <label>
+              用途
+              <input value={draft.purpose} onChange={(event) => setDraft({ ...draft, purpose: event.target.value })} />
+            </label>
+            <div className="warning-box wide-field">
+              <strong>端口放行提醒</strong>
+              <span>新增或变更监听端口后，必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙是否放行对应 TCP 端口。</span>
+              <span>当前面板不会创建真实转发，也不会绑定端口或修改防火墙。</span>
+            </div>
+          </div>
 
-      <div className="status-row">
-        <div>
-          <h3>Worker 创建路径 dry-run</h3>
-          <p className="message">仅创建 approval-required 的 dry-run Worker command；不会创建 systemd service、不会监听端口。</p>
+          <TransitReadonlyPreflightSimplePanel
+            ready={preflightReady}
+            statusLabel={planningIssues.length === 0 ? "可预检" : "待确认"}
+            resourceName={selectedResource?.name ?? ""}
+            nodeName={selectedNode?.node_name ?? ""}
+            plannedListenPort={draft.plannedListenPort}
+            targetPort={targetPort ? String(targetPort) : ""}
+            issues={planningIssues}
+            healthConfirmed={healthConfirmed}
+            boundaryConfirmed={boundaryConfirmed}
+            workerBoundaryConfirmed={workerBoundaryConfirmed}
+            readonlyPreflightLoading={readonlyPreflightLoading}
+            remotePreflightLoading={remotePreflightLoading}
+            readonlyPreflightApiMessage={readonlyPreflightApiMessage}
+            remotePreflightMessage={remotePreflightMessage}
+            readonlyPreflightPlan={readonlyPlan}
+            remotePreflightCommand={remotePreflightCommand}
+            preflightSummaryCopied={preflightSummaryCopied}
+            onHealthConfirmedChange={setHealthConfirmed}
+            onBoundaryConfirmedChange={setBoundaryConfirmed}
+            onWorkerBoundaryConfirmedChange={setWorkerBoundaryConfirmed}
+            onGeneratePlan={() => void generateReadonlyPlan()}
+            onRunCommand={() => void runRemoteReadonlyPreflight()}
+            onRefreshCommand={() => void refreshRemoteCommand()}
+            onCopySummary={() => void copyPreflightSummary()}
+          />
+
+          <div className="status-row">
+            <div>
+              <h3>Worker 创建路径 dry-run</h3>
+              <p className="message">仅创建 approval-required 的 dry-run Worker command；不会创建 systemd service、不会监听端口。</p>
+            </div>
+            <button className="secondary" disabled={workerCreateLoading} type="button" onClick={() => void createWorkerDryRunPlan()}>
+              {workerCreateLoading ? "创建中" : "生成 dry-run 创建计划"}
+            </button>
+          </div>
+          {workerCreatePlan ? (
+            <div className="warning-box">
+              <strong>dry-run 已创建</strong>
+              <span>command：{workerCreatePlan.command.id}</span>
+              <span>planned service：{workerCreatePlan.planned_service_name}</span>
+              <span>listen：{workerCreatePlan.planned_listen_port}</span>
+              <span>target：{workerCreatePlan.landing_target_host}:{workerCreatePlan.landing_target_port}</span>
+              <span>dry_run：{String(workerCreatePlan.dry_run)}</span>
+            </div>
+          ) : null}
         </div>
-        <button className="secondary" disabled={workerCreateLoading} type="button" onClick={() => void createWorkerDryRunPlan()}>
-          {workerCreateLoading ? "创建中" : "生成 dry-run 创建计划"}
-        </button>
-      </div>
-      {workerCreatePlan ? (
-        <div className="warning-box">
-          <strong>dry-run 已创建</strong>
-          <span>command：{workerCreatePlan.command.id}</span>
-          <span>planned service：{workerCreatePlan.planned_service_name}</span>
-          <span>listen：{workerCreatePlan.planned_listen_port}</span>
-          <span>target：{workerCreatePlan.landing_target_host}:{workerCreatePlan.landing_target_port}</span>
-          <span>dry_run：{String(workerCreatePlan.dry_run)}</span>
-        </div>
-      ) : null}
+      </details>
 
       <div className="transit-link-table-scroll">
         <div className="transit-link-table" aria-label="中转链路表格">

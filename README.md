@@ -2581,6 +2581,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.78 Transit feature complete record | Record lightweight self-use product principle and current network-building feature completion; troubleshooting remains a later separate stage |
 | Stage 3.3.79 Multi-resource capability check | Audit support boundaries for multiple transit resources, landing VPS, nodes, and transit routes; no production action |
 | Stage 3.3.80 Network build usability polish plan | Plan simple UI and flow improvements for self-use network setup; no production action |
+| Stage 3.3.81 Transit page advanced sections collapse | Default-collapse advanced transit debug and approval sections to reduce misoperation risk; no backend or production action |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
