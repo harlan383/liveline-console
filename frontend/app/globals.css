@@ -767,18 +767,46 @@ textarea {
   align-content: start;
 }
 
+.transit-route-table-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+}
+
+.transit-route-table-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+
+.transit-route-table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.55);
+  border-radius: 999px;
+}
+
+.transit-route-table-scroll::-webkit-scrollbar-track {
+  background: rgba(7, 16, 34, 0.62);
+}
+
 .transit-route-table {
-  min-width: 0;
+  min-width: 980px;
 }
 
 .transit-route-table-row {
   grid-template-columns:
-    minmax(170px, 1.15fr)
-    minmax(145px, 0.95fr)
-    minmax(145px, 0.95fr)
-    minmax(92px, 0.55fr)
-    minmax(104px, 0.65fr)
-    minmax(310px, 1.45fr);
+    minmax(160px, 1.15fr)
+    minmax(140px, 0.9fr)
+    minmax(140px, 0.9fr)
+    minmax(80px, 0.45fr)
+    minmax(86px, 0.48fr)
+    minmax(250px, 1.1fr);
+}
+
+.transit-route-table .server-table-row {
+  min-height: 46px;
+  padding: 8px 10px;
+}
+
+.transit-route-table .server-table-head {
+  min-height: 36px;
 }
 
 .transit-route-main-row {
@@ -791,13 +819,20 @@ textarea {
   flex-wrap: nowrap;
 }
 
-.transit-route-detail-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
+.transit-route-row-actions button {
+  padding: 6px 8px;
 }
 
-.transit-route-detail-row span {
+.transit-route-detail-row {
+  background: rgba(12, 23, 34, 0.72);
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 32px;
+  padding: 7px 10px;
+}
+
+.transit-route-detail-text {
+  display: block;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;

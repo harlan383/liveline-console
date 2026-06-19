@@ -1038,19 +1038,20 @@ export function TransitRoutesPanel() {
         </div>
       </details>
 
-      <div className="server-table transit-route-table" aria-label="中转链路列表">
-        <div className="server-table-row server-table-head transit-route-table-row">
-          <span>链路名称</span>
-          <span>入口</span>
-          <span>目标</span>
-          <span>转发方式</span>
-          <span>状态</span>
-          <span>操作</span>
-        </div>
-        {loading ? <div className="server-table-empty">正在加载中转链路。</div> : null}
-        {!loading && routes.length === 0 ? <div className="server-table-empty">暂无中转链路记录。</div> : null}
-        {!loading
-          ? routes.map((route) => {
+      <div className="transit-route-table-scroll">
+        <div className="server-table transit-route-table" aria-label="中转链路列表">
+          <div className="server-table-row server-table-head transit-route-table-row">
+            <span>名称</span>
+            <span>入口</span>
+            <span>目标</span>
+            <span>转发方式</span>
+            <span>状态</span>
+            <span>操作</span>
+          </div>
+          {loading ? <div className="server-table-empty">正在加载中转链路。</div> : null}
+          {!loading && routes.length === 0 ? <div className="server-table-empty">暂无中转链路记录。</div> : null}
+          {!loading
+            ? routes.map((route) => {
               const routeSelected = candidateRouteId === route.id;
               const routeSummaryVisible = candidateSummary?.route_id === route.id;
               const routeExportVisible = candidateExport?.route_id === route.id;
@@ -1073,16 +1074,15 @@ export function TransitRoutesPanel() {
                       {targetLabel}
                     </span>
                     <span>{route.forwarding_method}</span>
-                    <span>
+                    <span title={route.status}>
                       <span className={`pill ${statusClass(route.status)}`}>{displayStatusLabel(route.status)}</span>
-                      <small className="node-meta-line">{route.status}</small>
                     </span>
                     <div className="server-actions transit-route-row-actions">
                       <button className="secondary compact" disabled={candidateLoading} type="button" onClick={() => void loadCandidateSummary(route.id)}>
                         查看摘要
                       </button>
                       <button className="secondary compact" disabled={candidateLoading} type="button" onClick={() => void exportCandidateConfig(route.id)}>
-                        临时导出测试配置
+                        临时导出
                       </button>
                       <button
                         className="secondary compact ghost-action"
@@ -1098,9 +1098,9 @@ export function TransitRoutesPanel() {
                   </div>
 
                   <div className="server-row-worker transit-route-detail-row">
-                    <span title={serviceLabel}>服务：{serviceLabel}</span>
-                    <span>SHARE_LINK：{shareLinkLabel}</span>
-                    <span>CUTOVER：{cutoverLabel}</span>
+                    <span className="transit-route-detail-text" title={`服务：${serviceLabel}；SHARE_LINK：${shareLinkLabel}；CUTOVER：${cutoverLabel}`}>
+                      服务：{serviceLabel}；SHARE_LINK：{shareLinkLabel}；CUTOVER：{cutoverLabel}
+                    </span>
                   </div>
 
                   {routeSelected ? (
@@ -1218,7 +1218,8 @@ export function TransitRoutesPanel() {
                 </div>
               );
             })
-          : null}
+            : null}
+        </div>
       </div>
 
       <details
