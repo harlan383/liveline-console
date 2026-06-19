@@ -966,11 +966,19 @@ textarea {
 }
 
 .transit-route-create-modal {
-  width: min(880px, 100%);
+  max-height: calc(100vh - 80px);
+  max-width: 880px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  width: min(880px, calc(100vw - 48px));
 }
 
 .transit-route-export-modal {
-  width: min(760px, 100%);
+  max-height: calc(100vh - 80px);
+  max-width: 920px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  width: min(920px, calc(100vw - 48px));
 }
 
 .export-route-context {
@@ -979,12 +987,26 @@ textarea {
   border-radius: 8px;
   color: #dbe7f4;
   display: grid;
-  gap: 6px;
+  gap: 6px 12px;
+  grid-template-columns: 112px minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
   padding: 10px 12px;
 }
 
 .export-route-context span {
-  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  overflow-wrap: break-word;
+  text-transform: uppercase;
+}
+
+.export-route-context strong {
+  color: #dbe7f4;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .transit-legacy-workbench {
@@ -1642,6 +1664,8 @@ details[open] .when-closed {
   border-radius: 8px;
   display: grid;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
   padding: 10px 12px;
 }
 
@@ -1668,7 +1692,8 @@ details[open] .when-closed {
 
 .candidate-export-result span {
   color: #ffe0a3;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .candidate-manual-copy {
@@ -1682,13 +1707,51 @@ details[open] .when-closed {
   background: rgba(4, 10, 18, 0.72);
   border: 1px solid rgba(253, 176, 34, 0.3);
   border-radius: 8px;
+  box-sizing: border-box;
   color: #fff3d3;
   font-family: var(--font-mono);
   font-size: 12px;
+  max-width: 100%;
   min-height: 92px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 10px;
   resize: vertical;
+  white-space: pre-wrap;
   width: 100%;
+}
+
+.confirm-list {
+  background: rgba(7, 16, 24, 0.52);
+  border: 1px solid rgba(253, 176, 34, 0.22);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.confirm-list .confirm-row {
+  align-items: flex-start;
+  color: #ffe0a3;
+  display: flex;
+  gap: 10px;
+  line-height: 1.6;
+  min-width: 0;
+}
+
+.confirm-list .confirm-row input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.confirm-list .confirm-row span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
+  white-space: normal;
+  word-break: normal;
 }
 
 .collapsible-notice.warning-box {
