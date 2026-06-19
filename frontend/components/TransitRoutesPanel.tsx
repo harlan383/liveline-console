@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 
 import { TransitReadonlyPreflightSimplePanel } from "@/components/TransitReadonlyPreflightSimplePanel";
 import {
@@ -84,6 +84,23 @@ type TransitRouteWorkerCreatePlanResult = {
   landing_target_port: number;
   safety_boundary: string[];
 };
+
+function SafetyConfirmRow({
+  checked,
+  onChange,
+  children,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label className="safety-confirm-row">
+      <input checked={checked} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
+      <span>{children}</span>
+    </label>
+  );
+}
 
 type CandidateExportConfirmations = {
   transientExport: boolean;
@@ -1309,57 +1326,37 @@ export function TransitRoutesPanel() {
               <p className="message">未选择中转链路。</p>
             )}
 
-            <div className="transit-export-confirm-list">
-              <label className="transit-export-confirm-row">
-                <input
-                  checked={candidateExportConfirmations.transientExport}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCandidateExportConfirmations({ ...candidateExportConfirmations, transientExport: event.target.checked })
-                  }
-                />
-                <span>我确认这是临时导出，只用于手动测试。</span>
-              </label>
-              <label className="transit-export-confirm-row">
-                <input
-                  checked={candidateExportConfirmations.noDatabaseWrite}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCandidateExportConfirmations({ ...candidateExportConfirmations, noDatabaseWrite: event.target.checked })
-                  }
-                />
-                <span>我确认不写入数据库。</span>
-              </label>
-              <label className="transit-export-confirm-row">
-                <input
-                  checked={candidateExportConfirmations.noShareLinkMutation}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCandidateExportConfirmations({ ...candidateExportConfirmations, noShareLinkMutation: event.target.checked })
-                  }
-                />
-                <span>我确认不修改 `nodes.share_link`。</span>
-              </label>
-              <label className="transit-export-confirm-row">
-                <input
-                  checked={candidateExportConfirmations.noCutover}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCandidateExportConfirmations({ ...candidateExportConfirmations, noCutover: event.target.checked })
-                  }
-                />
-                <span>我确认不 cutover。</span>
-              </label>
-              <label className="transit-export-confirm-row">
-                <input
-                  checked={candidateExportConfirmations.keepOriginalNode}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCandidateExportConfirmations({ ...candidateExportConfirmations, keepOriginalNode: event.target.checked })
-                  }
-                />
-                <span>我确认原直连节点仍保留。</span>
-              </label>
+            <div className="safety-confirm-list">
+              <SafetyConfirmRow
+                checked={candidateExportConfirmations.transientExport}
+                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, transientExport: checked })}
+              >
+                我确认这是临时导出，只用于手动测试。
+              </SafetyConfirmRow>
+              <SafetyConfirmRow
+                checked={candidateExportConfirmations.noDatabaseWrite}
+                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, noDatabaseWrite: checked })}
+              >
+                我确认不写入数据库。
+              </SafetyConfirmRow>
+              <SafetyConfirmRow
+                checked={candidateExportConfirmations.noShareLinkMutation}
+                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, noShareLinkMutation: checked })}
+              >
+                我确认不修改 `nodes.share_link`。
+              </SafetyConfirmRow>
+              <SafetyConfirmRow
+                checked={candidateExportConfirmations.noCutover}
+                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, noCutover: checked })}
+              >
+                我确认不 cutover。
+              </SafetyConfirmRow>
+              <SafetyConfirmRow
+                checked={candidateExportConfirmations.keepOriginalNode}
+                onChange={(checked) => setCandidateExportConfirmations({ ...candidateExportConfirmations, keepOriginalNode: checked })}
+              >
+                我确认原直连节点仍保留。
+              </SafetyConfirmRow>
             </div>
 
             {candidateExport ? (
@@ -1494,57 +1491,37 @@ export function TransitRoutesPanel() {
               </label>
             </div>
 
-            <div className="candidate-confirmations">
-              <label>
-                <input
-                  checked={createPreviewConfirmations.previewOnly}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCreatePreviewConfirmations({ ...createPreviewConfirmations, previewOnly: event.target.checked })
-                  }
-                />
+            <div className="safety-confirm-list">
+              <SafetyConfirmRow
+                checked={createPreviewConfirmations.previewOnly}
+                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, previewOnly: checked })}
+              >
                 我确认这只是配置预览，不执行远程创建。
-              </label>
-              <label>
-                <input
-                  checked={createPreviewConfirmations.noWorkerCommand}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCreatePreviewConfirmations({ ...createPreviewConfirmations, noWorkerCommand: event.target.checked })
-                  }
-                />
+              </SafetyConfirmRow>
+              <SafetyConfirmRow
+                checked={createPreviewConfirmations.noWorkerCommand}
+                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, noWorkerCommand: checked })}
+              >
                 我确认不会创建 Worker command。
-              </label>
-              <label>
-                <input
-                  checked={createPreviewConfirmations.noListener}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCreatePreviewConfirmations({ ...createPreviewConfirmations, noListener: event.target.checked })
-                  }
-                />
+              </SafetyConfirmRow>
+              <SafetyConfirmRow
+                checked={createPreviewConfirmations.noListener}
+                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, noListener: checked })}
+              >
                 我确认不会新增监听端口。
-              </label>
-              <label>
-                <input
-                  checked={createPreviewConfirmations.noShareLinkMutation}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCreatePreviewConfirmations({ ...createPreviewConfirmations, noShareLinkMutation: event.target.checked })
-                  }
-                />
+              </SafetyConfirmRow>
+              <SafetyConfirmRow
+                checked={createPreviewConfirmations.noShareLinkMutation}
+                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, noShareLinkMutation: checked })}
+              >
                 我确认不会修改 `nodes.share_link`。
-              </label>
-              <label>
-                <input
-                  checked={createPreviewConfirmations.noCutover}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setCreatePreviewConfirmations({ ...createPreviewConfirmations, noCutover: event.target.checked })
-                  }
-                />
+              </SafetyConfirmRow>
+              <SafetyConfirmRow
+                checked={createPreviewConfirmations.noCutover}
+                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, noCutover: checked })}
+              >
                 我确认不会 cutover。
-              </label>
+              </SafetyConfirmRow>
             </div>
 
             {createPreview ? (
