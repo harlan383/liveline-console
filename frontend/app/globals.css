@@ -653,6 +653,40 @@ textarea {
   padding: 11px 12px;
 }
 
+.landing-status-strip {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.landing-status-card {
+  background: rgba(12, 23, 34, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px 12px;
+}
+
+.landing-status-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.landing-status-card strong {
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.landing-status-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .server-table {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -706,6 +740,40 @@ textarea {
   padding: 8px 10px;
 }
 
+.server-advanced-actions {
+  width: 100%;
+}
+
+.server-advanced-actions summary {
+  color: #ffe0a3;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  list-style: none;
+}
+
+.server-advanced-actions summary::-webkit-details-marker {
+  display: none;
+}
+
+.server-advanced-actions-body {
+  background: rgba(7, 16, 24, 0.62);
+  border: 1px solid rgba(253, 176, 34, 0.2);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px;
+}
+
+.server-advanced-actions-body span {
+  color: var(--muted);
+  flex: 1 0 100%;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .server-node-rows {
   display: grid;
 }
@@ -717,6 +785,13 @@ textarea {
   grid-template-columns: minmax(160px, 1.2fr) minmax(130px, 0.9fr) minmax(86px, 0.55fr) minmax(86px, 0.55fr) minmax(340px, 1.55fr);
   min-height: 46px;
   padding-left: 26px;
+}
+
+.node-entry-label,
+.node-config-status {
+  color: #dbe7f4;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .node-share-status {
@@ -2993,6 +3068,10 @@ button.ghost-action {
   .modal-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .landing-status-strip {
+    grid-template-columns: 1fr;
   }
 
   .detail-grid {
