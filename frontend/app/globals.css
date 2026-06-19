@@ -767,6 +767,73 @@ textarea {
   align-content: start;
 }
 
+.transit-route-card-list {
+  display: grid;
+  gap: 14px;
+}
+
+.transit-route-card {
+  background:
+    linear-gradient(90deg, rgba(59, 130, 246, 0.08), rgba(7, 16, 34, 0)),
+    var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.transit-route-card-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.transit-route-card-header h3 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.transit-route-card-header p {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.transit-route-card-grid {
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: minmax(116px, 0.28fr) minmax(0, 1fr);
+}
+
+.transit-route-card-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.transit-route-card-grid strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.route-preview-box {
+  background: rgba(7, 16, 24, 0.52);
+  border: 1px solid rgba(40, 229, 197, 0.24);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.route-preview-box > strong {
+  color: #d7fff8;
+}
+
 .transit-link-table-scroll {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -852,6 +919,10 @@ textarea {
 
 .transit-route-detail-modal {
   width: min(900px, 100%);
+}
+
+.transit-route-create-modal {
+  width: min(880px, 100%);
 }
 
 .transit-legacy-workbench {
