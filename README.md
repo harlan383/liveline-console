@@ -2584,6 +2584,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.81 Transit page advanced sections collapse | Default-collapse advanced transit debug and approval sections to reduce misoperation risk; no backend or production action |
 | Stage 3.3.82 Transit route list layout and create modal | Refactor transit routes page into list layout with add-route preview modal; no Worker command or production action |
 | Stage 3.3.83 Transit route table list layout | Convert transit route cards into server-like table list layout while keeping add-route preview modal local-only; no backend or production action |
+| Stage 3.3.84 Transit route compact table polish | Convert transit route card list into compact server-like table rows; no backend or production action |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
