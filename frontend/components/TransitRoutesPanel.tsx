@@ -1298,16 +1298,19 @@ export function TransitRoutesPanel() {
 
             {candidateExportRoute ? (
               <div className="export-route-context">
-                <span>链路：{candidateExportRoute.name}</span>
-                <span>入口：{routeEntry(candidateExportRoute)}</span>
-                <span>目标：{candidateExportRoute.target_host}:{candidateExportRoute.target_port}</span>
+                <span>链路</span>
+                <strong>{candidateExportRoute.name}</strong>
+                <span>入口</span>
+                <strong>{routeEntry(candidateExportRoute)}</strong>
+                <span>目标</span>
+                <strong>{candidateExportRoute.target_host}:{candidateExportRoute.target_port}</strong>
               </div>
             ) : (
               <p className="message">未选择中转链路。</p>
             )}
 
-            <div className="candidate-confirmations export-confirmations">
-              <label>
+            <div className="confirm-list export-confirmations">
+              <label className="confirm-row">
                 <input
                   checked={candidateExportConfirmations.transientExport}
                   type="checkbox"
@@ -1315,9 +1318,9 @@ export function TransitRoutesPanel() {
                     setCandidateExportConfirmations({ ...candidateExportConfirmations, transientExport: event.target.checked })
                   }
                 />
-                我确认这是临时导出，只用于手动测试。
+                <span>我确认这是临时导出，只用于手动测试。</span>
               </label>
-              <label>
+              <label className="confirm-row">
                 <input
                   checked={candidateExportConfirmations.noDatabaseWrite}
                   type="checkbox"
@@ -1325,9 +1328,9 @@ export function TransitRoutesPanel() {
                     setCandidateExportConfirmations({ ...candidateExportConfirmations, noDatabaseWrite: event.target.checked })
                   }
                 />
-                我确认不写入数据库。
+                <span>我确认不写入数据库。</span>
               </label>
-              <label>
+              <label className="confirm-row">
                 <input
                   checked={candidateExportConfirmations.noShareLinkMutation}
                   type="checkbox"
@@ -1335,9 +1338,9 @@ export function TransitRoutesPanel() {
                     setCandidateExportConfirmations({ ...candidateExportConfirmations, noShareLinkMutation: event.target.checked })
                   }
                 />
-                我确认不修改 `nodes.share_link`。
+                <span>我确认不修改 `nodes.share_link`。</span>
               </label>
-              <label>
+              <label className="confirm-row">
                 <input
                   checked={candidateExportConfirmations.noCutover}
                   type="checkbox"
@@ -1345,9 +1348,9 @@ export function TransitRoutesPanel() {
                     setCandidateExportConfirmations({ ...candidateExportConfirmations, noCutover: event.target.checked })
                   }
                 />
-                我确认不 cutover。
+                <span>我确认不 cutover。</span>
               </label>
-              <label>
+              <label className="confirm-row">
                 <input
                   checked={candidateExportConfirmations.keepOriginalNode}
                   type="checkbox"
@@ -1355,7 +1358,7 @@ export function TransitRoutesPanel() {
                     setCandidateExportConfirmations({ ...candidateExportConfirmations, keepOriginalNode: event.target.checked })
                   }
                 />
-                我确认原直连节点仍保留。
+                <span>我确认原直连节点仍保留。</span>
               </label>
             </div>
 
