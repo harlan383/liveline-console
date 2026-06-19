@@ -602,6 +602,8 @@ export function TransitRoutesPanel() {
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [candidateMessage, setCandidateMessage] = useState("候选链路摘要尚未加载；不会自动导出完整测试配置。");
   const [candidateCopyFallbackRequired, setCandidateCopyFallbackRequired] = useState(false);
+  const [candidateExportModalOpen, setCandidateExportModalOpen] = useState(false);
+  const [candidateExportRouteId, setCandidateExportRouteId] = useState("");
   const [advancedTransitOpsOpen, setAdvancedTransitOpsOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createPreviewForm, setCreatePreviewForm] = useState<TransitRouteCreatePreviewFormState>(emptyRouteCreatePreviewForm);
@@ -620,6 +622,7 @@ export function TransitRoutesPanel() {
     () => routes.find((route) => route.id === approvedCandidateRouteId) ?? null,
     [routes],
   );
+  const candidateExportRoute = routes.find((route) => route.id === candidateExportRouteId) ?? null;
   const selectedResource = selectableResources.find((resource) => resource.id === draft.transitResourceId) ?? selectableResources[0] ?? null;
   const selectedNode = activeNodes.find((node) => node.id === draft.landingNodeId) ?? activeNodes[0] ?? null;
   const createPreviewResource =
@@ -771,6 +774,24 @@ export function TransitRoutesPanel() {
     }
   }
 
+  function openCandidateExportModal(routeId: string) {
+    setCandidateExportRouteId(routeId);
+    setCandidateExportModalOpen(true);
+    setCandidateExport(null);
+    setCandidateCopyFallbackRequired(false);
+    setCandidateExportConfirmations(emptyCandidateExportConfirmations);
+    setCandidateMessage("请先确认临时导出安全边界，再生成测试配置。");
+  }
+
+  function closeCandidateExportModal() {
+    setCandidateExportModalOpen(false);
+    setCandidateExportRouteId("");
+    setCandidateExport(null);
+    setCandidateCopyFallbackRequired(false);
+    setCandidateExportConfirmations(emptyCandidateExportConfirmations);
+    setCandidateMessage("候选链路摘要尚未加载；不会自动导出完整测试配置。");
+  }
+
   async function loadCandidateSummary(routeId = approvedCandidateRoute?.id ?? approvedCandidateRouteId) {
     selectCandidateRoute(routeId);
     setCandidateLoading(true);
@@ -790,11 +811,13 @@ export function TransitRoutesPanel() {
     }
   }
 
-  async function exportCandidateConfig(routeId = candidateRouteId) {
-    const switchingRoute = candidateRouteId !== routeId;
-    selectCandidateRoute(routeId);
-    if (switchingRoute || !candidateExportReady) {
-      setCandidateMessage("临时导出前请先完成本行下方全部安全确认。");
+  async function exportCandidateConfig(routeId = candidateExportRouteId) {
+    if (!routeId) {
+      setCandidateMessage("请先选择一条中转链路。");
+      return;
+    }
+    if (!candidateExportReady) {
+      setCandidateMessage("临时导出前必须完成弹窗内全部安全确认。");
       return;
     }
     setCandidateLoading(true);
@@ -1054,7 +1077,6 @@ export function TransitRoutesPanel() {
             ? routes.map((route) => {
               const routeSelected = candidateRouteId === route.id;
               const routeSummaryVisible = candidateSummary?.route_id === route.id;
-              const routeExportVisible = candidateExport?.route_id === route.id;
               const entryLabel = routeEntry(route);
               const targetLabel = `${route.target_host}:${route.target_port}`;
               const serviceLabel = route.service_name || "-";
@@ -1081,7 +1103,7 @@ export function TransitRoutesPanel() {
                       <button className="secondary compact" disabled={candidateLoading} type="button" onClick={() => void loadCandidateSummary(route.id)}>
                         查看摘要
                       </button>
-                      <button className="secondary compact" disabled={candidateLoading} type="button" onClick={() => void exportCandidateConfig(route.id)}>
+                      <button className="secondary compact" disabled={candidateLoading} type="button" onClick={() => openCandidateExportModal(route.id)}>
                         临时导出
                       </button>
                       <button
@@ -1103,61 +1125,6 @@ export function TransitRoutesPanel() {
                     </span>
                   </div>
 
-                  {routeSelected ? (
-                    <div className="candidate-confirmations transit-route-inline-panel">
-                      <label>
-                        <input
-                          checked={candidateExportConfirmations.transientExport}
-                          type="checkbox"
-                          onChange={(event) =>
-                            setCandidateExportConfirmations({ ...candidateExportConfirmations, transientExport: event.target.checked })
-                          }
-                        />
-                        我确认这是临时导出，只用于手动测试。
-                      </label>
-                      <label>
-                        <input
-                          checked={candidateExportConfirmations.noDatabaseWrite}
-                          type="checkbox"
-                          onChange={(event) =>
-                            setCandidateExportConfirmations({ ...candidateExportConfirmations, noDatabaseWrite: event.target.checked })
-                          }
-                        />
-                        我确认不写入数据库。
-                      </label>
-                      <label>
-                        <input
-                          checked={candidateExportConfirmations.noShareLinkMutation}
-                          type="checkbox"
-                          onChange={(event) =>
-                            setCandidateExportConfirmations({ ...candidateExportConfirmations, noShareLinkMutation: event.target.checked })
-                          }
-                        />
-                        我确认不修改 `nodes.share_link`。
-                      </label>
-                      <label>
-                        <input
-                          checked={candidateExportConfirmations.noCutover}
-                          type="checkbox"
-                          onChange={(event) =>
-                            setCandidateExportConfirmations({ ...candidateExportConfirmations, noCutover: event.target.checked })
-                          }
-                        />
-                        我确认不 cutover。
-                      </label>
-                      <label>
-                        <input
-                          checked={candidateExportConfirmations.keepOriginalNode}
-                          type="checkbox"
-                          onChange={(event) =>
-                            setCandidateExportConfirmations({ ...candidateExportConfirmations, keepOriginalNode: event.target.checked })
-                          }
-                        />
-                        我确认原直连节点仍保留。
-                      </label>
-                    </div>
-                  ) : null}
-
                   {routeSummaryVisible ? (
                     <div className="candidate-summary-grid transit-route-inline-panel">
                       <span>候选名称</span>
@@ -1172,45 +1139,6 @@ export function TransitRoutesPanel() {
                       <strong>{candidateSummary.route_share_link_present ? "已写入" : "NULL / 未写入"}</strong>
                       <span>cutover</span>
                       <strong>{candidateSummary.cutover_status === "not_cutover" ? "未切换" : candidateSummary.cutover_status}</strong>
-                    </div>
-                  ) : null}
-
-                  {routeExportVisible ? (
-                    <div className="candidate-export-result transit-route-inline-panel">
-                      <strong>临时测试配置已生成</strong>
-                      <span>名称：{candidateExport.candidate_name}</span>
-                      <span>服务器：{candidateExport.server}</span>
-                      <span>端口：{candidateExport.port}</span>
-                      <span>协议：{candidateExport.protocol} / {candidateExport.security} / {candidateExport.network}</span>
-                      <span>masked link：{candidateExport.masked_candidate_link}</span>
-                      <button
-                        className="secondary"
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            await copyText(candidateExport.candidate_link);
-                            setCandidateCopyFallbackRequired(false);
-                            setCandidateMessage("完整候选链接已复制。请妥善保存，仅用于手动导入测试，不要公开分享。");
-                          } catch {
-                            setCandidateCopyFallbackRequired(true);
-                            setCandidateMessage("当前 HTTP 环境不支持自动复制，请使用下方文本框手动复制。");
-                          }
-                        }}
-                      >
-                        复制完整候选链接
-                      </button>
-                      {candidateCopyFallbackRequired ? (
-                        <label className="candidate-manual-copy">
-                          手动复制完整候选链接
-                          <textarea
-                            readOnly
-                            value={candidateExport.candidate_link}
-                            onClick={(event) => event.currentTarget.select()}
-                            onFocus={(event) => event.currentTarget.select()}
-                          />
-                        </label>
-                      ) : null}
-                      <p className="message">只用于手动导入测试；不代表正式切换，也没有写入 `nodes.share_link`。</p>
                     </div>
                   ) : null}
 
@@ -1354,6 +1282,135 @@ export function TransitRoutesPanel() {
       </details>
 
       <p className="message">{message}</p>
+
+      {candidateExportModalOpen ? (
+        <div className="modal-backdrop">
+          <div className="modal-card transit-route-export-modal">
+            <div className="modal-header">
+              <div>
+                <h3>临时导出测试配置</h3>
+                <p className="message">仅用于手动导入客户端测试；不会写入数据库，不会修改 nodes.share_link，不会 cutover。</p>
+              </div>
+              <button className="secondary" type="button" onClick={closeCandidateExportModal}>
+                关闭
+              </button>
+            </div>
+
+            {candidateExportRoute ? (
+              <div className="export-route-context">
+                <span>链路：{candidateExportRoute.name}</span>
+                <span>入口：{routeEntry(candidateExportRoute)}</span>
+                <span>目标：{candidateExportRoute.target_host}:{candidateExportRoute.target_port}</span>
+              </div>
+            ) : (
+              <p className="message">未选择中转链路。</p>
+            )}
+
+            <div className="candidate-confirmations export-confirmations">
+              <label>
+                <input
+                  checked={candidateExportConfirmations.transientExport}
+                  type="checkbox"
+                  onChange={(event) =>
+                    setCandidateExportConfirmations({ ...candidateExportConfirmations, transientExport: event.target.checked })
+                  }
+                />
+                我确认这是临时导出，只用于手动测试。
+              </label>
+              <label>
+                <input
+                  checked={candidateExportConfirmations.noDatabaseWrite}
+                  type="checkbox"
+                  onChange={(event) =>
+                    setCandidateExportConfirmations({ ...candidateExportConfirmations, noDatabaseWrite: event.target.checked })
+                  }
+                />
+                我确认不写入数据库。
+              </label>
+              <label>
+                <input
+                  checked={candidateExportConfirmations.noShareLinkMutation}
+                  type="checkbox"
+                  onChange={(event) =>
+                    setCandidateExportConfirmations({ ...candidateExportConfirmations, noShareLinkMutation: event.target.checked })
+                  }
+                />
+                我确认不修改 `nodes.share_link`。
+              </label>
+              <label>
+                <input
+                  checked={candidateExportConfirmations.noCutover}
+                  type="checkbox"
+                  onChange={(event) =>
+                    setCandidateExportConfirmations({ ...candidateExportConfirmations, noCutover: event.target.checked })
+                  }
+                />
+                我确认不 cutover。
+              </label>
+              <label>
+                <input
+                  checked={candidateExportConfirmations.keepOriginalNode}
+                  type="checkbox"
+                  onChange={(event) =>
+                    setCandidateExportConfirmations({ ...candidateExportConfirmations, keepOriginalNode: event.target.checked })
+                  }
+                />
+                我确认原直连节点仍保留。
+              </label>
+            </div>
+
+            {candidateExport ? (
+              <div className="candidate-export-result">
+                <strong>临时测试配置已生成</strong>
+                <span>名称：{candidateExport.candidate_name}</span>
+                <span>服务器：{candidateExport.server}</span>
+                <span>端口：{candidateExport.port}</span>
+                <span>协议：{candidateExport.protocol} / {candidateExport.security} / {candidateExport.network}</span>
+                <span>masked link：{candidateExport.masked_candidate_link}</span>
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await copyText(candidateExport.candidate_link);
+                      setCandidateCopyFallbackRequired(false);
+                      setCandidateMessage("完整候选链接已复制。请妥善保存，仅用于手动导入测试，不要公开分享。");
+                    } catch {
+                      setCandidateCopyFallbackRequired(true);
+                      setCandidateMessage("当前 HTTP 环境不支持自动复制，请使用下方文本框手动复制。");
+                    }
+                  }}
+                >
+                  复制完整候选链接
+                </button>
+                {candidateCopyFallbackRequired ? (
+                  <label className="candidate-manual-copy">
+                    手动复制完整候选链接
+                    <textarea
+                      readOnly
+                      value={candidateExport.candidate_link}
+                      onClick={(event) => event.currentTarget.select()}
+                      onFocus={(event) => event.currentTarget.select()}
+                    />
+                  </label>
+                ) : null}
+                <p className="message">只用于手动导入测试；不代表正式切换，也没有写入 `nodes.share_link`。</p>
+              </div>
+            ) : null}
+
+            <p className="message">{candidateMessage}</p>
+
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={closeCandidateExportModal}>
+                {candidateExport ? "关闭" : "取消"}
+              </button>
+              <button disabled={!candidateExportReady || candidateLoading || !candidateExportRoute} type="button" onClick={() => void exportCandidateConfig(candidateExportRouteId)}>
+                {candidateLoading ? "生成中" : candidateExport ? "重新生成" : "生成测试配置"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {createModalOpen ? (
         <div className="modal-backdrop">

@@ -969,6 +969,24 @@ textarea {
   width: min(880px, 100%);
 }
 
+.transit-route-export-modal {
+  width: min(760px, 100%);
+}
+
+.export-route-context {
+  background: rgba(7, 16, 24, 0.52);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #dbe7f4;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.export-route-context span {
+  overflow-wrap: anywhere;
+}
+
 .transit-legacy-workbench {
   background: rgba(7, 16, 34, 0.56);
   border: 1px solid var(--line);
@@ -1637,6 +1655,15 @@ details[open] .when-closed {
 
 .candidate-confirmations input {
   margin-top: 2px;
+}
+
+.export-confirmations label {
+  align-items: center;
+}
+
+.export-confirmations input {
+  flex: 0 0 auto;
+  margin-top: 0;
 }
 
 .candidate-export-result span {
