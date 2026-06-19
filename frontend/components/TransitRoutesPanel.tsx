@@ -1285,7 +1285,7 @@ export function TransitRoutesPanel() {
 
       {candidateExportModalOpen ? (
         <div className="modal-backdrop">
-          <div className="modal-card transit-route-export-modal">
+          <div className="modal-card transit-route-export-modal transit-export-modal">
             <div className="modal-header">
               <div>
                 <h3>临时导出测试配置</h3>
@@ -1297,7 +1297,7 @@ export function TransitRoutesPanel() {
             </div>
 
             {candidateExportRoute ? (
-              <div className="export-route-context">
+              <div className="transit-export-route-context">
                 <span>链路</span>
                 <strong>{candidateExportRoute.name}</strong>
                 <span>入口</span>
@@ -1309,8 +1309,8 @@ export function TransitRoutesPanel() {
               <p className="message">未选择中转链路。</p>
             )}
 
-            <div className="confirm-list export-confirmations">
-              <label className="confirm-row">
+            <div className="transit-export-confirm-list">
+              <label className="transit-export-confirm-row">
                 <input
                   checked={candidateExportConfirmations.transientExport}
                   type="checkbox"
@@ -1320,7 +1320,7 @@ export function TransitRoutesPanel() {
                 />
                 <span>我确认这是临时导出，只用于手动测试。</span>
               </label>
-              <label className="confirm-row">
+              <label className="transit-export-confirm-row">
                 <input
                   checked={candidateExportConfirmations.noDatabaseWrite}
                   type="checkbox"
@@ -1330,7 +1330,7 @@ export function TransitRoutesPanel() {
                 />
                 <span>我确认不写入数据库。</span>
               </label>
-              <label className="confirm-row">
+              <label className="transit-export-confirm-row">
                 <input
                   checked={candidateExportConfirmations.noShareLinkMutation}
                   type="checkbox"
@@ -1340,7 +1340,7 @@ export function TransitRoutesPanel() {
                 />
                 <span>我确认不修改 `nodes.share_link`。</span>
               </label>
-              <label className="confirm-row">
+              <label className="transit-export-confirm-row">
                 <input
                   checked={candidateExportConfirmations.noCutover}
                   type="checkbox"
@@ -1350,7 +1350,7 @@ export function TransitRoutesPanel() {
                 />
                 <span>我确认不 cutover。</span>
               </label>
-              <label className="confirm-row">
+              <label className="transit-export-confirm-row">
                 <input
                   checked={candidateExportConfirmations.keepOriginalNode}
                   type="checkbox"
@@ -1363,7 +1363,7 @@ export function TransitRoutesPanel() {
             </div>
 
             {candidateExport ? (
-              <div className="candidate-export-result">
+              <div className="candidate-export-result transit-export-result">
                 <strong>临时测试配置已生成</strong>
                 <span>名称：{candidateExport.candidate_name}</span>
                 <span>服务器：{candidateExport.server}</span>
@@ -1387,7 +1387,7 @@ export function TransitRoutesPanel() {
                   复制完整候选链接
                 </button>
                 {candidateCopyFallbackRequired ? (
-                  <label className="candidate-manual-copy">
+                  <label className="candidate-manual-copy transit-export-manual-copy">
                     手动复制完整候选链接
                     <textarea
                       readOnly

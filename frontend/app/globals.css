@@ -973,15 +973,29 @@ textarea {
   width: min(880px, calc(100vw - 48px));
 }
 
-.transit-route-export-modal {
+.transit-route-export-modal,
+.transit-export-modal {
+  box-sizing: border-box;
   max-height: calc(100vh - 80px);
-  max-width: 920px;
+  max-width: 860px;
   overflow-x: hidden;
   overflow-y: auto;
-  width: min(920px, calc(100vw - 48px));
+  width: min(860px, calc(100vw - 48px));
 }
 
-.export-route-context {
+.transit-export-modal *,
+.transit-export-modal *::before,
+.transit-export-modal *::after {
+  box-sizing: border-box;
+}
+
+.transit-export-modal > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.export-route-context,
+.transit-export-route-context {
   background: rgba(7, 16, 24, 0.52);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -992,9 +1006,11 @@ textarea {
   min-width: 0;
   overflow: hidden;
   padding: 10px 12px;
+  width: 100%;
 }
 
-.export-route-context span {
+.export-route-context span,
+.transit-export-route-context span {
   color: var(--muted);
   font-size: 12px;
   font-weight: 900;
@@ -1002,7 +1018,8 @@ textarea {
   text-transform: uppercase;
 }
 
-.export-route-context strong {
+.export-route-context strong,
+.transit-export-route-context strong {
   color: #dbe7f4;
   min-width: 0;
   overflow-wrap: break-word;
@@ -1719,6 +1736,73 @@ details[open] .when-closed {
   resize: vertical;
   white-space: pre-wrap;
   width: 100%;
+}
+
+.transit-export-result {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  width: 100%;
+}
+
+.transit-export-result strong,
+.transit-export-result span,
+.transit-export-result p {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.transit-export-manual-copy {
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.transit-export-manual-copy textarea {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  width: 100%;
+}
+
+.transit-export-confirm-list {
+  background: rgba(7, 16, 24, 0.52);
+  border: 1px solid rgba(253, 176, 34, 0.22);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.transit-export-confirm-row {
+  align-items: flex-start;
+  color: #ffe0a3;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+  line-height: 1.6;
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.transit-export-confirm-row input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+
+.transit-export-confirm-row span {
+  flex: 1 1 auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: normal;
 }
 
 .confirm-list {
