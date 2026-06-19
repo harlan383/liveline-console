@@ -612,7 +612,7 @@ export function TransitRoutesPanel() {
   const [createPreviewMessage, setCreatePreviewMessage] = useState(
     "填写参数后生成配置预览；本阶段不会执行远程创建，也不会创建 Worker command。",
   );
-  const [candidateRouteId, setCandidateRouteId] = useState(approvedCandidateRouteId);
+  const [candidateRouteId, setCandidateRouteId] = useState("");
 
   const selectableResources = useMemo(() => resources.filter(isPlanningSelectableTransitResource), [resources]);
   const activeNodes = useMemo(() => nodes.filter((node) => node.status === "active"), [nodes]);
@@ -760,8 +760,19 @@ export function TransitRoutesPanel() {
     setCreatePreviewMessage("配置预览已生成；未执行远程创建，未创建 Worker command。");
   }
 
-  async function loadCandidateSummary(routeId = approvedCandidateRoute?.id ?? approvedCandidateRouteId) {
+  function selectCandidateRoute(routeId: string) {
+    const switchingRoute = candidateRouteId !== routeId;
     setCandidateRouteId(routeId);
+    if (switchingRoute) {
+      setCandidateSummary(null);
+      setCandidateExport(null);
+      setCandidateCopyFallbackRequired(false);
+      setCandidateExportConfirmations(emptyCandidateExportConfirmations);
+    }
+  }
+
+  async function loadCandidateSummary(routeId = approvedCandidateRoute?.id ?? approvedCandidateRouteId) {
+    selectCandidateRoute(routeId);
     setCandidateLoading(true);
     setCandidateMessage("正在读取候选链路安全摘要；不会读取或导出完整 nodes.share_link。");
     try {
@@ -780,9 +791,10 @@ export function TransitRoutesPanel() {
   }
 
   async function exportCandidateConfig(routeId = candidateRouteId) {
-    setCandidateRouteId(routeId);
-    if (!candidateExportReady) {
-      setCandidateMessage("临时导出前必须完成全部安全确认。");
+    const switchingRoute = candidateRouteId !== routeId;
+    selectCandidateRoute(routeId);
+    if (switchingRoute || !candidateExportReady) {
+      setCandidateMessage("临时导出前请先完成本行下方全部安全确认。");
       return;
     }
     setCandidateLoading(true);
@@ -1026,7 +1038,15 @@ export function TransitRoutesPanel() {
         </div>
       </details>
 
-      <div className="transit-route-card-list">
+      <div className="server-table transit-route-table" aria-label="中转链路列表">
+        <div className="server-table-row server-table-head transit-route-table-row">
+          <span>链路名称</span>
+          <span>入口</span>
+          <span>目标</span>
+          <span>转发方式</span>
+          <span>状态</span>
+          <span>操作</span>
+        </div>
         {loading ? <div className="server-table-empty">正在加载中转链路。</div> : null}
         {!loading && routes.length === 0 ? <div className="server-table-empty">暂无中转链路记录。</div> : null}
         {!loading
@@ -1034,49 +1054,57 @@ export function TransitRoutesPanel() {
               const routeSelected = candidateRouteId === route.id;
               const routeSummaryVisible = candidateSummary?.route_id === route.id;
               const routeExportVisible = candidateExport?.route_id === route.id;
+              const entryLabel = routeEntry(route);
+              const targetLabel = `${route.target_host}:${route.target_port}`;
+              const serviceLabel = route.service_name || "-";
+              const shareLinkLabel = routeHasShareLink(route) ? "已写入" : "未写入";
+              const cutoverLabel = routeCutoverStatusLabel(route.id);
 
               return (
-                <article className="transit-route-card" key={route.id}>
-                  <div className="transit-route-card-header">
-                    <div>
-                      <h3>{route.name}</h3>
-                      <p>
-                        {routeEntry(route)} → {route.target_host}:{route.target_port}
-                      </p>
+                <div className="server-table-group transit-route-table-group" key={route.id}>
+                  <div className="server-table-row transit-route-table-row transit-route-main-row">
+                    <strong className="table-ellipsis" title={route.name}>
+                      {route.name}
+                    </strong>
+                    <span className="table-ellipsis" title={entryLabel}>
+                      {entryLabel}
+                    </span>
+                    <span className="table-ellipsis" title={targetLabel}>
+                      {targetLabel}
+                    </span>
+                    <span>{route.forwarding_method}</span>
+                    <span>
+                      <span className={`pill ${statusClass(route.status)}`}>{displayStatusLabel(route.status)}</span>
+                      <small className="node-meta-line">{route.status}</small>
+                    </span>
+                    <div className="server-actions transit-route-row-actions">
+                      <button className="secondary compact" disabled={candidateLoading} type="button" onClick={() => void loadCandidateSummary(route.id)}>
+                        查看摘要
+                      </button>
+                      <button className="secondary compact" disabled={candidateLoading} type="button" onClick={() => void exportCandidateConfig(route.id)}>
+                        临时导出测试配置
+                      </button>
+                      <button
+                        className="secondary compact ghost-action"
+                        type="button"
+                        onClick={() => {
+                          selectCandidateRoute(route.id);
+                          setCandidateMessage(`链路详情：服务 ${serviceLabel}；SHARE_LINK ${shareLinkLabel}；CUTOVER ${cutoverLabel}。`);
+                        }}
+                      >
+                        详情
+                      </button>
                     </div>
-                    <span className={`pill ${statusClass(route.status)}`}>{displayStatusLabel(route.status)}</span>
                   </div>
 
-                  <div className="transit-route-card-grid">
-                    <span>链路名称</span>
-                    <strong title={route.name}>{route.name}</strong>
-                    <span>入口</span>
-                    <strong>{routeEntry(route)}</strong>
-                    <span>目标</span>
-                    <strong>{route.target_host}:{route.target_port}</strong>
-                    <span>转发方式</span>
-                    <strong>{route.forwarding_method}</strong>
-                    <span>服务</span>
-                    <strong title={route.service_name}>{route.service_name || "-"}</strong>
-                    <span>状态</span>
-                    <strong>{route.status} / {displayStatusLabel(route.status)}</strong>
-                    <span>SHARE_LINK</span>
-                    <strong>{routeHasShareLink(route) ? "已写入" : "未写入"}</strong>
-                    <span>CUTOVER</span>
-                    <strong>{routeCutoverStatusLabel(route.id)}</strong>
-                  </div>
-
-                  <div className="server-actions">
-                    <button className="secondary" disabled={candidateLoading} type="button" onClick={() => void loadCandidateSummary(route.id)}>
-                      查看摘要
-                    </button>
-                    <button className="secondary" disabled={candidateLoading || !candidateExportReady || !routeSelected} type="button" onClick={() => void exportCandidateConfig(route.id)}>
-                      临时导出测试配置
-                    </button>
+                  <div className="server-row-worker transit-route-detail-row">
+                    <span title={serviceLabel}>服务：{serviceLabel}</span>
+                    <span>SHARE_LINK：{shareLinkLabel}</span>
+                    <span>CUTOVER：{cutoverLabel}</span>
                   </div>
 
                   {routeSelected ? (
-                    <div className="candidate-confirmations">
+                    <div className="candidate-confirmations transit-route-inline-panel">
                       <label>
                         <input
                           checked={candidateExportConfirmations.transientExport}
@@ -1131,7 +1159,7 @@ export function TransitRoutesPanel() {
                   ) : null}
 
                   {routeSummaryVisible ? (
-                    <div className="candidate-summary-grid">
+                    <div className="candidate-summary-grid transit-route-inline-panel">
                       <span>候选名称</span>
                       <strong>{candidateSummary.route_name}</strong>
                       <span>入口</span>
@@ -1148,7 +1176,7 @@ export function TransitRoutesPanel() {
                   ) : null}
 
                   {routeExportVisible ? (
-                    <div className="candidate-export-result">
+                    <div className="candidate-export-result transit-route-inline-panel">
                       <strong>临时测试配置已生成</strong>
                       <span>名称：{candidateExport.candidate_name}</span>
                       <span>服务器：{candidateExport.server}</span>
@@ -1186,8 +1214,8 @@ export function TransitRoutesPanel() {
                     </div>
                   ) : null}
 
-                  {routeSelected ? <p className="message">{candidateMessage}</p> : null}
-                </article>
+                  {routeSelected ? <p className="message transit-route-inline-message">{candidateMessage}</p> : null}
+                </div>
               );
             })
           : null}
@@ -1461,7 +1489,7 @@ export function TransitRoutesPanel() {
             {createPreview ? (
               <div className="route-preview-box">
                 <strong>配置预览</strong>
-                <div className="transit-route-card-grid">
+                <div className="route-preview-grid">
                   <span>链路名称</span>
                   <strong>{createPreview.routeName}</strong>
                   <span>中转服务器</span>
