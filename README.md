@@ -2577,6 +2577,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.77 Transit candidate UI and transient export | Add safe candidate route display and transient client export without cutover or share_link mutation |
 | Stage 3.3.77c Candidate export copy fallback hotfix | Add HTTP-safe manual copy fallback for transient candidate export; no cutover or share_link mutation |
 | Stage 3.3.77e System test result record | Record successful candidate UI/export system test with HTTP manual-copy fallback; no cutover or share_link mutation |
+| Stage 3.3.77f System test final record and next decision pack | Record successful candidate UI/export retest, HTTP manual-copy fallback, database non-mutation, and next-stage backlog; no cutover or share_link mutation |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
