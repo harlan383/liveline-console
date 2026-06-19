@@ -767,56 +767,65 @@ textarea {
   align-content: start;
 }
 
-.transit-route-card-list {
-  display: grid;
-  gap: 14px;
+.transit-route-table {
+  min-width: 0;
 }
 
-.transit-route-card {
+.transit-route-table-row {
+  grid-template-columns:
+    minmax(170px, 1.15fr)
+    minmax(145px, 0.95fr)
+    minmax(145px, 0.95fr)
+    minmax(92px, 0.55fr)
+    minmax(104px, 0.65fr)
+    minmax(310px, 1.45fr);
+}
+
+.transit-route-main-row {
   background:
     linear-gradient(90deg, rgba(59, 130, 246, 0.08), rgba(7, 16, 34, 0)),
     var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: grid;
-  gap: 14px;
-  padding: 14px;
 }
 
-.transit-route-card-header {
-  align-items: flex-start;
+.transit-route-row-actions {
+  flex-wrap: nowrap;
+}
+
+.transit-route-detail-row {
   display: flex;
-  gap: 12px;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
 }
 
-.transit-route-card-header h3 {
-  font-size: 16px;
-  margin: 0;
+.transit-route-detail-row span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.transit-route-card-header p {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  margin: 6px 0 0;
-  overflow-wrap: anywhere;
+.transit-route-inline-panel {
+  margin: 10px 12px 12px;
 }
 
-.transit-route-card-grid {
+.transit-route-inline-message {
+  margin: 0 12px 12px;
+}
+
+.route-preview-grid {
   display: grid;
   gap: 8px 12px;
   grid-template-columns: minmax(116px, 0.28fr) minmax(0, 1fr);
 }
 
-.transit-route-card-grid span {
+.route-preview-grid span {
   color: var(--muted);
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
-.transit-route-card-grid strong {
+.route-preview-grid strong {
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -2435,6 +2444,11 @@ details[open] .when-closed {
 button.compact {
   padding: 7px 10px;
   white-space: nowrap;
+}
+
+button.ghost-action {
+  border-color: rgba(148, 163, 184, 0.36);
+  color: var(--muted);
 }
 
 .check-row {
