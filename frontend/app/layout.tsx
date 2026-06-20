@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./ui-overrides.css";
 
 export const metadata: Metadata = {
   title: "LiveLine Console",
