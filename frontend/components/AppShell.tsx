@@ -17,7 +17,9 @@ import {
   type HealthData,
   type NodeListResult,
   type TaskListResult,
+  type TransitResourceListResult,
   type TransitRouteListResult,
+  type VpsServerListResult,
 } from "@/lib/api";
 
 type PanelId = "dashboard" | "transitRoutes" | "servers" | "transitLinks" | "tasks" | "diagnostics" | "settings";
@@ -32,9 +34,9 @@ const panels: Array<{
   {
     id: "dashboard",
     label: "总览",
-    title: "运维总览",
+    title: "搭建网络总览",
     eyebrow: "本地控制台",
-    description: "查看本地控制台健康状态、节点规模、中转链路和最近任务状态。",
+    description: "查看落地、直连节点、中转 Worker、中转链路和安全边界状态。",
   },
   {
     id: "transitRoutes",
@@ -171,10 +173,10 @@ export function AppShell() {
           </div>
         </div>
         <div className="sidebar-status">
-          <span>正式链路</span>
-          <strong>socat 18443</strong>
-          <span>回退链路</span>
-          <strong>gost 8443</strong>
+          <span>中转候选</span>
+          <strong>socat 23843</strong>
+          <span>直连节点</span>
+          <strong>保留</strong>
         </div>
         <nav className="nav">
           {panels.map((panel) => (
@@ -200,9 +202,9 @@ export function AppShell() {
           </div>
           <div className="topbar-actions">
             <div className="topbar-status" aria-label="当前链路状态">
-              <span className="ops-badge success">正式链路 socat 18443</span>
-              <span className="ops-badge warning">回退链路 gost 8443</span>
-              <span className="ops-badge muted">当前不执行 cutover</span>
+              <span className="ops-badge success">中转候选 socat 23843</span>
+              <span className="ops-badge warning">直连节点保留</span>
+              <span className="ops-badge muted">未 cutover</span>
             </div>
             <span className="admin-badge">已登录：{currentAdmin.username}</span>
             <button className="ghost-button" type="button" onClick={handleLogout}>
@@ -214,7 +216,7 @@ export function AppShell() {
         <RouteSafetyGuardrails />
 
         <div className="grid">
-          {activePanel === "dashboard" ? <DashboardPanel /> : null}
+          {activePanel === "dashboard" ? <DashboardPanel onNavigate={setActivePanel} /> : null}
           {activePanel === "servers" ? <ServerManagementPanel /> : null}
           {activePanel === "transitRoutes" ? <TransitServersPanel /> : null}
           {activePanel === "transitLinks" ? <TransitRoutesPanel /> : null}
@@ -232,52 +234,141 @@ export function AppShell() {
   );
 }
 
-function DashboardPanel() {
-  const [metrics, setMetrics] = useState({
-    vpsTotal: "-",
-    onlineVps: "-",
-    nodeTotal: "-",
-    healthyNodes: "-",
-    abnormalNodes: "-",
-    transitRoutes: "-",
-    recentTask: "无任务",
+function displayDashboardStatus(status: string | null | undefined) {
+  const labels: Record<string, string> = {
+    active: "active",
+    online: "在线",
+    worker_online: "Worker 在线",
+    pending_worker: "等待 Worker",
+    disabled: "已停用",
+    failed: "失败",
+    deleted: "已删除",
+  };
+  return status ? labels[status] ?? status : "未返回";
+}
+
+function entryWithPort(host: string | null | undefined, port: number | null | undefined) {
+  if (!host) {
+    return "未返回";
+  }
+  return port ? `${host}:${port}` : host;
+}
+
+function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }) {
+  const [summary, setSummary] = useState({
+    landingServers: "-",
+    landingStatus: "读取中",
+    landingDetail: "正在读取落地服务器。",
+    directNode: "读取中",
+    directNodeDetail: "正在读取直连节点。",
+    directNodeEntry: "未返回",
+    directNodeConfig: "未返回",
+    transitServers: "-",
+    transitWorkerStatus: "读取中",
+    transitWorkerDetail: "正在读取中转 Worker。",
+    transitRoute: "读取中",
+    transitRouteEntry: "未返回",
+    transitRouteTarget: "未返回",
+    transitRouteDetail: "正在读取中转链路。",
     health: "读取中",
+    recentTask: "无任务",
+    safetyNodeShareLink: "未被中转流程改写",
+    safetyRouteShareLink: "未写入",
+    safetyCutover: "未切换",
+    safetyOriginalNode: "保留",
+    noticeItems: ["正在读取本地网络搭建状态。"],
   });
   const [message, setMessage] = useState("正在读取本地总览。");
 
   async function loadDashboard() {
-    const [healthResult, nodeResult, routeResult, taskResult] = await Promise.all([
+    const [healthResult, vpsResult, nodeResult, resourceResult, routeResult, taskResult] = await Promise.all([
       apiFetch<HealthData>("/api/health"),
+      apiFetch<VpsServerListResult>("/api/vps"),
       apiFetch<NodeListResult>("/api/nodes"),
+      apiFetch<TransitResourceListResult>("/api/transit-resources"),
       apiFetch<TransitRouteListResult>("/api/transit-routes"),
       apiFetch<TaskListResult>("/api/tasks?limit=8"),
     ]);
 
+    const landingServers = vpsResult.success ? vpsResult.data.servers : [];
     const nodes = nodeResult.success ? nodeResult.data.nodes : [];
+    const transitResources = resourceResult.success ? resourceResult.data.resources : [];
     const routes = routeResult.success ? routeResult.data.routes : [];
     const tasks = taskResult.success ? taskResult.data.tasks : [];
-    const uniqueVps = new Set(nodes.map((node) => node.vps_id ?? node.vps_ip).filter(Boolean));
-    const onlineVps = new Set(
-      nodes
-        .filter((node) => node.status === "active" || node.service_status === "active")
-        .map((node) => node.vps_id ?? node.vps_ip)
-        .filter(Boolean),
-    );
-    const healthyNodes = nodes.filter((node) => node.status === "active").length;
     const healthOk =
       healthResult.success &&
       Object.values(healthResult.data).every((component) => component.status === "ok");
     const latestTask = tasks[0];
+    const activeNodes = nodes.filter((node) => node.status === "active");
+    const primaryNode = activeNodes[0] ?? nodes[0] ?? null;
+    const primaryNodeHasShareLink = Boolean(
+      primaryNode?.has_share_link ?? primaryNode?.share_link_present ?? primaryNode?.masked_share_link,
+    );
+    const transitServers = transitResources.filter((resource) => resource.resource_type === "server" && !resource.deleted_at);
+    const onlineTransitServers = transitServers.filter(
+      (resource) => resource.worker_online || resource.display_status === "online" || resource.display_status === "worker_online",
+    );
+    const primaryTransitServer = onlineTransitServers[0] ?? transitServers[0] ?? null;
+    const activeRoutes = routes.filter((route) => route.status === "active" && !route.deleted_at);
+    const primaryRoute = activeRoutes[0] ?? routes[0] ?? null;
+    const routeTransitResource = primaryRoute
+      ? transitResources.find((resource) => resource.id === primaryRoute.transit_resource_id)
+      : null;
+    const routeShareLinkWritten = routes.some((route) => Boolean(route.share_link));
+    const noticeItems: string[] = [];
 
-    setMetrics({
-      vpsTotal: String(uniqueVps.size),
-      onlineVps: String(onlineVps.size),
-      nodeTotal: String(nodes.length),
-      healthyNodes: String(healthyNodes),
-      abnormalNodes: String(Math.max(nodes.length - healthyNodes, 0)),
-      transitRoutes: String(routes.length),
-      recentTask: latestTask ? `${latestTask.task_type} / ${taskStatusLabel(latestTask.status)}` : "无任务",
+    if (!landingServers.length) {
+      noticeItems.push("还没有落地服务器记录。");
+    }
+    if (!primaryNode) {
+      noticeItems.push("还没有直连节点。");
+    }
+    if (!onlineTransitServers.length) {
+      noticeItems.push("没有在线的中转 Worker。");
+    }
+    if (!activeRoutes.length) {
+      noticeItems.push("还没有 active 中转链路。");
+    }
+    if (!healthOk) {
+      noticeItems.push("本地 backend / database / redis / worker 健康状态需要检查。");
+    }
+    if (routeShareLinkWritten) {
+      noticeItems.push("检测到 transit_routes.share_link 已写入，请确认是否符合当前阶段边界。");
+    }
+    if (!noticeItems.length) {
+      noticeItems.push("当前网络搭建摘要正常；如需继续，优先做长稳观察或按需复制测试配置。");
+    }
+
+    setSummary({
+      landingServers: `${landingServers.length} 台`,
+      landingStatus: landingServers.length ? "已接入" : "未接入",
+      landingDetail: landingServers.length
+        ? `Worker 在线 ${landingServers.filter((server) => server.worker_online).length} 台；用于直连节点和中转目标。`
+        : "请先添加落地服务器。",
+      directNode: primaryNode ? "已创建" : "未创建",
+      directNodeDetail: primaryNode
+        ? `${primaryNode.node_name} / ${displayDashboardStatus(primaryNode.status)}`
+        : "暂无直连 Reality 节点。",
+      directNodeEntry: primaryNode ? entryWithPort(primaryNode.vps_ip, primaryNode.port) : "未返回",
+      directNodeConfig: primaryNodeHasShareLink ? "可导出配置" : "未生成配置",
+      transitServers: `${transitServers.length} 台`,
+      transitWorkerStatus: onlineTransitServers.length ? "在线" : "离线 / 未接入",
+      transitWorkerDetail: primaryTransitServer
+        ? `${primaryTransitServer.name} / ${primaryTransitServer.worker_version ?? "版本未返回"}`
+        : "暂无中转服务器。",
+      transitRoute: primaryRoute ? displayDashboardStatus(primaryRoute.status) : "未创建",
+      transitRouteEntry: primaryRoute ? entryWithPort(routeTransitResource?.entry_host, primaryRoute.listen_port) : "未返回",
+      transitRouteTarget: primaryRoute ? entryWithPort(primaryRoute.target_host, primaryRoute.target_port) : "未返回",
+      transitRouteDetail: primaryRoute
+        ? `${primaryRoute.name} / ${primaryRoute.forwarding_method} / cutover 未切换`
+        : "暂无 active 中转链路。",
       health: healthOk ? "正常" : "需检查",
+      recentTask: latestTask ? `${latestTask.task_type} / ${taskStatusLabel(latestTask.status)}` : "无任务",
+      safetyNodeShareLink: "未被中转流程改写",
+      safetyRouteShareLink: routeShareLinkWritten ? "已写入，需复核" : "未写入",
+      safetyCutover: "未切换",
+      safetyOriginalNode: "保留",
+      noticeItems,
     });
     setMessage("总览已刷新。");
   }
@@ -290,11 +381,11 @@ function DashboardPanel() {
     <section className="dashboard-panel wide">
       <div className="dashboard-hero">
         <div>
-          <span className="page-eyebrow">LiveLine Console v1</span>
-          <h2>本地运维控制台总览</h2>
+          <span className="page-eyebrow">网络搭建状态</span>
+          <h2>搭建网络状态总览</h2>
           <p>
-            当前正式链路为 <strong>socat 18443</strong>，回退链路为 <strong>gost 8443</strong>。
-            本页面只读取本地 API，不执行远程命令，也不会修改 node.share_link。
+            一眼查看落地服务器、直连节点、中转 Worker 和中转链路状态。总览只读取本地 API，
+            不执行远程命令，也不会显示完整节点链接或修改 `nodes.share_link`。
           </p>
         </div>
         <button className="secondary" type="button" onClick={() => void loadDashboard()}>
@@ -302,64 +393,141 @@ function DashboardPanel() {
         </button>
       </div>
 
-      <div className="metric-grid">
-        <MetricCard label="VPS 总数" value={metrics.vpsTotal} tone="info" />
-        <MetricCard label="在线 VPS" value={metrics.onlineVps} tone="success" />
-        <MetricCard label="节点总数" value={metrics.nodeTotal} tone="info" />
-        <MetricCard label="正常节点" value={metrics.healthyNodes} tone="success" />
-        <MetricCard label="异常节点" value={metrics.abnormalNodes} tone="danger" />
-        <MetricCard label="中转链路" value={metrics.transitRoutes} tone="warning" />
-        <MetricCard label="最近任务" value={metrics.recentTask} tone="muted" />
-        <MetricCard label="本地健康" value={metrics.health} tone={metrics.health === "正常" ? "success" : "warning"} />
+      <div className="overview-status-grid" aria-label="网络搭建核心状态">
+        <OverviewStatusCard
+          detail={summary.landingDetail}
+          label="落地服务器"
+          status={summary.landingStatus}
+          tone={summary.landingStatus === "已接入" ? "success" : "warning"}
+          value={summary.landingServers}
+        />
+        <OverviewStatusCard
+          detail={`${summary.directNodeEntry} / ${summary.directNodeConfig}`}
+          label="直连节点"
+          status={summary.directNodeConfig}
+          tone={summary.directNode === "已创建" ? "success" : "warning"}
+          value={summary.directNode}
+        />
+        <OverviewStatusCard
+          detail={summary.transitWorkerDetail}
+          label="中转服务器"
+          status={summary.transitWorkerStatus}
+          tone={summary.transitWorkerStatus === "在线" ? "success" : "warning"}
+          value={summary.transitServers}
+        />
+        <OverviewStatusCard
+          detail={`${summary.transitRouteEntry} -> ${summary.transitRouteTarget}`}
+          label="中转链路"
+          status="未 cutover"
+          tone={summary.transitRoute === "active" ? "success" : "warning"}
+          value={summary.transitRoute}
+        />
       </div>
 
-      <div className="dashboard-panels">
-        <SystemStatus />
-        <section className="panel">
-          <h2>运维安全边界</h2>
-          <div className="status-list">
-            <div className="status-row">
-              <div>
-                <strong>正式链路</strong>
-                <p className="message">socat 18443，当前 node.share_link 已指向该链路。</p>
-              </div>
-              <span className="pill ok">正常</span>
+      <div className="overview-panels">
+        <section className="panel overview-section">
+          <div className="status-row">
+            <div>
+              <h2>当前可用链路</h2>
+              <p className="message">只显示 IP、端口、状态和用途；不显示完整客户端链接。</p>
             </div>
-            <div className="status-row">
-              <div>
-                <strong>回退链路</strong>
-                <p className="message">gost 8443 必须继续保留，不关闭、不降级、不替换。</p>
-              </div>
-              <span className="pill warn">警告</span>
+            <span className="pill ok">摘要</span>
+          </div>
+          <div className="overview-link-grid">
+            <div className="overview-link-card">
+              <span>直连节点</span>
+              <strong>{summary.directNodeEntry}</strong>
+              <small>状态：{summary.directNodeConfig}；用于保留原直连入口。</small>
             </div>
-            <div className="status-row">
-              <div>
-                <strong>远程执行</strong>
-                <p className="message">当前仍为 No-Go；真正 SSH / 创建转发 / cutover 必须另开阶段。</p>
-              </div>
-              <span className="pill muted">未检测</span>
+            <div className="overview-link-card">
+              <span>中转链路</span>
+              <strong>
+                {summary.transitRouteEntry} -&gt; {summary.transitRouteTarget}
+              </strong>
+              <small>状态：{summary.transitRouteDetail}；用于手动导入客户端测试。</small>
             </div>
           </div>
-          <p className="message">{message}</p>
+        </section>
+
+        <section className="panel overview-section">
+          <div className="status-row">
+            <div>
+              <h2>安全状态</h2>
+              <p className="message">当前系统只用于搭建和导出测试配置，不自动替换原节点。</p>
+            </div>
+            <span className="pill muted">只读摘要</span>
+          </div>
+          <div className="overview-safety-grid">
+            <span>nodes.share_link：{summary.safetyNodeShareLink}</span>
+            <span>transit_routes.share_link：{summary.safetyRouteShareLink}</span>
+            <span>cutover：{summary.safetyCutover}</span>
+            <span>原直连节点：{summary.safetyOriginalNode}</span>
+          </div>
+        </section>
+
+        <section className="panel overview-section">
+          <div className="status-row">
+            <div>
+              <h2>需要注意</h2>
+              <p className="message">{message}</p>
+            </div>
+            <span className={`pill ${summary.health === "正常" ? "ok" : "warn"}`}>本地健康：{summary.health}</span>
+          </div>
+          <ul className="overview-notice-list">
+            {summary.noticeItems.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          <p className="message">最近任务：{summary.recentTask}</p>
+        </section>
+
+        <section className="panel overview-section">
+          <div className="status-row">
+            <div>
+              <h2>下一步</h2>
+              <p className="message">总览页只做导航，不放执行按钮，避免误操作。</p>
+            </div>
+            <span className="pill muted">导航</span>
+          </div>
+          <div className="overview-next-actions">
+            <button className="secondary" type="button" onClick={() => onNavigate("servers")}>
+              去落地服务器
+            </button>
+            <button className="secondary" type="button" onClick={() => onNavigate("transitRoutes")}>
+              去中转服务器
+            </button>
+            <button className="secondary" type="button" onClick={() => onNavigate("transitLinks")}>
+              去中转链路
+            </button>
+          </div>
+          <p className="message">需要排查问题时，后续进入诊断中心；当前阶段暂不展开完整排障模块。</p>
         </section>
       </div>
     </section>
   );
 }
 
-function MetricCard({
+function OverviewStatusCard({
+  detail,
   label,
-  value,
+  status,
   tone,
+  value,
 }: {
+  detail: string;
   label: string;
-  value: string;
+  status: string;
   tone: "success" | "warning" | "danger" | "muted" | "info";
+  value: string;
 }) {
   return (
-    <div className={`metric-card ${tone}`}>
-      <span>{label}</span>
+    <div className={`overview-status-card ${tone}`}>
+      <div className="overview-card-header">
+        <span>{label}</span>
+        <small>{status}</small>
+      </div>
       <strong>{value}</strong>
+      <p>{detail}</p>
     </div>
   );
 }

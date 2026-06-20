@@ -570,6 +570,148 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.overview-status-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.overview-status-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  min-height: 132px;
+  min-width: 0;
+  padding: 15px;
+}
+
+.overview-status-card.success {
+  border-color: rgba(50, 213, 131, 0.34);
+}
+
+.overview-status-card.warning {
+  border-color: rgba(253, 176, 34, 0.34);
+}
+
+.overview-status-card.info {
+  border-color: rgba(103, 232, 249, 0.3);
+}
+
+.overview-status-card strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.overview-status-card p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.overview-card-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.overview-card-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.overview-card-header small {
+  background: rgba(158, 176, 195, 0.12);
+  border: 1px solid rgba(158, 176, 195, 0.22);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.overview-panels {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-section {
+  display: grid;
+  gap: 13px;
+}
+
+.overview-link-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-link-card {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 13px;
+}
+
+.overview-link-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.overview-link-card strong {
+  color: var(--text);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.overview-link-card small,
+.overview-notice-list,
+.overview-safety-grid {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.overview-safety-grid {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-safety-grid span,
+.overview-notice-list li {
+  background: rgba(7, 16, 24, 0.46);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 11px;
+}
+
+.overview-notice-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.overview-next-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
 .settings-panel {
   display: grid;
   gap: 16px;
@@ -3025,6 +3167,10 @@ button.ghost-action {
   .node-child-row,
   .server-modal-form,
   .metric-grid,
+  .overview-status-grid,
+  .overview-panels,
+  .overview-link-grid,
+  .overview-safety-grid,
   .dashboard-panels,
   .settings-grid,
   .server-ops-summary,
