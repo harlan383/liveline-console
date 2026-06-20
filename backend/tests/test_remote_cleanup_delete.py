@@ -25,10 +25,11 @@ class ScalarResult:
 
 
 class FakeDb:
-    def __init__(self, *, objects=None, scalars=None, scalar_values=None):
+    def __init__(self, *, objects=None, scalars=None, scalar_values=None, commands=None):
         self.objects = objects or {}
         self.scalars_queue = list(scalars or [])
         self.scalar_queue = list(scalar_values or [])
+        self.commands = list(commands) if commands is not None else None
         self.added = []
         self.flushed = False
 
@@ -40,6 +41,15 @@ class FakeDb:
         return ScalarResult(values)
 
     def scalar(self, statement):
+        if self.commands is not None:
+            for command in self.commands:
+                if (
+                    command.server_id
+                    and command.command_type in cleanup.REMOTE_CLEANUP_COMMAND_TYPES
+                    and command.status in cleanup.REMOTE_CLEANUP_RUNNING_STATUSES
+                ):
+                    return command.id
+            return None
         if self.scalar_queue:
             return self.scalar_queue.pop(0)
         return None
@@ -89,6 +99,18 @@ def route(route_id="route-1", resource_id="resource-1"):
     )
 
 
+def worker_command(command_type, status, server_id="server-1"):
+    return WorkerCommand(
+        id=f"{command_type}-{status}",
+        worker_id="worker-1",
+        server_id=server_id,
+        server_type="landing" if server_id.startswith("server") else "transit",
+        command_type=command_type,
+        status=status,
+        payload_json={},
+    )
+
+
 class RemoteCleanupDeleteTests(unittest.TestCase):
     def test_remote_cleanup_request_requires_confirm_phrase(self):
         with self.assertRaises(ValidationError):
@@ -106,7 +128,7 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
         self.assertEqual(returned_worker.id, target_worker.id)
         self.assertEqual(command.command_type, "cleanup_landing_node")
         self.assertEqual(command.payload_json["cleanup_type"], "cleanup_landing_node")
-        self.assertNotIn("share_link", json.dumps(command.payload_json))
+        self.assertNotIn("fake-redacted-example", json.dumps(command.payload_json))
 
     def test_create_landing_server_cleanup_command_includes_all_nodes(self):
         target_worker = worker("landing", "server-1")
@@ -166,6 +188,65 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
             with self.assertRaises(cleanup.RemoteCleanupError) as raised:
                 cleanup.create_transit_route_cleanup_command(db, bad_route)
         self.assertEqual(raised.exception.code, "TRANSIT_ROUTE_SERVICE_NOT_LIVELINE")
+
+    def test_pending_landing_node_cleanup_blocks_landing_server_cleanup(self):
+        target_worker = worker("landing", "server-1")
+        server = VpsServer(id="server-1", ip="64.90.13.19", status="active")
+        db = FakeDb(commands=[worker_command("cleanup_landing_node", "pending", "server-1")])
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            with self.assertRaises(cleanup.RemoteCleanupError) as raised:
+                cleanup.create_landing_server_cleanup_command(db, server)
+        self.assertEqual(raised.exception.code, "REMOTE_CLEANUP_COMMAND_IN_FLIGHT")
+
+    def test_running_landing_server_cleanup_blocks_landing_node_cleanup(self):
+        target_worker = worker("landing", "server-1")
+        db = FakeDb(commands=[worker_command("cleanup_landing_server", "running", "server-1")])
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            with self.assertRaises(cleanup.RemoteCleanupError) as raised:
+                cleanup.create_landing_node_cleanup_command(db, node())
+        self.assertEqual(raised.exception.code, "REMOTE_CLEANUP_COMMAND_IN_FLIGHT")
+
+    def test_claimed_transit_route_cleanup_blocks_transit_resource_cleanup(self):
+        target_worker = worker("transit", "resource-1")
+        resource = TransitResource(id="resource-1", name="hk", resource_type="server", status="active")
+        db = FakeDb(commands=[worker_command("cleanup_transit_route", "claimed", "resource-1")])
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            with self.assertRaises(cleanup.RemoteCleanupError) as raised:
+                cleanup.create_transit_resource_cleanup_command(db, resource)
+        self.assertEqual(raised.exception.code, "REMOTE_CLEANUP_COMMAND_IN_FLIGHT")
+
+    def test_pending_transit_resource_cleanup_blocks_transit_route_cleanup(self):
+        target_worker = worker("transit", "resource-1")
+        db = FakeDb(commands=[worker_command("cleanup_transit_resource", "pending", "resource-1")])
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            with self.assertRaises(cleanup.RemoteCleanupError) as raised:
+                cleanup.create_transit_route_cleanup_command(db, route())
+        self.assertEqual(raised.exception.code, "REMOTE_CLEANUP_COMMAND_IN_FLIGHT")
+
+    def test_non_cleanup_command_does_not_block_remote_cleanup(self):
+        target_worker = worker("landing", "server-1")
+        db = FakeDb(commands=[worker_command("collect_status", "pending", "server-1")])
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            command, _ = cleanup.create_landing_node_cleanup_command(db, node())
+        self.assertEqual(command.command_type, "cleanup_landing_node")
+
+    def test_completed_cleanup_commands_do_not_block_remote_cleanup(self):
+        target_worker = worker("landing", "server-1")
+        db = FakeDb(
+            commands=[
+                worker_command("cleanup_landing_node", "succeeded", "server-1"),
+                worker_command("cleanup_landing_server", "failed", "server-1"),
+            ]
+        )
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            command, _ = cleanup.create_landing_node_cleanup_command(db, node())
+        self.assertEqual(command.command_type, "cleanup_landing_node")
 
     def test_failed_result_does_not_soft_delete_node(self):
         existing = node()

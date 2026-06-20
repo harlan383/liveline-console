@@ -30,6 +30,7 @@ REMOTE_CLEANUP_COMMAND_TYPES = {
     CLEANUP_TRANSIT_ROUTE_COMMAND,
     CLEANUP_TRANSIT_RESOURCE_COMMAND,
 }
+REMOTE_CLEANUP_RUNNING_STATUSES = ("pending", "claimed", "running")
 
 REMOTE_CLEANUP_STAGE = "Stage 3.3.97-protected-remote-cleanup-delete-flow"
 REMOTE_CLEANUP_CONFIRMATION = "CONFIRM_REMOTE_DELETE"
@@ -66,15 +67,15 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _active_cleanup_command_exists(db: Session, *, command_type: str, server_id: str | None) -> bool:
+def _active_remote_cleanup_exists(db: Session, *, server_id: str | None) -> bool:
     if not server_id:
         return False
     return (
         db.scalar(
             select(WorkerCommand.id)
-            .where(WorkerCommand.command_type == command_type)
             .where(WorkerCommand.server_id == server_id)
-            .where(WorkerCommand.status.in_(("pending", "claimed", "running")))
+            .where(WorkerCommand.command_type.in_(REMOTE_CLEANUP_COMMAND_TYPES))
+            .where(WorkerCommand.status.in_(REMOTE_CLEANUP_RUNNING_STATUSES))
             .limit(1)
         )
         is not None
@@ -199,8 +200,8 @@ def create_landing_node_cleanup_command(db: Session, node: Node) -> tuple[Worker
         server_id=node.vps_id,
         command_type=CLEANUP_LANDING_NODE_COMMAND,
     )
-    if _active_cleanup_command_exists(db, command_type=CLEANUP_LANDING_NODE_COMMAND, server_id=node.vps_id):
-        raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该落地服务器的节点清理任务在执行。", 409)
+    if _active_remote_cleanup_exists(db, server_id=node.vps_id):
+        raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该服务器的远程清理任务在执行。", 409)
     payload = _cleanup_command_payload(
         cleanup_type=CLEANUP_LANDING_NODE_COMMAND,
         target_id=node.id,
@@ -219,8 +220,8 @@ def create_landing_server_cleanup_command(db: Session, vps: VpsServer) -> tuple[
         server_id=vps.id,
         command_type=CLEANUP_LANDING_SERVER_COMMAND,
     )
-    if _active_cleanup_command_exists(db, command_type=CLEANUP_LANDING_SERVER_COMMAND, server_id=vps.id):
-        raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该落地服务器清理任务在执行。", 409)
+    if _active_remote_cleanup_exists(db, server_id=vps.id):
+        raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该服务器的远程清理任务在执行。", 409)
     nodes = db.scalars(
         select(Node)
         .where(Node.vps_id == vps.id)
@@ -252,8 +253,8 @@ def create_transit_route_cleanup_command(db: Session, route: TransitRoute) -> tu
         server_id=route.transit_resource_id,
         command_type=CLEANUP_TRANSIT_ROUTE_COMMAND,
     )
-    if _active_cleanup_command_exists(db, command_type=CLEANUP_TRANSIT_ROUTE_COMMAND, server_id=route.transit_resource_id):
-        raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该中转服务器的链路清理任务在执行。", 409)
+    if _active_remote_cleanup_exists(db, server_id=route.transit_resource_id):
+        raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该服务器的远程清理任务在执行。", 409)
     payload = _cleanup_command_payload(
         cleanup_type=CLEANUP_TRANSIT_ROUTE_COMMAND,
         target_id=route.id,
@@ -274,8 +275,8 @@ def create_transit_resource_cleanup_command(db: Session, resource: TransitResour
         server_id=resource.id,
         command_type=CLEANUP_TRANSIT_RESOURCE_COMMAND,
     )
-    if _active_cleanup_command_exists(db, command_type=CLEANUP_TRANSIT_RESOURCE_COMMAND, server_id=resource.id):
-        raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该中转服务器清理任务在执行。", 409)
+    if _active_remote_cleanup_exists(db, server_id=resource.id):
+        raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该服务器的远程清理任务在执行。", 409)
     routes = db.scalars(
         select(TransitRoute)
         .where(TransitRoute.transit_resource_id == resource.id)

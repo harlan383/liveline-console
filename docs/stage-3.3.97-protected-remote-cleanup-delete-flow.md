@@ -48,6 +48,8 @@ Each request requires:
 
 The API creates a Worker command and returns the queued command summary. It does not run SSH directly from the backend and does not soft-delete records until the Worker result reports success.
 
+Only one remote cleanup command may be pending, claimed, or running for the same server record at a time. The lock is server-scoped across all cleanup command types, so a node cleanup blocks a landing-server cleanup on the same VPS, and a route cleanup blocks a transit-resource cleanup on the same transit server.
+
 ## Worker Command Types
 
 Stage 3.3.97 adds these Worker command types:
