@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.20-stage-3.3.73"
+const workerVersion = "0.1.21-stage-3.3.97"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -68,10 +69,18 @@ const managedXrayConfigPath = "/opt/liveline-xray/config/config.json"
 const managedXrayStateDir = "/opt/liveline-xray/state"
 const managedXrayServiceName = "liveline-xray.service"
 const managedXrayServicePath = "/etc/systemd/system/liveline-xray.service"
+const remoteCleanupStage = "Stage 3.3.97-protected-remote-cleanup-delete-flow"
+const remoteCleanupConfirmation = "CONFIRM_REMOTE_DELETE"
+const remoteCleanupScriptPrefix = "liveline-worker-self-cleanup-"
+const defaultWorkerBinaryPath = "/usr/local/bin/liveline-worker"
+const defaultWorkerConfigPath = "/etc/liveline-worker/config.yaml"
+const defaultWorkerConfigDir = "/etc/liveline-worker"
 
 var postJSONHTTPClient = &http.Client{Timeout: postJSONTimeout}
 var postJSONFunc = postJSON
 var postJSONViaCurlFunc = postJSONViaCurl
+var livelineSocatServiceNameRE = regexp.MustCompile(`^liveline-socat-[0-9]+\.service$`)
+var livelineWorkerServiceNameRE = regexp.MustCompile(`^liveline-worker(?:-[A-Za-z0-9_-]+)?\.service$`)
 
 var protectedTransitListenPorts = map[int]string{
 	22:    "22 is reserved for SSH management",
@@ -558,8 +567,595 @@ func executeWorkerCommand(cfg config, command workerCommand) (map[string]any, er
 		}
 		result["timestamp"] = now
 		return result, nil
+	case "cleanup_landing_node", "cleanup_landing_server":
+		if cfg.Role != "landing" {
+			return nil, fmt.Errorf("%s requires landing worker role", command.CommandType)
+		}
+		result, err := executeRemoteCleanupCommand(cfg, hostname, command)
+		if err != nil {
+			return nil, err
+		}
+		result["timestamp"] = now
+		return result, nil
+	case "cleanup_transit_route", "cleanup_transit_resource":
+		if cfg.Role != "transit" {
+			return nil, fmt.Errorf("%s requires transit worker role", command.CommandType)
+		}
+		result, err := executeRemoteCleanupCommand(cfg, hostname, command)
+		if err != nil {
+			return nil, err
+		}
+		result["timestamp"] = now
+		return result, nil
 	default:
 		return nil, fmt.Errorf("unsupported command_type %q", command.CommandType)
+	}
+}
+
+type remoteCleanupPlan struct {
+	NodeID             string
+	NodeName           string
+	VpsID              string
+	XrayPort           int
+	ServiceCandidates  []string
+	LegacyServiceName  string
+	LegacyServicePath  string
+	ManagedConfigPath  string
+	DeleteConfigIfSafe bool
+
+	RouteID           string
+	RouteName         string
+	TransitResourceID string
+	ListenPort        int
+	TargetHost        string
+	TargetPort        int
+	ForwardingMethod  string
+	ServiceName       string
+	ServicePath       string
+}
+
+type workerSelfCleanupPlan struct {
+	WorkerID           string
+	Role               string
+	ServiceCandidates  []string
+	DefaultServiceName string
+	DefaultServicePath string
+	DefaultBinaryPath  string
+	DefaultConfigPath  string
+	DefaultConfigDir   string
+	DeleteBinaryIfSafe bool
+	DeleteConfigIfSafe bool
+	DelaySeconds       int
+}
+
+type remoteCleanupRequest struct {
+	Stage                          string
+	CleanupType                    string
+	TargetID                       string
+	Plans                          []remoteCleanupPlan
+	CleanupWorker                  bool
+	WorkerCleanup                  workerSelfCleanupPlan
+	RemoteCleanupRequired          bool
+	SystemRecordDeleteAfterSuccess bool
+	Confirmation                   string
+}
+
+func executeRemoteCleanupCommand(cfg config, hostname string, command workerCommand) (map[string]any, error) {
+	request, err := parseRemoteCleanupRequest(command)
+	if err != nil {
+		return nil, err
+	}
+	if request.CleanupType != command.CommandType {
+		return nil, fmt.Errorf("remote cleanup type mismatch: payload=%s command=%s", request.CleanupType, command.CommandType)
+	}
+	if os.Geteuid() != 0 {
+		return nil, errors.New("protected remote cleanup must run as root because systemd services are managed")
+	}
+
+	items := []any{}
+	switch command.CommandType {
+	case "cleanup_landing_node", "cleanup_landing_server":
+		for _, plan := range request.Plans {
+			item, err := cleanupXrayNodePlan(plan)
+			items = append(items, item)
+			if err != nil {
+				return remoteCleanupFailureResult(cfg, hostname, request, items, err), err
+			}
+		}
+	case "cleanup_transit_route", "cleanup_transit_resource":
+		for _, plan := range request.Plans {
+			item, err := cleanupSocatRoutePlan(plan)
+			items = append(items, item)
+			if err != nil {
+				return remoteCleanupFailureResult(cfg, hostname, request, items, err), err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("unsupported remote cleanup command_type %q", command.CommandType)
+	}
+
+	workerCleanup := map[string]any{"requested": request.CleanupWorker, "scheduled": false}
+	if request.CleanupWorker {
+		workerCleanup = scheduleWorkerSelfCleanup(request.WorkerCleanup)
+		if scheduled, _ := workerCleanup["scheduled"].(bool); !scheduled {
+			err := fmt.Errorf("worker self cleanup was not scheduled: %s", stringResultValue(workerCleanup["detail"]))
+			return remoteCleanupFailureResult(cfg, hostname, request, items, err), err
+		}
+	}
+
+	return map[string]any{
+		"cleanup_type":                       command.CommandType,
+		"status":                             "succeeded",
+		"summary":                            "Protected remote cleanup completed; backend may now soft-delete system records.",
+		"remote_cleanup_performed":           true,
+		"system_record_delete_after_success": true,
+		"worker_version":                     workerVersion,
+		"hostname":                           hostname,
+		"role":                               cfg.Role,
+		"interface_name":                     cfg.InterfaceName,
+		"plans_count":                        len(request.Plans),
+		"cleanup_items":                      items,
+		"worker_self_cleanup":                workerCleanup,
+		"safety_boundary": []any{
+			"fixed cleanup allowlist only",
+			"no arbitrary shell accepted from API",
+			"no cloud firewall or security group mutation",
+			"no nodes.share_link read or modification",
+			"no full client link export",
+			"no cutover",
+		},
+	}, nil
+}
+
+func parseRemoteCleanupRequest(command workerCommand) (remoteCleanupRequest, error) {
+	if path, ok := firstUnsafeRemoteCleanupPayloadKey(command.Payload); ok {
+		return remoteCleanupRequest{}, fmt.Errorf("remote cleanup payload contains unsupported execution field %s", path)
+	}
+	request := remoteCleanupRequest{
+		Stage:                          stringPayload(command.Payload, "stage"),
+		CleanupType:                    stringPayload(command.Payload, "cleanup_type"),
+		TargetID:                       stringPayload(command.Payload, "target_id"),
+		CleanupWorker:                  boolPayload(command.Payload, "cleanup_worker"),
+		RemoteCleanupRequired:          boolPayload(command.Payload, "remote_cleanup_required"),
+		SystemRecordDeleteAfterSuccess: boolPayload(command.Payload, "system_record_delete_after_success"),
+		Confirmation:                   stringPayload(command.Payload, "confirmation"),
+	}
+	if request.Stage != remoteCleanupStage {
+		return request, errors.New("remote cleanup stage mismatch")
+	}
+	if request.Confirmation != remoteCleanupConfirmation {
+		return request, errors.New("remote cleanup requires CONFIRM_REMOTE_DELETE confirmation")
+	}
+	if !request.RemoteCleanupRequired || !request.SystemRecordDeleteAfterSuccess {
+		return request, errors.New("remote cleanup payload missing required safety flags")
+	}
+	if request.CleanupType == "" || request.TargetID == "" {
+		return request, errors.New("remote cleanup payload missing cleanup_type or target_id")
+	}
+	request.Plans = parseRemoteCleanupPlans(command.Payload["plans"])
+	if len(request.Plans) == 0 && (request.CleanupType == "cleanup_landing_node" || request.CleanupType == "cleanup_transit_route") {
+		return request, errors.New("remote cleanup requires at least one cleanup plan")
+	}
+	request.WorkerCleanup = parseWorkerSelfCleanupPlan(command.Payload["worker_cleanup"])
+	return request, nil
+}
+
+func parseRemoteCleanupPlans(value any) []remoteCleanupPlan {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	plans := []remoteCleanupPlan{}
+	for _, item := range items {
+		source, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		plans = append(plans, remoteCleanupPlan{
+			NodeID:             stringPayload(source, "node_id"),
+			NodeName:           stringPayload(source, "node_name"),
+			VpsID:              stringPayload(source, "vps_id"),
+			XrayPort:           intPayload(source, "xray_port"),
+			ServiceCandidates:  stringListPayload(source, "service_candidates"),
+			LegacyServiceName:  stringPayload(source, "legacy_service_name"),
+			LegacyServicePath:  stringPayload(source, "legacy_service_path"),
+			ManagedConfigPath:  stringPayload(source, "managed_config_path"),
+			DeleteConfigIfSafe: boolPayload(source, "delete_config_if_liveline_verified"),
+			RouteID:            stringPayload(source, "route_id"),
+			RouteName:          stringPayload(source, "route_name"),
+			TransitResourceID:  stringPayload(source, "transit_resource_id"),
+			ListenPort:         intPayload(source, "listen_port"),
+			TargetHost:         stringPayload(source, "target_host"),
+			TargetPort:         intPayload(source, "target_port"),
+			ForwardingMethod:   stringPayload(source, "forwarding_method"),
+			ServiceName:        stringPayload(source, "service_name"),
+			ServicePath:        stringPayload(source, "service_path"),
+		})
+	}
+	return plans
+}
+
+func parseWorkerSelfCleanupPlan(value any) workerSelfCleanupPlan {
+	source, ok := value.(map[string]any)
+	if !ok {
+		return workerSelfCleanupPlan{}
+	}
+	return workerSelfCleanupPlan{
+		WorkerID:           stringPayload(source, "worker_id"),
+		Role:               stringPayload(source, "role"),
+		ServiceCandidates:  stringListPayload(source, "service_candidates"),
+		DefaultServiceName: stringPayload(source, "default_service_name"),
+		DefaultServicePath: stringPayload(source, "default_service_path"),
+		DefaultBinaryPath:  stringPayload(source, "default_binary_path"),
+		DefaultConfigPath:  stringPayload(source, "default_config_path"),
+		DefaultConfigDir:   stringPayload(source, "default_config_dir"),
+		DeleteBinaryIfSafe: boolPayload(source, "delete_binary_if_liveline_verified"),
+		DeleteConfigIfSafe: boolPayload(source, "delete_config_if_liveline_verified"),
+		DelaySeconds:       intPayload(source, "delay_seconds"),
+	}
+}
+
+func firstUnsafeRemoteCleanupPayloadKey(value any) (string, bool) {
+	unsafeKeys := map[string]bool{
+		"shell":           true,
+		"command":         true,
+		"commands":        true,
+		"args":            true,
+		"argv":            true,
+		"script":          true,
+		"systemd_unit":    true,
+		"unit_content":    true,
+		"service_content": true,
+		"exec_start":      true,
+		"rm_rf":           true,
+	}
+	return firstUnsafeTransitCreatePayloadKeyAt(value, "$", unsafeKeys)
+}
+
+func cleanupSocatRoutePlan(plan remoteCleanupPlan) (map[string]any, error) {
+	item := map[string]any{
+		"type":         "transit_route",
+		"id":           plan.RouteID,
+		"service_name": plan.ServiceName,
+		"port":         plan.ListenPort,
+		"status":       "failed",
+	}
+	if err := validateCleanupSocatPlan(plan); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	unit, err := runCommand(15*time.Second, "systemctl", "cat", plan.ServiceName)
+	if err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if !strings.Contains(unit, "socat") || !strings.Contains(unit, fmt.Sprintf("TCP-LISTEN:%d", plan.ListenPort)) {
+		err := errors.New("socat service unit does not match LiveLine listen port")
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if _, err := runCommand(45*time.Second, "systemctl", "disable", "--now", plan.ServiceName); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if err := removeFixedFile(plan.ServicePath); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	_, _ = runCommand(30*time.Second, "systemctl", "daemon-reload")
+	_, _ = runCommand(15*time.Second, "systemctl", "reset-failed", plan.ServiceName)
+	if portListening(plan.ListenPort) {
+		err := fmt.Errorf("TCP port %d is still listening after cleanup", plan.ListenPort)
+		item["detail"] = err.Error()
+		return item, err
+	}
+	item["status"] = "succeeded"
+	item["service_removed"] = true
+	item["port_stopped"] = true
+	item["detail"] = "LiveLine socat service was stopped, disabled, and unit file was removed."
+	return item, nil
+}
+
+func validateCleanupSocatPlan(plan remoteCleanupPlan) error {
+	if plan.ForwardingMethod != "socat" {
+		return errors.New("cleanup_transit_route only supports socat forwarding_method")
+	}
+	if !validTCPPort(plan.ListenPort) {
+		return errors.New("cleanup_transit_route listen_port must be a valid TCP port")
+	}
+	expectedName := fmt.Sprintf("liveline-socat-%d.service", plan.ListenPort)
+	expectedPath := filepath.Join(transitSystemdDir, expectedName)
+	if plan.ServiceName != expectedName || !livelineSocatServiceNameRE.MatchString(plan.ServiceName) {
+		return errors.New("cleanup_transit_route service_name is not an approved LiveLine socat service")
+	}
+	if plan.ServicePath != expectedPath {
+		return errors.New("cleanup_transit_route service_path does not match approved LiveLine socat path")
+	}
+	return nil
+}
+
+func cleanupXrayNodePlan(plan remoteCleanupPlan) (map[string]any, error) {
+	item := map[string]any{
+		"type":   "landing_node",
+		"id":     plan.NodeID,
+		"port":   plan.XrayPort,
+		"status": "failed",
+	}
+	serviceName, servicePath, unit, err := resolveLiveLineXrayService(plan)
+	if err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	item["service_name"] = serviceName
+	configPath := extractXrayConfigPath(unit, plan.ManagedConfigPath)
+	configVerified := false
+	if configPath != "" {
+		configVerified = xrayConfigPortMatches(configPath, plan.XrayPort)
+	}
+	if !configVerified {
+		err := errors.New("xray config port could not be verified for this node")
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if _, err := runCommand(45*time.Second, "systemctl", "disable", "--now", serviceName); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if err := removeFixedFile(servicePath); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	configRemoved := false
+	if plan.DeleteConfigIfSafe && safeLiveLineXrayConfigPath(configPath) {
+		if err := removeFixedFile(configPath); err != nil {
+			item["detail"] = err.Error()
+			return item, err
+		}
+		configRemoved = true
+	}
+	_, _ = runCommand(30*time.Second, "systemctl", "daemon-reload")
+	_, _ = runCommand(15*time.Second, "systemctl", "reset-failed", serviceName)
+	if portListening(plan.XrayPort) {
+		err := fmt.Errorf("TCP port %d is still listening after Xray cleanup", plan.XrayPort)
+		item["detail"] = err.Error()
+		return item, err
+	}
+	item["status"] = "succeeded"
+	item["service_removed"] = true
+	item["port_stopped"] = true
+	item["config_removed"] = configRemoved
+	item["detail"] = "LiveLine Xray service was stopped, disabled, and verified not listening."
+	return item, nil
+}
+
+func resolveLiveLineXrayService(plan remoteCleanupPlan) (string, string, string, error) {
+	if !validTCPPort(plan.XrayPort) {
+		return "", "", "", errors.New("cleanup_landing_node xray_port must be a valid TCP port")
+	}
+	candidates := plan.ServiceCandidates
+	if len(candidates) == 0 {
+		candidates = []string{plan.LegacyServiceName}
+	}
+	for _, serviceName := range candidates {
+		if !validLiveLineXrayServiceName(serviceName) {
+			continue
+		}
+		output, err := runCommand(15*time.Second, "systemctl", "cat", serviceName)
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(output), "liveline") {
+			continue
+		}
+		servicePath := filepath.Join(transitSystemdDir, serviceName)
+		if serviceName == plan.LegacyServiceName && plan.LegacyServicePath != "" {
+			servicePath = plan.LegacyServicePath
+		}
+		if servicePath != filepath.Join(transitSystemdDir, serviceName) {
+			continue
+		}
+		return serviceName, servicePath, output, nil
+	}
+	return "", "", "", errors.New("no verifiable LiveLine Xray service candidate found")
+}
+
+func validLiveLineXrayServiceName(serviceName string) bool {
+	return strings.HasPrefix(serviceName, "liveline-xray") && strings.HasSuffix(serviceName, ".service") && !strings.Contains(serviceName, "/")
+}
+
+func extractXrayConfigPath(unit string, fallback string) string {
+	for _, line := range strings.Split(unit, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "ExecStart=") || !strings.Contains(line, "-config") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "ExecStart="))
+		for index, field := range fields {
+			if field == "-config" && index+1 < len(fields) {
+				return strings.Trim(fields[index+1], "\"'")
+			}
+		}
+	}
+	return fallback
+}
+
+func xrayConfigPortMatches(configPath string, port int) bool {
+	if !safeLiveLineXrayConfigPath(configPath) {
+		return false
+	}
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(content, &parsed); err != nil {
+		return false
+	}
+	inbounds, ok := parsed["inbounds"].([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range inbounds {
+		inbound, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if intResultValue(inbound["port"]) == port {
+			return true
+		}
+	}
+	return false
+}
+
+func scheduleWorkerSelfCleanup(plan workerSelfCleanupPlan) map[string]any {
+	result := map[string]any{
+		"requested":     true,
+		"scheduled":     false,
+		"service_name":  "",
+		"delay_seconds": plan.DelaySeconds,
+	}
+	serviceName, servicePath, err := resolveLiveLineWorkerService(plan)
+	if err != nil {
+		result["detail"] = err.Error()
+		return result
+	}
+	if plan.DelaySeconds <= 0 {
+		plan.DelaySeconds = 5
+	}
+	binaryPath := defaultString(plan.DefaultBinaryPath, defaultWorkerBinaryPath)
+	configPath := defaultString(plan.DefaultConfigPath, defaultWorkerConfigPath)
+	configDir := defaultString(plan.DefaultConfigDir, defaultWorkerConfigDir)
+	binaryCleanup := plan.DeleteBinaryIfSafe && safeLiveLineWorkerBinaryPath(binaryPath)
+	configCleanup := plan.DeleteConfigIfSafe && safeLiveLineWorkerConfigPath(configPath) && safeLiveLineWorkerConfigDir(configDir)
+
+	scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("%s%d.sh", remoteCleanupScriptPrefix, time.Now().UnixNano()))
+	var script strings.Builder
+	script.WriteString(fmt.Sprintf(`#!/bin/sh
+set -eu
+sleep %d
+systemctl disable --now %s || true
+rm -f %s
+`, plan.DelaySeconds, shellQuote(serviceName), shellQuote(servicePath)))
+	if binaryCleanup {
+		script.WriteString(fmt.Sprintf("rm -f %s || true\n", shellQuote(binaryPath)))
+	}
+	if configCleanup {
+		script.WriteString(fmt.Sprintf("rm -f %s || true\n", shellQuote(configPath)))
+		script.WriteString(fmt.Sprintf("rmdir %s 2>/dev/null || true\n", shellQuote(configDir)))
+	}
+	script.WriteString(fmt.Sprintf(`systemctl daemon-reload || true
+systemctl reset-failed %s || true
+rm -f %s
+`, shellQuote(serviceName), shellQuote(scriptPath)))
+	if err := os.WriteFile(scriptPath, []byte(script.String()), 0o700); err != nil {
+		result["detail"] = err.Error()
+		return result
+	}
+	unitName := fmt.Sprintf("liveline-worker-self-cleanup-%d", time.Now().UnixNano())
+	if _, err := runCommand(15*time.Second, "systemd-run", "--unit", unitName, "--on-active=1s", "/bin/sh", scriptPath); err != nil {
+		_ = os.Remove(scriptPath)
+		result["detail"] = err.Error()
+		return result
+	}
+	result["scheduled"] = true
+	result["service_name"] = serviceName
+	result["binary_cleanup_scheduled"] = binaryCleanup
+	result["config_cleanup_scheduled"] = configCleanup
+	result["detail"] = "Worker self-cleanup delayed systemd-run task was scheduled."
+	return result
+}
+
+func defaultString(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func safeLiveLineWorkerBinaryPath(path string) bool {
+	return filepath.Clean(path) == defaultWorkerBinaryPath
+}
+
+func safeLiveLineWorkerConfigPath(path string) bool {
+	return filepath.Clean(path) == defaultWorkerConfigPath
+}
+
+func safeLiveLineWorkerConfigDir(path string) bool {
+	return filepath.Clean(path) == defaultWorkerConfigDir
+}
+
+func resolveLiveLineWorkerService(plan workerSelfCleanupPlan) (string, string, error) {
+	candidates := plan.ServiceCandidates
+	if len(candidates) == 0 && plan.DefaultServiceName != "" {
+		candidates = []string{plan.DefaultServiceName}
+	}
+	for _, serviceName := range candidates {
+		if !livelineWorkerServiceNameRE.MatchString(serviceName) {
+			continue
+		}
+		output, err := runCommand(15*time.Second, "systemctl", "cat", serviceName)
+		if err != nil {
+			continue
+		}
+		lowered := strings.ToLower(output)
+		if !strings.Contains(lowered, "liveline-worker") && !strings.Contains(lowered, "liveline") {
+			continue
+		}
+		servicePath := filepath.Join(transitSystemdDir, serviceName)
+		if serviceName == plan.DefaultServiceName && plan.DefaultServicePath != "" {
+			servicePath = plan.DefaultServicePath
+		}
+		if servicePath != filepath.Join(transitSystemdDir, serviceName) {
+			continue
+		}
+		return serviceName, servicePath, nil
+	}
+	return "", "", errors.New("no verifiable LiveLine Worker service candidate found")
+}
+
+func removeFixedFile(path string) error {
+	if path == "" || strings.Contains(path, "*") || strings.Contains(path, "..") {
+		return fmt.Errorf("refusing unsafe path %q", path)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func safeLiveLineXrayConfigPath(path string) bool {
+	if path == "" || strings.Contains(path, "*") || strings.Contains(path, "..") {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	return cleaned == managedXrayConfigPath || strings.HasPrefix(cleaned, managedXrayConfigDir+string(os.PathSeparator))
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func remoteCleanupFailureResult(cfg config, hostname string, request remoteCleanupRequest, items []any, commandErr error) map[string]any {
+	return map[string]any{
+		"cleanup_type":                       request.CleanupType,
+		"status":                             "failed",
+		"summary":                            "Protected remote cleanup failed; backend must keep system records.",
+		"redacted_error":                     compactWorkerFailureMessage(commandErr),
+		"remote_cleanup_performed":           true,
+		"system_record_delete_after_success": false,
+		"worker_version":                     workerVersion,
+		"hostname":                           hostname,
+		"role":                               cfg.Role,
+		"interface_name":                     cfg.InterfaceName,
+		"plans_count":                        len(request.Plans),
+		"cleanup_items":                      items,
+		"safety_boundary": []any{
+			"fixed cleanup allowlist only",
+			"no arbitrary shell accepted from API",
+			"no system record soft-delete on failure",
+			"no nodes.share_link read or modification",
+			"no cutover",
+		},
 	}
 }
 
@@ -1502,6 +2098,21 @@ func intPayload(payload map[string]any, key string) int {
 func boolPayload(payload map[string]any, key string) bool {
 	value, _ := payload[key].(bool)
 	return value
+}
+
+func stringListPayload(payload map[string]any, key string) []string {
+	raw, ok := payload[key].([]any)
+	if !ok {
+		return nil
+	}
+	values := []string{}
+	for _, item := range raw {
+		text := strings.TrimSpace(fmt.Sprint(item))
+		if text != "" {
+			values = append(values, text)
+		}
+	}
+	return values
 }
 
 func validTCPPort(port int) bool {

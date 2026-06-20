@@ -2593,7 +2593,11 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.90 Landing server node usability polish | Simplify landing VPS and direct node display/copy flow; no backend or production action |
 | Stage 3.3.91 Overview network status summary polish | Simplify overview page into network-build status summary and navigation; no backend or production action |
 | Stage 3.3.92 Network build UI polish complete record | Record completion of simplified network-build workflow and UI polish; no code or production action |
+| Stage 3.3.93 Network build final smoke test | Final smoke-test record for the simplified self-use network-build flow; no feature or production change |
+| Stage 3.3.94 Landing summary strip remove | Hide redundant landing-server top summary strip; UI-only cleanup, no backend or production action |
 | Stage 3.3.95 Resource list safe delete | Add safe delete buttons for transit servers, landing servers, nodes, and transit routes; soft-delete system records only, no remote cleanup |
+| Stage 3.3.96 Resource safe delete public smoke record | Record public-console smoke test for Stage 3.3.95 safe-delete buttons and confirmation dialogs; no delete executed |
+| Stage 3.3.97 Protected remote cleanup delete flow | Upgrade delete buttons to protected remote cleanup flows for nodes, servers, transit routes, and transit resources; cleanup succeeds before soft-delete |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

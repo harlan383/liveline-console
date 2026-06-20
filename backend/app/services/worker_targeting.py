@@ -18,7 +18,15 @@ MIN_TRANSIT_READONLY_PREFLIGHT_VERSION = "0.1.8-stage-3.3.68"
 MIN_TRANSIT_READONLY_PREFLIGHT_VERSION_KEY = (0, 1, 8, 3, 3, 68)
 MIN_TRANSIT_ROUTE_CREATE_VERSION = "0.1.20-stage-3.3.73"
 MIN_TRANSIT_ROUTE_CREATE_VERSION_KEY = (0, 1, 20, 3, 3, 73)
+MIN_REMOTE_CLEANUP_VERSION = "0.1.21-stage-3.3.97"
+MIN_REMOTE_CLEANUP_VERSION_KEY = (0, 1, 21, 3, 3, 97)
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+))?$")
+REMOTE_CLEANUP_COMMAND_TYPES = {
+    "cleanup_landing_node",
+    "cleanup_landing_server",
+    "cleanup_transit_route",
+    "cleanup_transit_resource",
+}
 
 
 @dataclass(frozen=True)
@@ -73,6 +81,8 @@ def minimum_worker_version_for_command(command_type: str | None) -> str:
         return MIN_TRANSIT_READONLY_PREFLIGHT_VERSION
     if command_type == "transit_route_create":
         return MIN_TRANSIT_ROUTE_CREATE_VERSION
+    if command_type in REMOTE_CLEANUP_COMMAND_TYPES:
+        return MIN_REMOTE_CLEANUP_VERSION
     return MIN_COMMAND_CHANNEL_VERSION
 
 
@@ -85,6 +95,8 @@ def minimum_worker_version_key_for_command(command_type: str | None) -> tuple[in
         return MIN_TRANSIT_READONLY_PREFLIGHT_VERSION_KEY
     if command_type == "transit_route_create":
         return MIN_TRANSIT_ROUTE_CREATE_VERSION_KEY
+    if command_type in REMOTE_CLEANUP_COMMAND_TYPES:
+        return MIN_REMOTE_CLEANUP_VERSION_KEY
     return MIN_COMMAND_CHANNEL_VERSION_KEY
 
 
