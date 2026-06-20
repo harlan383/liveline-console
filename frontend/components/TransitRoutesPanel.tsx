@@ -8,12 +8,12 @@ import {
   createTransitReadonlyPreflightCommand,
   createTransitWorkerBootstrap,
   createWorkerCommand,
-  deleteTransitResource,
-  deleteTransitRoute,
   exportTransitRouteCandidate,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
   regenerateTransitWorkerBootstrap,
+  remoteCleanupDeleteTransitResource,
+  remoteCleanupDeleteTransitRoute,
   requestReadonlyPreflightPlan,
   type CsrfResult,
   type NodeData,
@@ -133,20 +133,20 @@ function SafeDeleteModal({
           </button>
         </div>
         <div className="failure-box safe-delete-warning">
-          <strong>仅删除系统记录</strong>
+          <strong>真实远程清理</strong>
           <span>{description}</span>
         </div>
         <div className="server-delete-target">{targetLabel}</div>
         <label className="safe-delete-input">
-          输入 DELETE 后才能确认
-          <input value={confirmText} onChange={(event) => onConfirmTextChange(event.target.value)} placeholder="DELETE" />
+          输入 CONFIRM_REMOTE_DELETE 后才能创建远程清理任务
+          <input value={confirmText} onChange={(event) => onConfirmTextChange(event.target.value)} placeholder="CONFIRM_REMOTE_DELETE" />
         </label>
         <div className="modal-actions">
           <button className="secondary" type="button" onClick={onCancel}>
             取消
           </button>
-          <button className="danger" disabled={submitting || confirmText !== "DELETE"} type="button" onClick={onConfirm}>
-            确认删除
+          <button className="danger" disabled={submitting || confirmText !== "CONFIRM_REMOTE_DELETE"} type="button" onClick={onConfirm}>
+            确认远程清理并删除
           </button>
         </div>
       </div>
@@ -450,19 +450,19 @@ export function TransitServersPanel() {
   }
 
   async function submitDeleteResource() {
-    if (!selectedResource || deleteConfirmText !== "DELETE") {
+    if (!selectedResource || deleteConfirmText !== "CONFIRM_REMOTE_DELETE") {
       return;
     }
     setSubmitting(true);
-    setMessage("正在删除中转服务器系统记录；不会执行远程清理。");
+    setMessage("正在创建中转服务器远程清理任务；清理成功后才会软删除系统记录。");
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await deleteTransitResource(selectedResource.id, csrfToken);
+      const result = await remoteCleanupDeleteTransitResource(selectedResource.id, csrfToken);
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setMessage(result.data.message || "系统记录已删除；未执行远程清理。");
+      setMessage(`清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`);
       closeModal();
       await loadResources();
     } catch (error) {
@@ -573,7 +573,7 @@ export function TransitServersPanel() {
 
       {modalMode === "delete" && selectedResource ? (
         <SafeDeleteModal
-          title="删除中转服务器记录"
+          title="远程清理并删除中转服务器"
           targetLabel={`${selectedResource.name} / ${selectedResource.entry_host ?? "未填写 IP"}`}
           confirmText={deleteConfirmText}
           submitting={submitting}
@@ -582,8 +582,8 @@ export function TransitServersPanel() {
           onConfirm={() => void submitDeleteResource()}
           description={
             <>
-              这只会删除 LiveLine Console 中的中转服务器记录，不会 SSH 登录服务器，不会停止 socat，不会删除 Worker，不会修改防火墙。
-              如果该中转服务器下面还有中转链路，请先删除中转链路记录。
+              这会真实清理该中转服务器下所有中转链路的 socat 服务，并清理 transit Worker。该中转服务器将不再被 LiveLine Console 纳管。
+              清理成功后，中转链路记录和中转服务器记录会被软删除。不会修改防火墙、云安全组或云防火墙。
             </>
           }
         />
@@ -888,19 +888,19 @@ export function TransitRoutesPanel() {
   }
 
   async function submitDeleteRoute() {
-    if (!deleteRoute || deleteRouteConfirmText !== "DELETE") {
+    if (!deleteRoute || deleteRouteConfirmText !== "CONFIRM_REMOTE_DELETE") {
       return;
     }
     setCandidateLoading(true);
-    setMessage("正在删除中转链路系统记录；不会执行远程清理。");
+    setMessage("正在创建中转链路远程清理任务；清理成功后才会软删除系统记录。");
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await deleteTransitRoute(deleteRoute.id, csrfToken);
+      const result = await remoteCleanupDeleteTransitRoute(deleteRoute.id, csrfToken);
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setMessage(result.data.message || "系统记录已删除；未执行远程清理。");
+      setMessage(`清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`);
       closeDeleteRouteModal();
       setCandidateSummary(null);
       setCandidateExport(null);
@@ -1412,7 +1412,7 @@ export function TransitRoutesPanel() {
 
       {deleteRoute ? (
         <SafeDeleteModal
-          title="删除中转链路记录"
+          title="远程清理并删除中转链路"
           targetLabel={`${deleteRoute.name} / ${routeEntry(deleteRoute)} -> ${deleteRoute.target_host}:${deleteRoute.target_port}`}
           confirmText={deleteRouteConfirmText}
           submitting={candidateLoading}
@@ -1421,7 +1421,8 @@ export function TransitRoutesPanel() {
           onConfirm={() => void submitDeleteRoute()}
           description={
             <>
-              这只会删除 LiveLine Console 中的中转链路记录，不会停止香港中转机上的 socat，不会删除 systemd service，不会关闭端口，不会修改防火墙，不会 cutover。
+              这会真实停止并删除该中转链路对应的 socat 服务，入口端口会失效。清理成功后，中转链路记录会被软删除。
+              不会修改防火墙、云安全组、云防火墙，也不会 cutover。
             </>
           }
         />

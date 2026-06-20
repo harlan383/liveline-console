@@ -31,6 +31,12 @@ SENSITIVE_MARKERS = (
 SAFE_SENSITIVE_NAMED_CONFIRMATION_KEYS = {
     "no_node_share_link_change_confirmed",
 }
+REMOTE_CLEANUP_COMMAND_TYPES = {
+    "cleanup_landing_node",
+    "cleanup_landing_server",
+    "cleanup_transit_route",
+    "cleanup_transit_resource",
+}
 
 
 def now_utc() -> datetime:
@@ -82,6 +88,8 @@ def normalize_worker_command_result(command_type: str, result: Any) -> dict[str,
         return normalize_transit_readonly_preflight_result(result)
     if command_type == "transit_route_create":
         return normalize_transit_route_create_result(result)
+    if command_type in REMOTE_CLEANUP_COMMAND_TYPES:
+        return normalize_remote_cleanup_result(command_type, result)
     normalized = sanitize_value(result)
     if not isinstance(normalized, dict):
         raise ValueError("Worker command result normalization returned a non-object.")
@@ -185,6 +193,70 @@ def normalize_transit_route_create_result(result: dict[str, Any]) -> dict[str, A
         normalized["failed_check_names"] = failed_names
 
     return sanitize_value(normalized)
+
+
+def normalize_remote_cleanup_result(command_type: str, result: dict[str, Any]) -> dict[str, Any]:
+    status = _safe_result_text(result.get("status")) or "failed"
+    cleanup_type = _safe_result_text(result.get("cleanup_type")) or command_type
+    summary = _safe_result_text(result.get("summary")) or "Protected remote cleanup returned a result."
+    plans_count = _safe_result_int(result.get("plans_count"))
+    if plans_count is None:
+        plans_count = len(result.get("cleanup_items", [])) if isinstance(result.get("cleanup_items"), list) else None
+    normalized: dict[str, Any] = {
+        "cleanup_type": cleanup_type,
+        "status": status,
+        "summary": summary,
+        "remote_cleanup_performed": result.get("remote_cleanup_performed") is True,
+        "system_record_delete_after_success": result.get("system_record_delete_after_success") is True,
+        "worker_version": _safe_result_text(result.get("worker_version")),
+        "hostname": _safe_result_text(result.get("hostname")),
+        "role": _safe_result_text(result.get("role")),
+        "interface_name": _safe_result_text(result.get("interface_name")),
+        "plans_count": plans_count,
+        "cleanup_items": _normalize_remote_cleanup_items(result.get("cleanup_items")),
+        "worker_self_cleanup": _normalize_remote_cleanup_worker(result.get("worker_self_cleanup")),
+        "safety_boundary": _normalize_text_list(result.get("safety_boundary"))[:10],
+    }
+    if redacted_error := _safe_result_text(result.get("redacted_error")):
+        normalized["redacted_error"] = redacted_error
+    return sanitize_value(normalized)
+
+
+def _normalize_remote_cleanup_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in value[:MAX_TRANSIT_PREFLIGHT_CHECKS]:
+        if not isinstance(item, dict):
+            continue
+        items.append(
+            {
+                "type": _safe_result_text(item.get("type")),
+                "id": _safe_result_text(item.get("id")),
+                "service_name": _safe_result_text(item.get("service_name")),
+                "port": _safe_result_int(item.get("port")),
+                "status": _safe_result_text(item.get("status")),
+                "service_removed": item.get("service_removed") is True,
+                "port_stopped": item.get("port_stopped") is True,
+                "config_removed": item.get("config_removed") is True,
+                "detail": _safe_result_text(item.get("detail")),
+            }
+        )
+    return items
+
+
+def _normalize_remote_cleanup_worker(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "requested": value.get("requested") is True,
+        "scheduled": value.get("scheduled") is True,
+        "service_name": _safe_result_text(value.get("service_name")),
+        "binary_cleanup_scheduled": value.get("binary_cleanup_scheduled") is True,
+        "config_cleanup_scheduled": value.get("config_cleanup_scheduled") is True,
+        "delay_seconds": _safe_result_int(value.get("delay_seconds")),
+        "detail": _safe_result_text(value.get("detail")),
+    }
 
 
 def _normalize_transit_route_create_diagnostics(value: Any) -> dict[str, Any]:
@@ -477,6 +549,11 @@ def result_summary(command: WorkerCommand) -> str | None:
         listen_port = result.get("planned_listen_port") or "-"
         target_port = result.get("landing_target_port") or "-"
         return f"transit_route_create mode={mode} status={status} listen_port={listen_port} target_port={target_port}"
+    if command.command_type in REMOTE_CLEANUP_COMMAND_TYPES:
+        cleanup_type = result.get("cleanup_type") or command.command_type
+        status = result.get("status") or "-"
+        plans_count = result.get("plans_count")
+        return f"{cleanup_type} status={status} cleanup_items={plans_count or '-'}"
     return "命令已返回脱敏结果。"
 
 

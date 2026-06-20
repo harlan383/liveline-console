@@ -8,12 +8,12 @@ import {
   createLandingNodeExecution,
   createLandingNodePlan,
   createWorkerCommand,
-  deleteNodeRecord,
-  deleteVpsServer,
   createVpsWorkerBootstrap,
   createWorkerToken,
   exportNodeShareLink,
   listWorkerCommands,
+  remoteCleanupDeleteNode,
+  remoteCleanupDeleteVpsServer,
   type LandingNodePlanResponse,
   type LandingNodeCreateResponse,
   type CsrfResult,
@@ -745,21 +745,21 @@ export function ServerManagementPanel() {
   }
 
   async function submitDelete() {
-    if (!selectedServer || deleteConfirmText !== "DELETE") {
+    if (!selectedServer || deleteConfirmText !== "CONFIRM_REMOTE_DELETE") {
       return;
     }
     setSubmitting(true);
-    setMessage("正在删除服务器系统记录。");
+    setMessage("正在创建落地服务器远程清理任务；清理成功后才会软删除系统记录。");
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await deleteVpsServer(selectedServer.id, csrfToken);
+      const result = await remoteCleanupDeleteVpsServer(selectedServer.id, csrfToken);
 
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
 
-      setMessage(result.data.message || "系统记录已删除；未执行远程清理。");
+      setMessage(`清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`);
       closeModal();
       await loadServers();
     } catch (error) {
@@ -770,21 +770,21 @@ export function ServerManagementPanel() {
   }
 
   async function submitDeleteNode() {
-    if (!selectedNodeForDelete || deleteConfirmText !== "DELETE") {
+    if (!selectedNodeForDelete || deleteConfirmText !== "CONFIRM_REMOTE_DELETE") {
       return;
     }
     setSubmitting(true);
-    setMessage("正在删除节点系统记录；不会停止远程 Xray。");
+    setMessage("正在创建节点远程清理任务；清理成功后才会软删除系统记录。");
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await deleteNodeRecord(selectedNodeForDelete.id, csrfToken);
+      const result = await remoteCleanupDeleteNode(selectedNodeForDelete.id, csrfToken);
 
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
 
-      setMessage(result.data.message || "系统记录已删除；未执行远程清理。");
+      setMessage(`清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`);
       closeModal();
       await loadServers();
     } catch (error) {
@@ -1123,8 +1123,8 @@ export function ServerManagementPanel() {
     const titleMap: Record<Exclude<ModalMode, null>, string> = {
       add: "添加落地服务器",
       edit: "编辑落地服务器",
-      delete: "删除落地服务器",
-      deleteNode: "删除节点记录",
+      delete: "远程清理并删除落地服务器",
+      deleteNode: "远程清理并删除节点",
       nodePlan: "创建落地节点计划",
       workerCommand: "重新生成 Worker 安装命令",
     };
@@ -1289,21 +1289,21 @@ export function ServerManagementPanel() {
     return (
       <div className="delete-confirm">
         <div className="failure-box">
-          <strong>危险操作二次确认</strong>
-          <span>这只会删除 LiveLine Console 中的落地服务器记录，不会 SSH 登录 VPS。</span>
-          <span>不会停止 Xray，不会删除 Xray 配置，不会关闭节点端口，不会修改云安全组或防火墙。</span>
-          <span>如果该落地服务器下还有直连节点，请先删除节点记录。</span>
+          <strong>真实远程清理</strong>
+          <span>这会真实清理该落地服务器下所有节点的 Xray 服务，并清理 landing Worker。</span>
+          <span>该 VPS 将不再被 LiveLine Console 纳管。清理成功后，节点记录和落地服务器记录会被软删除。</span>
+          <span>不会修改云安全组、云防火墙或服务器防火墙。</span>
         </div>
         <div className="server-delete-target">
           {selectedServer.name} / {selectedServer.ip} / 下级节点 {selectedServer.nodes.length} 个
         </div>
         <label className="safe-delete-input">
-          输入 DELETE 后才能确认
-          <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} placeholder="DELETE" />
+          输入 CONFIRM_REMOTE_DELETE 后才能创建远程清理任务
+          <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} placeholder="CONFIRM_REMOTE_DELETE" />
         </label>
         <div className="modal-actions">
-          <button className="danger" disabled={submitting || deleteConfirmText !== "DELETE"} type="button" onClick={() => void submitDelete()}>
-            确认删除
+          <button className="danger" disabled={submitting || deleteConfirmText !== "CONFIRM_REMOTE_DELETE"} type="button" onClick={() => void submitDelete()}>
+            确认远程清理并删除
           </button>
           <button className="secondary" type="button" onClick={closeModal}>
             取消
@@ -1320,21 +1320,20 @@ export function ServerManagementPanel() {
     return (
       <div className="delete-confirm">
         <div className="failure-box">
-          <strong>危险操作二次确认</strong>
-          <span>这只会删除 / 软删除 LiveLine Console 中的节点记录，不会停止远程 Xray。</span>
-          <span>不会删除远程 Xray 配置，不会关闭端口，不会清空或导出完整节点链接。</span>
-          <span>远程 Xray 不会停止，客户端可能仍能继续使用该节点。</span>
+          <strong>真实远程清理</strong>
+          <span>这会真实停止并删除该节点的远程 Xray 服务，客户端已导入的该节点会失效。</span>
+          <span>清理成功后，系统记录会被软删除。不会导出、打印或修改完整节点链接。</span>
         </div>
         <div className="server-delete-target">
           {selectedNodeForDelete.name} / {nodeEntryLabel(selectedNodeForDelete, selectedServer.ip)}
         </div>
         <label className="safe-delete-input">
-          输入 DELETE 后才能确认
-          <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} placeholder="DELETE" />
+          输入 CONFIRM_REMOTE_DELETE 后才能创建远程清理任务
+          <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} placeholder="CONFIRM_REMOTE_DELETE" />
         </label>
         <div className="modal-actions">
-          <button className="danger" disabled={submitting || deleteConfirmText !== "DELETE"} type="button" onClick={() => void submitDeleteNode()}>
-            确认删除
+          <button className="danger" disabled={submitting || deleteConfirmText !== "CONFIRM_REMOTE_DELETE"} type="button" onClick={() => void submitDeleteNode()}>
+            确认远程清理并删除
           </button>
           <button className="secondary" type="button" onClick={closeModal}>
             取消

@@ -1347,3 +1347,88 @@ func largeTransitRouteCreateRealFailedResult() map[string]any {
 	}
 	return result
 }
+
+func TestRemoteCleanupPayloadRejectsUnsafeShellKeys(t *testing.T) {
+	command := workerCommand{
+		ID:          "cleanup-command",
+		CommandType: "cleanup_transit_route",
+		Payload: map[string]any{
+			"stage":                              remoteCleanupStage,
+			"cleanup_type":                       "cleanup_transit_route",
+			"target_id":                          "route-1",
+			"remote_cleanup_required":            true,
+			"system_record_delete_after_success": true,
+			"confirmation":                       remoteCleanupConfirmation,
+			"plans": []any{
+				map[string]any{
+					"route_id":          "route-1",
+					"listen_port":       23843,
+					"forwarding_method": "socat",
+					"service_name":      "liveline-socat-23843.service",
+					"service_path":      "/etc/systemd/system/liveline-socat-23843.service",
+					"shell":             "rm -rf /",
+				},
+			},
+		},
+	}
+	if _, err := parseRemoteCleanupRequest(command); err == nil {
+		t.Fatal("parseRemoteCleanupRequest accepted unsafe shell key")
+	}
+}
+
+func TestValidateCleanupSocatPlanRequiresLivelineService(t *testing.T) {
+	good := remoteCleanupPlan{
+		RouteID:          "route-1",
+		ListenPort:       23843,
+		ForwardingMethod: "socat",
+		ServiceName:      "liveline-socat-23843.service",
+		ServicePath:      "/etc/systemd/system/liveline-socat-23843.service",
+	}
+	if err := validateCleanupSocatPlan(good); err != nil {
+		t.Fatalf("validateCleanupSocatPlan(good) returned error: %v", err)
+	}
+	bad := good
+	bad.ServiceName = "socat.service"
+	bad.ServicePath = "/etc/systemd/system/socat.service"
+	if err := validateCleanupSocatPlan(bad); err == nil {
+		t.Fatal("validateCleanupSocatPlan accepted non-LiveLine service")
+	}
+}
+
+func TestValidLiveLineXrayServiceName(t *testing.T) {
+	for _, service := range []string{"liveline-xray.service", "liveline-xray-27939.service", "liveline-xray-a71472c6f62c.service"} {
+		if !validLiveLineXrayServiceName(service) {
+			t.Fatalf("validLiveLineXrayServiceName(%q) = false", service)
+		}
+	}
+	for _, service := range []string{"xray.service", "liveline-xray", "../liveline-xray.service", "liveline-xray.service/extra"} {
+		if validLiveLineXrayServiceName(service) {
+			t.Fatalf("validLiveLineXrayServiceName(%q) = true", service)
+		}
+	}
+}
+
+func TestSafeLiveLineXrayConfigPathRejectsBroadDirectories(t *testing.T) {
+	for _, path := range []string{"/", "/opt", "/usr", "/usr/local/bin", "/etc", "/tmp/liveline-xray/config.json", "/opt/liveline-xray/../x"} {
+		if safeLiveLineXrayConfigPath(path) {
+			t.Fatalf("safeLiveLineXrayConfigPath(%q) = true", path)
+		}
+	}
+	if !safeLiveLineXrayConfigPath("/opt/liveline-xray/config/config.json") {
+		t.Fatal("safeLiveLineXrayConfigPath rejected managed liveline config path")
+	}
+}
+
+func TestRemoteCleanupFailureResultKeepsSystemRecordBoundary(t *testing.T) {
+	request := remoteCleanupRequest{
+		CleanupType: "cleanup_transit_route",
+		Plans:       []remoteCleanupPlan{{RouteID: "route-1"}},
+	}
+	result := remoteCleanupFailureResult(config{Role: "transit", InterfaceName: "eth0"}, "host", request, nil, errors.New("service mismatch"))
+	if result["status"] != "failed" {
+		t.Fatalf("status = %#v, want failed", result["status"])
+	}
+	if result["system_record_delete_after_success"] != false {
+		t.Fatal("failure result allowed system record delete")
+	}
+}

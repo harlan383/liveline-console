@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models.vps_server import VpsServer
 from app.schemas.common import error_response, success_response
 from app.schemas.landing_node_plan import LandingNodeCreateRequest, LandingNodePlanRequest
+from app.schemas.remote_cleanup import RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
 from app.services.landing_node_create import (
     APPROVED_FORMAL_LISTEN_PORT,
@@ -28,6 +29,7 @@ from app.services.worker_binding import (
     worker_summary_fields,
 )
 from app.services.worker_commands import serialize_worker_command
+from app.services.remote_cleanup_delete import RemoteCleanupError, create_landing_server_cleanup_command
 
 router = APIRouter()
 
@@ -536,4 +538,52 @@ def delete_vps(
             "message": "系统记录已删除；未执行远程清理。",
         },
         "系统记录已删除；未执行远程清理。",
+    )
+
+
+@router.post("/{vps_id}/remote-cleanup-delete")
+def remote_cleanup_delete_vps(
+    vps_id: str,
+    payload: RemoteCleanupDeleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    vps = db.get(VpsServer, vps_id)
+    if not vps or vps.status == "deleted":
+        return error_response(404, "VPS_NOT_FOUND", "服务器记录不存在。")
+
+    try:
+        command, worker = create_landing_server_cleanup_command(db, vps)
+        record_audit(
+            db,
+            admin_id=session.admin_id,
+            action="create_cleanup_landing_server_command",
+            result="success",
+            request=request,
+            resource_type="vps",
+            resource_id=vps.id,
+        )
+        db.commit()
+        db.refresh(command)
+    except RemoteCleanupError as exc:
+        db.rollback()
+        return error_response(exc.status_code, exc.code, exc.message)
+
+    return success_response(
+        {
+            "command_id": command.id,
+            "cleanup_type": "cleanup_landing_server",
+            "status": "queued",
+            "remote_cleanup_required": True,
+            "system_record_delete_after_success": True,
+            "command": serialize_worker_command(command, worker=worker),
+            "message": "远程清理任务已创建，清理成功后将软删除系统记录。",
+        },
+        "远程清理任务已创建，清理成功后将软删除系统记录。",
     )

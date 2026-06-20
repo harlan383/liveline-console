@@ -12,6 +12,7 @@ from app.models.transit_resource import TransitResource
 from app.models.transit_route import TransitRoute
 from app.models.worker import Worker, WorkerToken
 from app.schemas.common import error_response, success_response
+from app.schemas.remote_cleanup import RemoteCleanupDeleteRequest
 from app.schemas.transit_resource import (
     PROTOCOL_HINTS,
     RESOURCE_STATUSES,
@@ -20,6 +21,7 @@ from app.schemas.transit_resource import (
     TransitResourceUpdate,
 )
 from app.services.auth_service import record_audit
+from app.services.remote_cleanup_delete import RemoteCleanupError, create_transit_resource_cleanup_command
 from app.services.worker_binding import (
     WORKER_PENDING_STATUS,
     WorkerPublicUrlError,
@@ -32,6 +34,7 @@ from app.services.worker_binding import (
     worker_runtime_status,
     worker_summary_fields,
 )
+from app.services.worker_commands import serialize_worker_command
 
 router = APIRouter()
 
@@ -523,4 +526,52 @@ def delete_transit_resource(
             "message": "系统记录已删除；未执行远程清理。",
         },
         "系统记录已删除；未执行远程清理。",
+    )
+
+
+@router.post("/{resource_id}/remote-cleanup-delete")
+def remote_cleanup_delete_transit_resource(
+    resource_id: str,
+    payload: RemoteCleanupDeleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    resource = get_transit_resource_or_error(db, resource_id)
+    if not resource:
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
+
+    try:
+        command, worker = create_transit_resource_cleanup_command(db, resource)
+        record_audit(
+            db,
+            admin_id=session.admin_id,
+            action="create_cleanup_transit_resource_command",
+            result="success",
+            request=request,
+            resource_type="transit_resource",
+            resource_id=resource.id,
+        )
+        db.commit()
+        db.refresh(command)
+    except RemoteCleanupError as exc:
+        db.rollback()
+        return error_response(exc.status_code, exc.code, exc.message)
+
+    return success_response(
+        {
+            "command_id": command.id,
+            "cleanup_type": "cleanup_transit_resource",
+            "status": "queued",
+            "remote_cleanup_required": True,
+            "system_record_delete_after_success": True,
+            "command": serialize_worker_command(command, worker=worker),
+            "message": "远程清理任务已创建，清理成功后将软删除系统记录。",
+        },
+        "远程清理任务已创建，清理成功后将软删除系统记录。",
     )

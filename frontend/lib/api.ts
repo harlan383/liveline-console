@@ -428,6 +428,16 @@ export type SafeDeleteResult = {
 
 export type VpsServerDeleteResult = SafeDeleteResult;
 
+export type RemoteCleanupDeleteResult = {
+  command_id: string;
+  cleanup_type: string;
+  status: string;
+  remote_cleanup_required: boolean;
+  system_record_delete_after_success: boolean;
+  command: WorkerCommandData;
+  message: string;
+};
+
 export type WorkerRole = "landing" | "transit";
 
 export type WorkerTokenCreateRequest = {
@@ -516,7 +526,11 @@ export type WorkerCommandType =
   | "landing_preflight"
   | "landing_node_create"
   | "transit_readonly_preflight"
-  | "transit_route_create";
+  | "transit_route_create"
+  | "cleanup_landing_node"
+  | "cleanup_landing_server"
+  | "cleanup_transit_route"
+  | "cleanup_transit_resource";
 
 export type WorkerCommandData = {
   id: string;
@@ -742,6 +756,17 @@ export async function deleteTransitResource(
   });
 }
 
+export async function remoteCleanupDeleteTransitResource(
+  resourceId: string,
+  csrfToken: string,
+): Promise<ApiResponse<RemoteCleanupDeleteResult>> {
+  return apiFetch<RemoteCleanupDeleteResult>(`/api/transit-resources/${resourceId}/remote-cleanup-delete`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ confirm: "CONFIRM_REMOTE_DELETE" }),
+  });
+}
+
 export async function deleteVpsServer(
   serverId: string,
   csrfToken: string,
@@ -749,6 +774,17 @@ export async function deleteVpsServer(
   return apiFetch<SafeDeleteResult>(`/api/vps/${serverId}?confirm=true`, {
     method: "DELETE",
     headers: { "X-CSRF-Token": csrfToken },
+  });
+}
+
+export async function remoteCleanupDeleteVpsServer(
+  serverId: string,
+  csrfToken: string,
+): Promise<ApiResponse<RemoteCleanupDeleteResult>> {
+  return apiFetch<RemoteCleanupDeleteResult>(`/api/vps/${serverId}/remote-cleanup-delete`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ confirm: "CONFIRM_REMOTE_DELETE" }),
   });
 }
 
@@ -762,6 +798,17 @@ export async function deleteNodeRecord(
   });
 }
 
+export async function remoteCleanupDeleteNode(
+  nodeId: string,
+  csrfToken: string,
+): Promise<ApiResponse<RemoteCleanupDeleteResult>> {
+  return apiFetch<RemoteCleanupDeleteResult>(`/api/nodes/${nodeId}/remote-cleanup-delete`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ confirm: "CONFIRM_REMOTE_DELETE" }),
+  });
+}
+
 export async function deleteTransitRoute(
   routeId: string,
   csrfToken: string,
@@ -769,5 +816,16 @@ export async function deleteTransitRoute(
   return apiFetch<SafeDeleteResult>(`/api/transit-routes/${routeId}?confirm=true`, {
     method: "DELETE",
     headers: { "X-CSRF-Token": csrfToken },
+  });
+}
+
+export async function remoteCleanupDeleteTransitRoute(
+  routeId: string,
+  csrfToken: string,
+): Promise<ApiResponse<RemoteCleanupDeleteResult>> {
+  return apiFetch<RemoteCleanupDeleteResult>(`/api/transit-routes/${routeId}/remote-cleanup-delete`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ confirm: "CONFIRM_REMOTE_DELETE" }),
   });
 }

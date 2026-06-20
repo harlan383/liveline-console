@@ -9,8 +9,11 @@ from app.api.deps import auth_error, csrf_error, csrf_valid, require_admin_sessi
 from app.db.session import get_db
 from app.models.node import Node
 from app.schemas.common import error_response, success_response
+from app.schemas.remote_cleanup import RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
 from app.services.redaction import mask_identifier, mask_share_link
+from app.services.remote_cleanup_delete import RemoteCleanupError, create_landing_node_cleanup_command
+from app.services.worker_commands import serialize_worker_command
 
 router = APIRouter()
 
@@ -138,6 +141,54 @@ def delete_node(
             "message": "系统记录已删除；未执行远程清理。",
         },
         "系统记录已删除；未执行远程清理。",
+    )
+
+
+@router.post("/{node_id}/remote-cleanup-delete")
+def remote_cleanup_delete_node(
+    node_id: str,
+    payload: RemoteCleanupDeleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    node = db.get(Node, node_id)
+    if not node or node.deleted_at is not None:
+        return error_response(404, "NODE_NOT_FOUND", "节点不存在。")
+
+    try:
+        command, worker = create_landing_node_cleanup_command(db, node)
+        record_audit(
+            db,
+            admin_id=session.admin_id,
+            action="create_cleanup_landing_node_command",
+            result="success",
+            request=request,
+            resource_type="node",
+            resource_id=node.id,
+        )
+        db.commit()
+        db.refresh(command)
+    except RemoteCleanupError as exc:
+        db.rollback()
+        return error_response(exc.status_code, exc.code, exc.message)
+
+    return success_response(
+        {
+            "command_id": command.id,
+            "cleanup_type": "cleanup_landing_node",
+            "status": "queued",
+            "remote_cleanup_required": True,
+            "system_record_delete_after_success": True,
+            "command": serialize_worker_command(command, worker=worker),
+            "message": "远程清理任务已创建，清理成功后将软删除系统记录。",
+        },
+        "远程清理任务已创建，清理成功后将软删除系统记录。",
     )
 
 
