@@ -1,0 +1,8 @@
+/*
+ * Stage 3.3.94 UI-only cleanup.
+ * Hide the redundant landing-server summary strip from the landing server page.
+ * This does not change API calls, database state, node links, Worker commands, or runtime server behavior.
+ */
+.server-management-panel .landing-status-strip {
+  display: none;
+}
