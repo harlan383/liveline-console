@@ -418,13 +418,15 @@ export type VpsServerUpdateResult = {
   ssh_status_reset: boolean;
 };
 
-export type VpsServerDeleteResult = {
-  deleted_server_id: string;
-  affected_nodes: number;
-  system_record_only: boolean;
-  remote_cleanup_performed: boolean;
+export type SafeDeleteResult = {
+  id: string;
+  deleted: boolean;
+  delete_mode: "soft_delete" | string;
+  remote_action_performed: boolean;
   message: string;
 };
+
+export type VpsServerDeleteResult = SafeDeleteResult;
 
 export type WorkerRole = "landing" | "transit";
 
@@ -727,5 +729,45 @@ export async function exportNodeShareLink(
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify({ confirm_export: true, reason }),
+  });
+}
+
+export async function deleteTransitResource(
+  resourceId: string,
+  csrfToken: string,
+): Promise<ApiResponse<SafeDeleteResult>> {
+  return apiFetch<SafeDeleteResult>(`/api/transit-resources/${resourceId}?confirm=true`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+}
+
+export async function deleteVpsServer(
+  serverId: string,
+  csrfToken: string,
+): Promise<ApiResponse<SafeDeleteResult>> {
+  return apiFetch<SafeDeleteResult>(`/api/vps/${serverId}?confirm=true`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+}
+
+export async function deleteNodeRecord(
+  nodeId: string,
+  csrfToken: string,
+): Promise<ApiResponse<SafeDeleteResult>> {
+  return apiFetch<SafeDeleteResult>(`/api/nodes/${nodeId}?confirm=true`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+}
+
+export async function deleteTransitRoute(
+  routeId: string,
+  csrfToken: string,
+): Promise<ApiResponse<SafeDeleteResult>> {
+  return apiFetch<SafeDeleteResult>(`/api/transit-routes/${routeId}?confirm=true`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": csrfToken },
   });
 }

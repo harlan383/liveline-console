@@ -1361,6 +1361,25 @@ textarea {
   gap: 14px;
 }
 
+.safe-delete-modal {
+  width: min(680px, calc(100vw - 44px));
+}
+
+.safe-delete-warning span {
+  line-height: 1.6;
+}
+
+.safe-delete-input {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.safe-delete-input input {
+  letter-spacing: 0;
+}
+
 .server-delete-target {
   background: var(--panel-soft);
   border: 1px solid var(--line);

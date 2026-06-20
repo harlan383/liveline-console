@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
@@ -506,17 +504,13 @@ def delete_vps(
     if not vps or vps.status == "deleted":
         return error_response(404, "VPS_NOT_FOUND", "服务器记录不存在。")
 
-    deleted_at = datetime.now(UTC)
-    affected_nodes = 0
-    for node in vps.nodes:
-        if node.deleted_at is None:
-            node.status = "deleted"
-            node.service_status = "unknown"
-            node.connectivity_status = "unknown"
-            node.last_sync_status = "server_record_deleted"
-            node.deleted_at = deleted_at
-            db.add(node)
-            affected_nodes += 1
+    active_nodes = [node for node in vps.nodes if node.deleted_at is None]
+    if active_nodes:
+        return error_response(
+            409,
+            "VPS_HAS_ACTIVE_NODES",
+            "该落地服务器下仍有直连节点，请先删除节点记录。",
+        )
 
     vps.status = "deleted"
     vps.last_ssh_status = "unchecked"
@@ -535,11 +529,11 @@ def delete_vps(
 
     return success_response(
         {
-            "deleted_server_id": vps.id,
-            "affected_nodes": affected_nodes,
-            "system_record_only": True,
-            "remote_cleanup_performed": False,
-            "message": "仅删除本系统记录；不会远程清理 Xray、Worker 或节点配置。",
+            "id": vps.id,
+            "deleted": True,
+            "delete_mode": "soft_delete",
+            "remote_action_performed": False,
+            "message": "系统记录已删除；未执行远程清理。",
         },
-        "服务器系统记录已删除。",
+        "系统记录已删除；未执行远程清理。",
     )

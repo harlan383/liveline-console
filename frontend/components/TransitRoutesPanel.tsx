@@ -8,6 +8,8 @@ import {
   createTransitReadonlyPreflightCommand,
   createTransitWorkerBootstrap,
   createWorkerCommand,
+  deleteTransitResource,
+  deleteTransitRoute,
   exportTransitRouteCandidate,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
@@ -99,6 +101,56 @@ function SafetyConfirmRow({
       <input checked={checked} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
       <span>{children}</span>
     </label>
+  );
+}
+
+function SafeDeleteModal({
+  title,
+  description,
+  targetLabel,
+  confirmText,
+  submitting,
+  onCancel,
+  onConfirmTextChange,
+  onConfirm,
+}: {
+  title: string;
+  description: ReactNode;
+  targetLabel: string;
+  confirmText: string;
+  submitting: boolean;
+  onCancel: () => void;
+  onConfirmTextChange: (value: string) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal-card safe-delete-modal" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="modal-header">
+          <h3>{title}</h3>
+          <button className="ghost-button" type="button" onClick={onCancel}>
+            取消
+          </button>
+        </div>
+        <div className="failure-box safe-delete-warning">
+          <strong>仅删除系统记录</strong>
+          <span>{description}</span>
+        </div>
+        <div className="server-delete-target">{targetLabel}</div>
+        <label className="safe-delete-input">
+          输入 DELETE 后才能确认
+          <input value={confirmText} onChange={(event) => onConfirmTextChange(event.target.value)} placeholder="DELETE" />
+        </label>
+        <div className="modal-actions">
+          <button className="secondary" type="button" onClick={onCancel}>
+            取消
+          </button>
+          <button className="danger" disabled={submitting || confirmText !== "DELETE"} type="button" onClick={onConfirm}>
+            确认删除
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -222,11 +274,12 @@ export function TransitServersPanel() {
   const [resources, setResources] = useState<TransitResourceData[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("中转服务器页面只管理 Worker 接入资源；不会执行旧 SSH/RQ 检测或安装。");
-  const [modalMode, setModalMode] = useState<"add" | "edit" | "install" | null>(null);
+  const [modalMode, setModalMode] = useState<"add" | "edit" | "install" | "delete" | null>(null);
   const [selectedResource, setSelectedResource] = useState<TransitResourceData | null>(null);
   const [bootstrapForm, setBootstrapForm] = useState<TransitWorkerBootstrapFormState>(emptyBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -263,6 +316,7 @@ export function TransitServersPanel() {
     setSelectedResource(null);
     setBootstrapForm(emptyBootstrapForm);
     setWorkerTokenResult(null);
+    setDeleteConfirmText("");
   }
 
   function openAdd() {
@@ -291,6 +345,12 @@ export function TransitServersPanel() {
     });
     setWorkerTokenResult(null);
     setModalMode("install");
+  }
+
+  function openDeleteResource(resource: TransitResourceData) {
+    setSelectedResource(resource);
+    setDeleteConfirmText("");
+    setModalMode("delete");
   }
 
   async function submitWorkerBootstrap(event: FormEvent<HTMLFormElement>) {
@@ -389,6 +449,29 @@ export function TransitServersPanel() {
     }
   }
 
+  async function submitDeleteResource() {
+    if (!selectedResource || deleteConfirmText !== "DELETE") {
+      return;
+    }
+    setSubmitting(true);
+    setMessage("正在删除中转服务器系统记录；不会执行远程清理。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await deleteTransitResource(selectedResource.id, csrfToken);
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setMessage(result.data.message || "系统记录已删除；未执行远程清理。");
+      closeModal();
+      await loadResources();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除中转服务器失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <section className="panel wide">
       <div className="status-row">
@@ -459,8 +542,8 @@ export function TransitServersPanel() {
                       >
                         Worker 检查
                       </button>
-                      <button className="secondary" disabled type="button" title="安全删除需要后续 Worker 清理阶段。">
-                        删除待开放
+                      <button className="danger" type="button" onClick={() => openDeleteResource(resource)}>
+                        删除
                       </button>
                     </div>
                   </div>
@@ -488,7 +571,25 @@ export function TransitServersPanel() {
         </button>
       </div>
 
-      {modalMode ? (
+      {modalMode === "delete" && selectedResource ? (
+        <SafeDeleteModal
+          title="删除中转服务器记录"
+          targetLabel={`${selectedResource.name} / ${selectedResource.entry_host ?? "未填写 IP"}`}
+          confirmText={deleteConfirmText}
+          submitting={submitting}
+          onCancel={closeModal}
+          onConfirmTextChange={setDeleteConfirmText}
+          onConfirm={() => void submitDeleteResource()}
+          description={
+            <>
+              这只会删除 LiveLine Console 中的中转服务器记录，不会 SSH 登录服务器，不会停止 socat，不会删除 Worker，不会修改防火墙。
+              如果该中转服务器下面还有中转链路，请先删除中转链路记录。
+            </>
+          }
+        />
+      ) : null}
+
+      {modalMode && modalMode !== "delete" ? (
         <div className="modal-backdrop" role="presentation">
           <div className="modal-card" role="dialog" aria-modal="true" aria-label="中转服务器操作">
             <div className="modal-header">
@@ -602,6 +703,8 @@ export function TransitRoutesPanel() {
   const [candidateCopyFallbackRequired, setCandidateCopyFallbackRequired] = useState(false);
   const [candidateExportModalOpen, setCandidateExportModalOpen] = useState(false);
   const [candidateExportRouteId, setCandidateExportRouteId] = useState("");
+  const [deleteRouteId, setDeleteRouteId] = useState("");
+  const [deleteRouteConfirmText, setDeleteRouteConfirmText] = useState("");
   const [advancedTransitOpsOpen, setAdvancedTransitOpsOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createPreviewForm, setCreatePreviewForm] = useState<TransitRouteCreatePreviewFormState>(emptyRouteCreatePreviewForm);
@@ -621,6 +724,7 @@ export function TransitRoutesPanel() {
     [routes],
   );
   const candidateExportRoute = routes.find((route) => route.id === candidateExportRouteId) ?? null;
+  const deleteRoute = routes.find((route) => route.id === deleteRouteId) ?? null;
   const selectedResource = selectableResources.find((resource) => resource.id === draft.transitResourceId) ?? selectableResources[0] ?? null;
   const selectedNode = activeNodes.find((node) => node.id === draft.landingNodeId) ?? activeNodes[0] ?? null;
   const createPreviewResource =
@@ -770,6 +874,42 @@ export function TransitRoutesPanel() {
     setCandidateExport(null);
     setCandidateCopyFallbackRequired(false);
     setCandidateMessage("临时导出只用于手动导入测试；不会写入数据库、修改 nodes.share_link 或 cutover。");
+  }
+
+  function openDeleteRoute(routeId: string) {
+    setDeleteRouteId(routeId);
+    setDeleteRouteConfirmText("");
+    setMessage("删除中转链路只会删除系统记录；不会停止 socat 或关闭端口。");
+  }
+
+  function closeDeleteRouteModal() {
+    setDeleteRouteId("");
+    setDeleteRouteConfirmText("");
+  }
+
+  async function submitDeleteRoute() {
+    if (!deleteRoute || deleteRouteConfirmText !== "DELETE") {
+      return;
+    }
+    setCandidateLoading(true);
+    setMessage("正在删除中转链路系统记录；不会执行远程清理。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await deleteTransitRoute(deleteRoute.id, csrfToken);
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setMessage(result.data.message || "系统记录已删除；未执行远程清理。");
+      closeDeleteRouteModal();
+      setCandidateSummary(null);
+      setCandidateExport(null);
+      await loadData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除中转链路失败。");
+    } finally {
+      setCandidateLoading(false);
+    }
   }
 
   function closeCandidateExportModal() {
@@ -1100,6 +1240,9 @@ export function TransitRoutesPanel() {
                       >
                         详情
                       </button>
+                      <button className="danger compact" disabled={candidateLoading} type="button" onClick={() => openDeleteRoute(route.id)}>
+                        删除
+                      </button>
                     </div>
                   </div>
 
@@ -1266,6 +1409,23 @@ export function TransitRoutesPanel() {
       </details>
 
       <p className="message">{message}</p>
+
+      {deleteRoute ? (
+        <SafeDeleteModal
+          title="删除中转链路记录"
+          targetLabel={`${deleteRoute.name} / ${routeEntry(deleteRoute)} -> ${deleteRoute.target_host}:${deleteRoute.target_port}`}
+          confirmText={deleteRouteConfirmText}
+          submitting={candidateLoading}
+          onCancel={closeDeleteRouteModal}
+          onConfirmTextChange={setDeleteRouteConfirmText}
+          onConfirm={() => void submitDeleteRoute()}
+          description={
+            <>
+              这只会删除 LiveLine Console 中的中转链路记录，不会停止香港中转机上的 socat，不会删除 systemd service，不会关闭端口，不会修改防火墙，不会 cutover。
+            </>
+          }
+        />
+      ) : null}
 
       {candidateExportModalOpen ? (
         <div className="modal-backdrop">

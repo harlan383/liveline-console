@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -89,6 +91,54 @@ def get_node(node_id: str, request: Request, db: Session = Depends(get_db)):
         return error_response(404, "NODE_NOT_FOUND", "节点不存在。")
 
     return success_response(serialize_node(node, include_share_link=False), "ok")
+
+
+@router.delete("/{node_id}")
+def delete_node(
+    node_id: str,
+    request: Request,
+    confirm: bool = False,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+    if confirm is not True:
+        return error_response(400, "CONFIRMATION_REQUIRED", "请确认删除节点记录。")
+
+    node = db.get(Node, node_id)
+    if not node or node.deleted_at is not None:
+        return error_response(404, "NODE_NOT_FOUND", "节点不存在。")
+
+    node.status = "deleted"
+    node.service_status = "unknown"
+    node.connectivity_status = "unknown"
+    node.last_sync_status = "system_record_deleted"
+    node.deleted_at = datetime.now(UTC)
+    db.add(node)
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="delete_node_record",
+        result="success",
+        request=request,
+        resource_type="node",
+        resource_id=node.id,
+    )
+    db.commit()
+
+    return success_response(
+        {
+            "id": node.id,
+            "deleted": True,
+            "delete_mode": "soft_delete",
+            "remote_action_performed": False,
+            "message": "系统记录已删除；未执行远程清理。",
+        },
+        "系统记录已删除；未执行远程清理。",
+    )
 
 
 @router.post("/{node_id}/share-link/export")
