@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import auth_error, csrf_error, csrf_valid, require_admin_session
 from app.db.session import get_db
 from app.models.transit_resource import TransitResource
+from app.models.transit_route import TransitRoute
 from app.models.worker import Worker, WorkerToken
 from app.schemas.common import error_response, success_response
 from app.schemas.transit_resource import (
@@ -464,3 +466,61 @@ def enable_transit_resource(
     db.refresh(resource)
 
     return success_response(serialize_transit_resource(resource), "中转资源已启用。")
+
+
+@router.delete("/{resource_id}")
+def delete_transit_resource(
+    resource_id: str,
+    request: Request,
+    confirm: bool = False,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+    if confirm is not True:
+        return error_response(400, "CONFIRMATION_REQUIRED", "请确认删除中转服务器记录。")
+
+    resource = get_transit_resource_or_error(db, resource_id)
+    if not resource:
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
+
+    active_route = db.scalar(
+        select(TransitRoute).where(
+            TransitRoute.transit_resource_id == resource.id,
+            TransitRoute.deleted_at.is_(None),
+        )
+    )
+    if active_route:
+        return error_response(
+            409,
+            "TRANSIT_RESOURCE_HAS_ACTIVE_ROUTES",
+            "该中转服务器下仍有中转链路，请先删除链路记录。",
+        )
+
+    resource.deleted_at = datetime.now(UTC)
+    resource.status = "deleted"
+    db.add(resource)
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="delete_transit_resource_record",
+        result="success",
+        request=request,
+        resource_type="transit_resource",
+        resource_id=resource.id,
+    )
+    db.commit()
+
+    return success_response(
+        {
+            "id": resource.id,
+            "deleted": True,
+            "delete_mode": "soft_delete",
+            "remote_action_performed": False,
+            "message": "系统记录已删除；未执行远程清理。",
+        },
+        "系统记录已删除；未执行远程清理。",
+    )

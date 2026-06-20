@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, Request
@@ -572,6 +573,57 @@ def get_transit_route(
         return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
 
     return success_response(serialize_transit_route(route), "ok")
+
+
+@router.delete("/{route_id}")
+def delete_transit_route(
+    route_id: str,
+    request: Request,
+    confirm: bool = False,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+    if confirm is not True:
+        return error_response(400, "CONFIRMATION_REQUIRED", "请确认删除中转链路记录。")
+
+    route = get_route_or_error(db, route_id)
+    if not route:
+        return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
+    if route.share_link:
+        return error_response(
+            409,
+            "TRANSIT_ROUTE_CUTOVER_BLOCKED",
+            "该中转链路处于 cutover 状态，本阶段不允许删除。",
+        )
+
+    route.status = "deleted"
+    route.deleted_at = datetime.now(UTC)
+    db.add(route)
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="delete_transit_route_record",
+        result="success",
+        request=request,
+        resource_type="transit_route",
+        resource_id=route.id,
+    )
+    db.commit()
+
+    return success_response(
+        {
+            "id": route.id,
+            "deleted": True,
+            "delete_mode": "soft_delete",
+            "remote_action_performed": False,
+            "message": "系统记录已删除；未执行远程清理。",
+        },
+        "系统记录已删除；未执行远程清理。",
+    )
 
 
 @router.get("/{route_id}/candidate-summary")

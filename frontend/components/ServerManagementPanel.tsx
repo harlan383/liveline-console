@@ -8,6 +8,8 @@ import {
   createLandingNodeExecution,
   createLandingNodePlan,
   createWorkerCommand,
+  deleteNodeRecord,
+  deleteVpsServer,
   createVpsWorkerBootstrap,
   createWorkerToken,
   exportNodeShareLink,
@@ -17,7 +19,6 @@ import {
   type CsrfResult,
   type NodeData,
   type VpsServerData,
-  type VpsServerDeleteResult,
   type VpsServerListResult,
   type VpsServerUpdateResult,
   type WorkerCommandData,
@@ -25,7 +26,7 @@ import {
   type WorkerTokenCreateResult,
 } from "@/lib/api";
 
-type ModalMode = "add" | "edit" | "delete" | "nodePlan" | "workerCommand" | null;
+type ModalMode = "add" | "edit" | "delete" | "deleteNode" | "nodePlan" | "workerCommand" | null;
 
 type ServerFormState = {
   name: string;
@@ -293,6 +294,8 @@ export function ServerManagementPanel() {
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
   const [latestWorkerCommandByServerId, setLatestWorkerCommandByServerId] = useState<Record<string, WorkerCommandData>>({});
   const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [selectedNodeForDelete, setSelectedNodeForDelete] = useState<ServerNodeSummary | null>(null);
   const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
   const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
   const [showFullShareLink, setShowFullShareLink] = useState(false);
@@ -339,6 +342,8 @@ export function ServerManagementPanel() {
     setFormalCreateResult(null);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
+    setDeleteConfirmText("");
+    setSelectedNodeForDelete(null);
   }
 
   function closeNodeDetail() {
@@ -382,7 +387,15 @@ export function ServerManagementPanel() {
 
   function openDelete(server: VpsServerData) {
     setSelectedServer(server);
+    setDeleteConfirmText("");
     setModalMode("delete");
+  }
+
+  function openDeleteNode(server: VpsServerData, node: ServerNodeSummary) {
+    setSelectedServer(server);
+    setSelectedNodeForDelete(node);
+    setDeleteConfirmText("");
+    setModalMode("deleteNode");
   }
 
   function openNodePlan(server: VpsServerData) {
@@ -732,30 +745,50 @@ export function ServerManagementPanel() {
   }
 
   async function submitDelete() {
-    if (!selectedServer) {
+    if (!selectedServer || deleteConfirmText !== "DELETE") {
       return;
     }
     setSubmitting(true);
     setMessage("正在删除服务器系统记录。");
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await apiFetch<VpsServerDeleteResult>(`/api/vps/${selectedServer.id}?confirm=true`, {
-        method: "DELETE",
-        headers: { "X-CSRF-Token": csrfToken },
-      });
+      const result = await deleteVpsServer(selectedServer.id, csrfToken);
 
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
 
-      setMessage(
-        `服务器系统记录已删除；同时处理下级节点 ${result.data.affected_nodes} 个；未清理远程服务器配置。`,
-      );
+      setMessage(result.data.message || "系统记录已删除；未执行远程清理。");
       closeModal();
       await loadServers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除服务器失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function submitDeleteNode() {
+    if (!selectedNodeForDelete || deleteConfirmText !== "DELETE") {
+      return;
+    }
+    setSubmitting(true);
+    setMessage("正在删除节点系统记录；不会停止远程 Xray。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await deleteNodeRecord(selectedNodeForDelete.id, csrfToken);
+
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+
+      setMessage(result.data.message || "系统记录已删除；未执行远程清理。");
+      closeModal();
+      await loadServers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除节点失败。");
     } finally {
       setSubmitting(false);
     }
@@ -979,6 +1012,9 @@ export function ServerManagementPanel() {
                     <button className="secondary" type="button" onClick={() => openEdit(server)}>
                       编辑
                     </button>
+                    <button className="danger" type="button" onClick={() => openDelete(server)}>
+                      删除
+                    </button>
                     <details className="server-advanced-actions">
                       <summary>高级读取与调试</summary>
                       <div className="server-advanced-actions-body">
@@ -1005,9 +1041,6 @@ export function ServerManagementPanel() {
                             </button>
                           </>
                         ) : null}
-                        <button className="danger" type="button" onClick={() => openDelete(server)}>
-                          删除系统记录
-                        </button>
                       </div>
                     </details>
                   </div>
@@ -1055,6 +1088,9 @@ export function ServerManagementPanel() {
                           >
                             临时二维码
                           </button>
+                          <button className="danger" type="button" onClick={() => openDeleteNode(server, node)}>
+                            删除节点
+                          </button>
                         </span>
                       </div>
                     ))}
@@ -1088,6 +1124,7 @@ export function ServerManagementPanel() {
       add: "添加落地服务器",
       edit: "编辑落地服务器",
       delete: "删除落地服务器",
+      deleteNode: "删除节点记录",
       nodePlan: "创建落地节点计划",
       workerCommand: "重新生成 Worker 安装命令",
     };
@@ -1103,6 +1140,7 @@ export function ServerManagementPanel() {
           {mode === "add" || mode === "workerCommand" ? renderWorkerBootstrapForm("landing") : null}
           {mode === "edit" ? renderServerForm(submitEdit) : null}
           {mode === "delete" ? renderDeleteConfirm() : null}
+          {mode === "deleteNode" ? renderDeleteNodeConfirm() : null}
           {mode === "nodePlan" ? renderNodePlanForm() : null}
         </div>
       </div>
@@ -1252,15 +1290,51 @@ export function ServerManagementPanel() {
       <div className="delete-confirm">
         <div className="failure-box">
           <strong>危险操作二次确认</strong>
-          <span>将删除落地服务器系统记录，并将该服务器下未删除节点标记为 deleted。</span>
-          <span>不会 SSH 登录远程服务器，不会清理远程 Xray 或节点配置。</span>
+          <span>这只会删除 LiveLine Console 中的落地服务器记录，不会 SSH 登录 VPS。</span>
+          <span>不会停止 Xray，不会删除 Xray 配置，不会关闭节点端口，不会修改云安全组或防火墙。</span>
+          <span>如果该落地服务器下还有直连节点，请先删除节点记录。</span>
         </div>
         <div className="server-delete-target">
           {selectedServer.name} / {selectedServer.ip} / 下级节点 {selectedServer.nodes.length} 个
         </div>
+        <label className="safe-delete-input">
+          输入 DELETE 后才能确认
+          <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} placeholder="DELETE" />
+        </label>
         <div className="modal-actions">
-          <button className="danger" disabled={submitting} type="button" onClick={() => void submitDelete()}>
-            确认删除系统记录
+          <button className="danger" disabled={submitting || deleteConfirmText !== "DELETE"} type="button" onClick={() => void submitDelete()}>
+            确认删除
+          </button>
+          <button className="secondary" type="button" onClick={closeModal}>
+            取消
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderDeleteNodeConfirm() {
+    if (!selectedServer || !selectedNodeForDelete) {
+      return null;
+    }
+    return (
+      <div className="delete-confirm">
+        <div className="failure-box">
+          <strong>危险操作二次确认</strong>
+          <span>这只会删除 / 软删除 LiveLine Console 中的节点记录，不会停止远程 Xray。</span>
+          <span>不会删除远程 Xray 配置，不会关闭端口，不会清空或导出完整节点链接。</span>
+          <span>远程 Xray 不会停止，客户端可能仍能继续使用该节点。</span>
+        </div>
+        <div className="server-delete-target">
+          {selectedNodeForDelete.name} / {nodeEntryLabel(selectedNodeForDelete, selectedServer.ip)}
+        </div>
+        <label className="safe-delete-input">
+          输入 DELETE 后才能确认
+          <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} placeholder="DELETE" />
+        </label>
+        <div className="modal-actions">
+          <button className="danger" disabled={submitting || deleteConfirmText !== "DELETE"} type="button" onClick={() => void submitDeleteNode()}>
+            确认删除
           </button>
           <button className="secondary" type="button" onClick={closeModal}>
             取消
