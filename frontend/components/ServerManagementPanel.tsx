@@ -37,6 +37,7 @@ type ServerFormState = {
 };
 
 type NodePlanFormState = {
+  nodeName: string;
   listenPort: string;
   protocol: string;
   security: string;
@@ -74,6 +75,8 @@ type WorkerBootstrapFormState = {
 type ServerNodeSummary = VpsServerData["nodes"][number];
 
 const APPROVED_FORMAL_LISTEN_PORT = 27939;
+const NODE_CREATE_RANDOM_PORT_MIN = 10000;
+const NODE_CREATE_RANDOM_PORT_MAX = 30000;
 const BLOCKED_NODE_LISTEN_PORTS = new Set([
   22,
   80,
@@ -103,6 +106,7 @@ const emptyServerForm: ServerFormState = {
 
 function createEmptyNodePlanForm(): NodePlanFormState {
   return {
+    nodeName: `liveline-reality-${APPROVED_FORMAL_LISTEN_PORT}`,
     listenPort: String(APPROVED_FORMAL_LISTEN_PORT),
     protocol: "vless",
     security: "reality",
@@ -119,6 +123,35 @@ function createEmptyNodePlanForm(): NodePlanFormState {
     serverFirewallConfirmed: true,
     requirePreflightSuccess: true,
   };
+}
+
+const NODE_CREATE_PROGRESS_LABELS: Record<string, string> = {
+  idle: "准备中",
+  preflight_create: "创建只读预检",
+  preflight_running: "预检中",
+  plan: "生成创建计划",
+  command_create: "创建 Reality 节点命令",
+  command_running: "安装 Xray / 写入配置 / 启动服务 / 检查端口",
+  refresh: "刷新节点摘要",
+  complete: "完成",
+  failed: "失败",
+};
+
+const NODE_CREATE_TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired", "cancelled"]);
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function randomNodePort() {
+  const range = NODE_CREATE_RANDOM_PORT_MAX - NODE_CREATE_RANDOM_PORT_MIN + 1;
+  for (let index = 0; index < 120; index += 1) {
+    const port = NODE_CREATE_RANDOM_PORT_MIN + Math.floor(Math.random() * range);
+    if (!BLOCKED_NODE_LISTEN_PORTS.has(port)) {
+      return port;
+    }
+  }
+  return APPROVED_FORMAL_LISTEN_PORT;
 }
 
 function createEmptyFormalCreateConfirm(): FormalCreateConfirmState {
@@ -279,6 +312,7 @@ async function copyTextWithFallback(text: string, textArea: HTMLTextAreaElement 
 export function ServerManagementPanel() {
   const workerInstallCommandRef = useRef<HTMLTextAreaElement | null>(null);
   const nodeShareLinkRef = useRef<HTMLTextAreaElement | null>(null);
+  const nodeQrFrameRef = useRef<HTMLDivElement | null>(null);
   const [servers, setServers] = useState<VpsServerData[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("落地服务器管理只读取本地系统记录；不会在页面加载时执行 SSH。");
@@ -289,6 +323,10 @@ export function ServerManagementPanel() {
   const [nodePlanResult, setNodePlanResult] = useState<LandingNodePlanResponse | null>(null);
   const [formalCreateConfirm, setFormalCreateConfirm] = useState<FormalCreateConfirmState>(() => createEmptyFormalCreateConfirm());
   const [formalCreateResult, setFormalCreateResult] = useState<LandingNodeCreateResponse | null>(null);
+  const [nodeCreateStep, setNodeCreateStep] = useState("idle");
+  const [nodeCreateCommand, setNodeCreateCommand] = useState<WorkerCommandData | null>(null);
+  const [createdNodeSummary, setCreatedNodeSummary] = useState<ServerNodeSummary | null>(null);
+  const [nodeCreateError, setNodeCreateError] = useState<string | null>(null);
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
@@ -322,10 +360,13 @@ export function ServerManagementPanel() {
           .map((server) => loadWorkerCommands(server.worker_id as string, server.id)),
       );
       setMessage("服务器列表已刷新。");
+      setLoading(false);
+      return result.data.servers;
     } else {
       setMessage(`${result.error_code}: ${result.message}`);
     }
     setLoading(false);
+    return [];
   }
 
   useEffect(() => {
@@ -340,6 +381,10 @@ export function ServerManagementPanel() {
     setNodePlanResult(null);
     setFormalCreateConfirm(createEmptyFormalCreateConfirm());
     setFormalCreateResult(null);
+    setNodeCreateStep("idle");
+    setNodeCreateCommand(null);
+    setCreatedNodeSummary(null);
+    setNodeCreateError(null);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
     setDeleteConfirmText("");
@@ -404,6 +449,10 @@ export function ServerManagementPanel() {
     setNodePlanResult(null);
     setFormalCreateConfirm(createEmptyFormalCreateConfirm());
     setFormalCreateResult(null);
+    setNodeCreateStep("idle");
+    setNodeCreateCommand(null);
+    setCreatedNodeSummary(null);
+    setNodeCreateError(null);
     setModalMode("nodePlan");
   }
 
@@ -573,6 +622,194 @@ export function ServerManagementPanel() {
     }
   }
 
+  async function waitForWorkerCommandCompletion(workerId: string, commandId: string, serverId: string, runningStep: string) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      const result = await listWorkerCommands(workerId);
+      if (!result.success) {
+        throw new Error(`${result.error_code}: ${result.message}`);
+      }
+      setWorkerCommandsByWorkerId((current) => ({ ...current, [workerId]: result.data.commands }));
+      if (result.data.commands[0]) {
+        setLatestWorkerCommandByServerId((current) => ({ ...current, [serverId]: result.data.commands[0] }));
+      }
+      const command = result.data.commands.find((item) => item.id === commandId);
+      if (command) {
+        setNodeCreateCommand(command);
+        if (NODE_CREATE_TERMINAL_STATUSES.has(command.status)) {
+          return command;
+        }
+      }
+      setNodeCreateStep(runningStep);
+      await sleep(2000);
+    }
+    throw new Error("Worker 命令等待超时。请刷新列表查看最新状态。");
+  }
+
+  function friendlyNodeCreateError(error: unknown) {
+    const raw = error instanceof Error ? error.message : String(error || "创建失败。");
+    if (raw.includes("WORKER") || raw.includes("Worker")) {
+      return "Worker 不在线或版本不满足，请检查落地服务器 Worker 状态。";
+    }
+    if (raw.includes("PORT") || raw.includes("port") || raw.includes("端口")) {
+      return "端口检查失败：端口可能已被占用，或云安全组 / 云防火墙 / 服务器防火墙未放行。";
+    }
+    if (raw.includes("XRAY") || raw.includes("Xray") || raw.includes("xray")) {
+      return "Xray 检查失败：可能已存在配置，或服务启动 / 配置测试失败。";
+    }
+    if (raw.includes("PREFLIGHT") || raw.includes("preflight") || raw.includes("预检")) {
+      return "预检失败：请检查 Worker、端口监听、Xray 状态和防火墙放行情况。";
+    }
+    return raw;
+  }
+
+  function findCreatedNode(serverList: VpsServerData[], serverId: string, listenPort: number) {
+    const server = serverList.find((item) => item.id === serverId);
+    return server?.nodes.find((node) => node.port === listenPort && node.share_link_present) ?? null;
+  }
+
+  function generateNodePort() {
+    const port = randomNodePort();
+    setNodePlanForm((current) => ({
+      ...current,
+      listenPort: String(port),
+      nodeName: current.nodeName.startsWith("liveline-reality-") ? `liveline-reality-${port}` : current.nodeName,
+    }));
+  }
+
+  async function submitSimplifiedLandingNodeCreate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedServer) {
+      return;
+    }
+    if (!selectedServer.worker_id || !selectedServer.worker_online) {
+      setMessage("Worker 未在线，不能创建直连节点。");
+      return;
+    }
+    const listenPort = Number(nodePlanForm.listenPort);
+    if (!Number.isInteger(listenPort) || listenPort < NODE_CREATE_RANDOM_PORT_MIN || listenPort > NODE_CREATE_RANDOM_PORT_MAX) {
+      setMessage("监听端口建议使用 10000-30000 之间的整数。");
+      return;
+    }
+    if (BLOCKED_NODE_LISTEN_PORTS.has(listenPort)) {
+      setMessage(`端口 ${listenPort} 是常用 / 保留端口，请换一个端口。`);
+      return;
+    }
+    setSubmitting(true);
+    setNodePlanResult(null);
+    setFormalCreateResult(null);
+    setCreatedNodeSummary(null);
+    setNodeCreateCommand(null);
+    setNodeCreateError(null);
+    setMessage("正在自动执行预检和创建流程；完整链接只会在创建成功后通过受控导出显示。");
+
+    try {
+      const csrfToken = await ensureCsrfToken();
+      setNodeCreateStep("preflight_create");
+      const preflightResult = await createWorkerCommand(
+        selectedServer.worker_id,
+        { command_type: "landing_preflight", payload: null, server_id: selectedServer.id, server_type: "landing" },
+        csrfToken,
+      );
+      if (!preflightResult.success) {
+        throw new Error(`${preflightResult.error_code}: ${preflightResult.message}`);
+      }
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [selectedServer.id]: preflightResult.data.command }));
+      const preflightCommand = await waitForWorkerCommandCompletion(
+        preflightResult.data.target_worker_id,
+        preflightResult.data.command.id,
+        selectedServer.id,
+        "preflight_running",
+      );
+      if (preflightCommand.status !== "succeeded") {
+        throw new Error(preflightCommand.error_message || "预检未通过。");
+      }
+
+      setNodeCreateStep("plan");
+      const planResult = await createLandingNodePlan(
+        selectedServer.id,
+        {
+          listen_port: listenPort,
+          protocol: nodePlanForm.protocol,
+          security: nodePlanForm.security,
+          flow: nodePlanForm.flow,
+          server_name: nodePlanForm.serverName,
+          dest: nodePlanForm.dest,
+          remark: nodePlanForm.nodeName || null,
+          allow_install_xray: true,
+          allow_modify_firewall: false,
+          allow_generate_share_link: true,
+          allow_overwrite_existing_config: false,
+          cloud_security_group_confirmed: true,
+          cloud_firewall_confirmed: true,
+          server_firewall_confirmed: true,
+          require_manual_cloud_firewall_confirmation: true,
+          require_preflight_success: true,
+        },
+        csrfToken,
+      );
+      if (!planResult.success) {
+        throw new Error(`${planResult.error_code}: ${planResult.message}`);
+      }
+      setNodePlanResult(planResult.data);
+      if (!planResult.data.ready) {
+        throw new Error(
+          planResult.data.blocked_reasons.length
+            ? planResult.data.blocked_reasons.map((reason) => blockedReasonLabel(reason)).join("；")
+            : "创建计划未通过。",
+        );
+      }
+
+      setNodeCreateStep("command_create");
+      const createResult = await createLandingNodeExecution(
+        selectedServer.id,
+        {
+          approved_port: listenPort,
+          node_name: nodePlanForm.nodeName || null,
+          server_name: nodePlanForm.serverName,
+          dest: nodePlanForm.dest,
+          confirm_firewall_open: true,
+          confirm_generate_share_link: true,
+          confirm_write_share_link_after_success: true,
+          confirm_no_existing_xray: true,
+          confirm_rollback_new_artifacts_only: true,
+        },
+        csrfToken,
+      );
+      if (!createResult.success) {
+        throw new Error(`${createResult.error_code}: ${createResult.message}`);
+      }
+      setFormalCreateResult(createResult.data);
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [selectedServer.id]: createResult.data.command }));
+      const createCommand = await waitForWorkerCommandCompletion(
+        createResult.data.target_worker_id,
+        createResult.data.command_id,
+        selectedServer.id,
+        "command_running",
+      );
+      if (createCommand.status !== "succeeded") {
+        throw new Error(createCommand.error_message || "创建命令执行失败。");
+      }
+
+      setNodeCreateStep("refresh");
+      const refreshedServers = await loadServers();
+      const createdNode = findCreatedNode(refreshedServers, selectedServer.id, listenPort);
+      setCreatedNodeSummary(createdNode);
+      setNodeCreateStep("complete");
+      setMessage(
+        createdNode
+          ? "直连节点创建完成。可以复制客户端链接或临时显示二维码。"
+          : "直连节点创建命令已成功。列表刷新后如未看到节点，请再次点击刷新。",
+      );
+    } catch (error) {
+      const friendly = friendlyNodeCreateError(error);
+      setNodeCreateStep("failed");
+      setNodeCreateError(friendly);
+      setMessage(`${friendly} 失败时不会写入 node.share_link，也不会生成完整链接。`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function latestWorkerCommandForServer(server: VpsServerData) {
     return latestWorkerCommandByServerId[server.id] ?? (server.worker_id ? workerCommandsByWorkerId[server.worker_id]?.[0] : undefined);
   }
@@ -706,6 +943,25 @@ export function ServerManagementPanel() {
       setExportedNodeShareLink(null);
     }
     await exportSelectedNodeShareLink(node.id, "client_import", { copy: true });
+  }
+
+  function downloadNodeQrCode() {
+    const svg = nodeQrFrameRef.current?.querySelector("svg");
+    if (!svg || !selectedNodeDetail) {
+      setMessage("请先显示二维码。");
+      return;
+    }
+    const source = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${selectedNodeDetail.node_name || "liveline-node"}-qr.svg`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage("二维码已下载。请妥善保存，不要公开分享。");
   }
 
   async function submitEdit(event: React.FormEvent<HTMLFormElement>) {
@@ -1000,11 +1256,11 @@ export function ServerManagementPanel() {
                   <div className="server-actions">
                     <button
                       className="secondary"
-                      title="只生成 dry-run 创建计划，不创建真实节点"
+                      title="自动预检并创建直连 Reality 节点"
                       type="button"
                       onClick={() => openNodePlan(server)}
                     >
-                      创建节点计划
+                      创建直连节点
                     </button>
                     <button className="secondary" type="button" onClick={() => openWorkerCommand(server)}>
                       安装命令
@@ -1125,7 +1381,7 @@ export function ServerManagementPanel() {
       edit: "编辑落地服务器",
       delete: "远程清理并删除落地服务器",
       deleteNode: "远程清理并删除节点",
-      nodePlan: "创建落地节点计划",
+      nodePlan: "创建直连节点",
       workerCommand: "重新生成 Worker 安装命令",
     };
     return (
@@ -1370,173 +1626,99 @@ export function ServerManagementPanel() {
   }
 
   function renderNodePlanResult() {
-    if (!nodePlanResult) {
-      return null;
-    }
-    const summary = nodePlanResult.preflight_summary ?? {};
-    const workerInterface = summary.worker_config_interface ?? summary.configured_interface;
-    const defaultInterface = summary.default_route_interface ?? summary.detected_default_interface;
+    const steps = ["preflight_create", "preflight_running", "plan", "command_create", "command_running", "refresh", "complete"];
+    const currentIndex = steps.indexOf(nodeCreateStep);
     return (
-      <div className="landing-plan-result wide-field">
-        <div className={`plan-status-card ${nodePlanResult.ready ? "ready" : "blocked"}`}>
-          <strong>{nodePlanResult.ready ? "Ready for approval" : "No-Go / 仍有阻塞项"}</strong>
-          <span>plan_id：{nodePlanResult.plan_id}</span>
-          <span>下一阶段：{nodePlanResult.next_stage_required}</span>
-        </div>
+      <div className="landing-plan-result node-create-result wide-field">
+        {nodeCreateStep !== "idle" ? (
+          <div className={`plan-status-card ${nodeCreateStep === "failed" ? "blocked" : nodeCreateStep === "complete" ? "ready" : ""}`}>
+            <strong>{NODE_CREATE_PROGRESS_LABELS[nodeCreateStep] ?? nodeCreateStep}</strong>
+            <span>
+              系统会先做只读预检，再创建 Reality 节点命令。只有远程创建成功、服务启动成功、端口监听成功后，后端才会写入
+              node.share_link。
+            </span>
+          </div>
+        ) : null}
 
-        <div className="landing-plan-grid">
-          <span>Worker 版本</span>
-          <strong>{planValue(summary.worker_version)}</strong>
-          <span>预检状态</span>
-          <strong>{planValue(summary.preflight_status)}</strong>
-          <span>配置网卡</span>
-          <strong>{planValue(workerInterface)}</strong>
-          <span>默认公网网卡</span>
-          <strong>{planValue(defaultInterface)}</strong>
-          <span>默认公网网关</span>
-          <strong>{planValue(summary.default_route_gateway)}</strong>
-          <span>公网网卡 IP</span>
-          <strong>{planValue(summary.primary_interface_ip)}</strong>
-          <span>网卡是否不一致</span>
-          <strong>{planValue(summary.interface_mismatch)}</strong>
-          <span>监听端口数量</span>
-          <strong>{planValue(summary.listening_count)}</strong>
-          <span>Xray 是否已安装</span>
-          <strong>{planValue(summary.xray_installed)}</strong>
-          <span>已有 Xray 配置</span>
-          <strong>{planValue(summary.xray_existing_config_detected)}</strong>
-        </div>
+        {nodeCreateStep !== "idle" && nodeCreateStep !== "failed" ? (
+          <div className="node-create-progress" aria-label="直连节点创建进度">
+            {steps.map((step, index) => (
+              <span className={index < currentIndex ? "done" : index === currentIndex ? "current" : ""} key={step}>
+                {NODE_CREATE_PROGRESS_LABELS[step]}
+              </span>
+            ))}
+          </div>
+        ) : null}
 
-        {nodePlanResult.blocked_reasons.length > 0 ? (
+        {nodeCreateCommand ? (
+          <div className="worker-command-panel">
+            <strong>当前创建命令</strong>
+            <span>命令 ID：{nodeCreateCommand.id}</span>
+            <span>类型：{workerCommandTypeLabel(nodeCreateCommand.command_type)}</span>
+            <span>状态：{workerCommandStatusLabel(nodeCreateCommand.status)}</span>
+            {nodeCreateCommand.result_summary ? <span>{nodeCreateCommand.result_summary}</span> : null}
+            {nodeCreateCommand.error_message ? <span>{nodeCreateCommand.error_message}</span> : null}
+          </div>
+        ) : null}
+
+        {nodePlanResult ? (
+          <div className={`plan-status-card ${nodePlanResult.ready ? "ready" : "blocked"}`}>
+            <strong>{nodePlanResult.ready ? "创建计划通过" : "创建计划未通过"}</strong>
+            <span>计划端口：{nodePlanResult.listen_port}/TCP</span>
+            {nodePlanResult.blocked_reasons.length > 0 ? (
+              <span>阻塞项：{nodePlanResult.blocked_reasons.map((reason) => blockedReasonLabel(reason)).join("；")}</span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {nodeCreateError ? (
           <div className="failure-box">
-            <strong>阻塞项</strong>
-            {nodePlanResult.blocked_reasons.map((reason) => (
-              <span key={reason}>{blockedReasonLabel(reason)}</span>
-            ))}
+            <strong>创建未完成</strong>
+            <span>{nodeCreateError}</span>
+            <span>请检查云安全组 TCP 端口、云防火墙、服务器本机防火墙，或换一个端口后重试。</span>
+            <span>失败时不会写入 node.share_link，不会生成完整客户端链接。</span>
           </div>
         ) : null}
 
-        {nodePlanResult.warnings.length > 0 ? (
-          <div className="warning-box">
-            <strong>风险提示</strong>
-            {nodePlanResult.warnings.map((warning) => (
-              <span key={warning}>{warning}</span>
-            ))}
+        {createdNodeSummary ? (
+          <div className="node-create-success-card">
+            <strong>直连节点已创建，可导入客户端</strong>
+            <div className="landing-plan-grid">
+              <span>节点名称</span>
+              <strong>{createdNodeSummary.name}</strong>
+              <span>入口</span>
+              <strong>{nodeEntryLabel(createdNodeSummary, selectedServer?.ip ?? "")}</strong>
+              <span>协议</span>
+              <strong>{nodeProtocolSummary(createdNodeSummary)}</strong>
+              <span>状态</span>
+              <strong>{nodeStatusLabel(createdNodeSummary.status)}</strong>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => void copyNodeShareLink(createdNodeSummary)}>
+                复制 V2Ray 链接
+              </button>
+              <button className="secondary" type="button" onClick={() => void openNodeDetail(createdNodeSummary, true)}>
+                显示二维码
+              </button>
+              <button className="secondary" type="button" onClick={() => void openNodeDetail(createdNodeSummary)}>
+                查看节点摘要
+              </button>
+            </div>
+            <small>Shadowrocket / V2RayN / V2RayNG 可通过完整链接或二维码导入。链接和二维码都属于敏感信息，仅自己使用。</small>
           </div>
         ) : null}
-
-        <div className="warning-box">
-          <strong>下一步审批清单</strong>
-          {nodePlanResult.required_user_confirmations.map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-        </div>
-
-        <div className="failure-box">
-          <strong>正式执行保护清单</strong>
-          {nodePlanResult.execution_guard.map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-          <span>只有完成下面全部二次确认后，才允许创建正式 Worker 执行命令。</span>
-        </div>
-
-        <div className="landing-plan-checklist formal-create-checklist">
-          <strong>正式创建二次确认</strong>
-          <label>
-            <input
-              type="checkbox"
-              checked={formalCreateConfirm.firewallOpen}
-              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, firewallOpen: event.target.checked })}
-            />
-            已确认云安全组 / 云防火墙 / 服务器本机防火墙均已放行 27939/TCP
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={formalCreateConfirm.installXray}
-              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, installXray: event.target.checked })}
-            />
-            允许本次正式执行安装 Xray-core
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={formalCreateConfirm.createRealityNode}
-              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, createRealityNode: event.target.checked })}
-            />
-            允许本次正式执行创建 VLESS Reality 落地节点
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={formalCreateConfirm.listenPortApproved}
-              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, listenPortApproved: event.target.checked })}
-            />
-            允许本次正式执行监听 27939/TCP
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={formalCreateConfirm.noExistingXray}
-              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, noExistingXray: event.target.checked })}
-            />
-            已确认正式执行前仍需复核 Xray 未安装且无已有 Xray 配置
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={formalCreateConfirm.generateShareLink}
-              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, generateShareLink: event.target.checked })}
-            />
-            允许生成真实分享链接，但不写入文档、日志或聊天
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={formalCreateConfirm.writeShareLinkAfterSuccess}
-              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, writeShareLinkAfterSuccess: event.target.checked })}
-            />
-            允许在创建成功、Xray 启动成功、端口监听成功后写入 node.share_link
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={formalCreateConfirm.rollbackNewArtifactsOnly}
-              onChange={(event) => setFormalCreateConfirm({ ...formalCreateConfirm, rollbackNewArtifactsOnly: event.target.checked })}
-            />
-            如失败，只允许清理本次新增内容，不删除非 LiveLine 管理文件
-          </label>
-          <button
-            className="danger"
-            disabled={submitting || !nodePlanResult.ready || !allFormalCreateConfirmationsChecked()}
-            type="button"
-            onClick={() => void submitFormalLandingNodeCreate()}
-          >
-            {submitting ? "创建命令中..." : "正式创建落地节点"}
-          </button>
-          <small>该按钮只创建 Worker 命令；Worker 会先重新预检。命令结果不会默认展示完整分享链接。</small>
-        </div>
 
         {formalCreateResult ? (
           <div className="worker-command-panel">
-            <strong>正式创建命令已创建</strong>
+            <strong>创建命令已提交</strong>
             <span>命令 ID：{formalCreateResult.command_id}</span>
             <span>目标 Worker：{formalCreateResult.target_worker_id}</span>
             <span>Worker 版本：{formalCreateResult.target_worker_version || "未返回"}</span>
-            <span>状态：{workerCommandStatusLabel(formalCreateResult.status)}</span>
-            <span>{formalCreateResult.next_action}</span>
-            {formalCreateResult.safety_boundary.map((item) => (
-              <span key={item}>{item}</span>
-            ))}
           </div>
         ) : null}
 
         <div className="server-management-note">
-          前端不会 console.log 完整分享链接；真实链接只允许在创建成功后的受控节点详情 / 复制区域查看。
-        </div>
-
-        <div className="server-management-note">
-          dry-run 计划本身只用于审批准备；只有上方二次确认全部完成并点击正式创建后，才会创建 Worker 执行命令。
+          前端不会 console.log 完整分享链接；真实链接只允许在创建成功后的受控节点详情、复制或二维码区域查看。
         </div>
       </div>
     );
@@ -1547,10 +1729,10 @@ export function ServerManagementPanel() {
       return null;
     }
     return (
-      <form className="form server-modal-form" onSubmit={(event) => void submitLandingNodePlan(event)}>
+      <form className="form server-modal-form node-create-form" onSubmit={(event) => void submitSimplifiedLandingNodeCreate(event)}>
         <div className="worker-bootstrap-intro wide-field">
-          <strong>创建落地节点计划 / dry-run</strong>
-          <span>本弹窗只生成审批计划，不安装 Xray、不创建节点、不开放端口、不修改防火墙、不生成真实节点链接。</span>
+          <strong>创建直连 Reality 节点</strong>
+          <span>填写必要信息后点击创建。系统会自动预检、安装 / 启动 Xray、检查端口监听，成功后再允许导出链接和二维码。</span>
           <span>
             服务器：{selectedServer.name || selectedServer.ip} / {selectedServer.ip} / Worker：
             {selectedServer.worker_version || "未注册"}
@@ -1558,142 +1740,70 @@ export function ServerManagementPanel() {
         </div>
 
         <label>
-          计划监听端口
+          节点名称
           <input
-            inputMode="numeric"
-            readOnly
-            value={nodePlanForm.listenPort}
-            onChange={(event) => setNodePlanForm({ ...nodePlanForm, listenPort: event.target.value })}
+            value={nodePlanForm.nodeName}
+            onChange={(event) => setNodePlanForm({ ...nodePlanForm, nodeName: event.target.value })}
+            placeholder="liveline-reality-27939"
           />
-          <small>Stage 3.3.36 候选端口固定为 27939/TCP，本阶段只生成审批计划。</small>
         </label>
         <label>
-          协议
-          <select value={nodePlanForm.protocol} onChange={(event) => setNodePlanForm({ ...nodePlanForm, protocol: event.target.value })}>
-            <option value="vless">VLESS</option>
-          </select>
+          落地服务器
+          <input readOnly value={`${selectedServer.name || selectedServer.ip} / ${selectedServer.ip}`} />
         </label>
         <label>
-          安全类型
-          <select value={nodePlanForm.security} onChange={(event) => setNodePlanForm({ ...nodePlanForm, security: event.target.value })}>
-            <option value="reality">Reality</option>
-          </select>
+          端口
+          <div className="node-create-port-row">
+            <input
+              inputMode="numeric"
+              value={nodePlanForm.listenPort}
+              onChange={(event) =>
+                setNodePlanForm({
+                  ...nodePlanForm,
+                  listenPort: event.target.value,
+                  nodeName: nodePlanForm.nodeName.startsWith("liveline-reality-")
+                    ? `liveline-reality-${event.target.value}`
+                    : nodePlanForm.nodeName,
+                })
+              }
+            />
+            <button className="secondary" type="button" onClick={generateNodePort}>
+              自动生成
+            </button>
+          </div>
+          <small>建议使用 10000-30000 中未被占用的 TCP 端口；云安全组 / 云防火墙仍需你自行放行。</small>
         </label>
         <label>
-          flow
-          <select value={nodePlanForm.flow} onChange={(event) => setNodePlanForm({ ...nodePlanForm, flow: event.target.value })}>
-            <option value="xtls-rprx-vision">xtls-rprx-vision</option>
-          </select>
-        </label>
-        <label>
-          Reality serverName
-          <input value={nodePlanForm.serverName} onChange={(event) => setNodePlanForm({ ...nodePlanForm, serverName: event.target.value })} />
+          Reality SNI / serverName
+          <input
+            value={nodePlanForm.serverName}
+            onChange={(event) => setNodePlanForm({ ...nodePlanForm, serverName: event.target.value })}
+          />
         </label>
         <label>
           Reality dest
           <input value={nodePlanForm.dest} onChange={(event) => setNodePlanForm({ ...nodePlanForm, dest: event.target.value })} />
         </label>
-        <label className="wide-field">
-          备注，可选
-          <textarea value={nodePlanForm.remark} onChange={(event) => setNodePlanForm({ ...nodePlanForm, remark: event.target.value })} />
+        <label>
+          协议
+          <input readOnly value="VLESS / Reality / TCP" />
         </label>
 
-        <div className="landing-plan-checklist wide-field">
-          <label>
-            <input
-              type="checkbox"
-              checked={nodePlanForm.cloudSecurityGroupConfirmed}
-              onChange={(event) => setNodePlanForm({ ...nodePlanForm, cloudSecurityGroupConfirmed: event.target.checked })}
-            />
-            已确认云服务器安全组会放行计划 TCP 端口
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={nodePlanForm.cloudFirewallConfirmed}
-              onChange={(event) => setNodePlanForm({ ...nodePlanForm, cloudFirewallConfirmed: event.target.checked })}
-            />
-            已确认云防火墙会放行计划 TCP 端口
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={nodePlanForm.serverFirewallConfirmed}
-              onChange={(event) => setNodePlanForm({ ...nodePlanForm, serverFirewallConfirmed: event.target.checked })}
-            />
-            已确认服务器本机防火墙会放行计划 TCP 端口
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={nodePlanForm.allowInstallXray}
-              onChange={(event) => setNodePlanForm({ ...nodePlanForm, allowInstallXray: event.target.checked })}
-            />
-            仅用于计划：后续审批允许安装 Xray-core
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={nodePlanForm.allowModifyFirewall}
-              onChange={(event) => setNodePlanForm({ ...nodePlanForm, allowModifyFirewall: event.target.checked })}
-            />
-            仅用于计划：后续审批允许修改服务器本机防火墙
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={nodePlanForm.allowGenerateShareLink}
-              onChange={(event) => setNodePlanForm({ ...nodePlanForm, allowGenerateShareLink: event.target.checked })}
-            />
-            仅用于计划：后续审批允许生成分享链接，本阶段不生成真实链接
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={nodePlanForm.allowOverwriteExistingConfig}
-              onChange={(event) => setNodePlanForm({ ...nodePlanForm, allowOverwriteExistingConfig: event.target.checked })}
-            />
-            仅用于计划：如发现已有 Xray 配置，后续审批允许覆盖
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={nodePlanForm.requirePreflightSuccess}
-              onChange={(event) => setNodePlanForm({ ...nodePlanForm, requirePreflightSuccess: event.target.checked })}
-            />
-            要求已有成功 landing_preflight 结果
-          </label>
-        </div>
-
-        <div className="warning-box wide-field">
-          <strong>端口和安全组提醒</strong>
-          <span>候选端口固定为 27939/TCP，用户已确认云安全组 / 云防火墙 / 服务器本机防火墙放行该端口。</span>
-          <span>禁止使用常用 / 保留端口：22、80、443、8080、8443、18443、3000、3200、8000、8200、5432、6379、15432、16379、10000、27017。</span>
-          <span>正式创建前仍必须重新运行 landing_preflight，确认 27939/TCP 未监听，Xray 未安装，且当前无已有 Xray 配置。</span>
-        </div>
-
-        <div className="failure-box wide-field">
-          <strong>正式执行保护清单</strong>
-          <span>27939/TCP 已确认放行。</span>
-          <span>正式执行前必须重新预检。</span>
-          <span>27939/TCP 当前必须未监听。</span>
-          <span>Xray 当前必须未安装。</span>
-          <span>当前必须无已有 Xray 配置。</span>
-          <span>只有创建成功、Xray 服务启动成功、端口监听成功后才能写入 node.share_link。</span>
-          <span>真实链接不得写入日志、文档或聊天。</span>
-          <span>失败回滚只清理本次新增内容。</span>
-        </div>
-
-        <div className="failure-box wide-field">
-          <strong>当前阶段不会执行</strong>
-          <span>不会执行 SSH / 远程命令，不会安装 Xray，不会创建节点，不会开放端口，不会修改防火墙。</span>
-          <span>不会生成完整节点链接，不会修改 node.share_link，不会执行 cutover。</span>
-          <span>正式创建必须进入 Stage 3.3.37-formal-landing-node-create-execution。</span>
-        </div>
+        <details className="node-create-safety-details wide-field">
+          <summary>高级安全说明</summary>
+          <div className="node-create-safety-body">
+            <span>系统不会自动修改云安全组、云防火墙或服务器本机防火墙；端口放行仍由用户自行确认。</span>
+            <span>禁止使用常用 / 保留端口：22、80、443、8080、8443、18443、3000、3200、8000、8200、5432、6379、15432、16379、10000、27017。</span>
+            <span>创建前会自动运行 landing_preflight，确认端口未监听、Xray 未安装、且没有已有 LiveLine 管理配置。</span>
+            <span>只有远程创建成功、Xray 服务启动成功、端口监听成功后，后端才允许写入 node.share_link。</span>
+            <span>失败时不会写入 node.share_link，不会展示二维码，也不会生成可复制的完整链接。</span>
+            <span>真实链接不得写入日志、文档、PR、测试快照或聊天。</span>
+          </div>
+        </details>
 
         <div className="modal-actions wide-field">
           <button disabled={submitting} type="submit">
-            {submitting ? "生成中..." : "生成 dry-run 计划"}
+            {submitting ? "创建中..." : "创建"}
           </button>
           <button className="secondary" type="button" onClick={closeModal}>
             取消
@@ -1824,8 +1934,13 @@ export function ServerManagementPanel() {
                   <div>二维码等同完整节点链接。</div>
                   <div>不要截图或发送给他人，泄露后别人可能使用该节点。</div>
                 </div>
-                <div className="qr-frame" aria-label="节点分享链接二维码">
+                <div className="qr-frame" ref={nodeQrFrameRef} aria-label="节点分享链接二维码">
                   <QRCode value={shareLink} size={220} />
+                </div>
+                <div className="modal-actions">
+                  <button className="secondary" type="button" onClick={downloadNodeQrCode}>
+                    下载二维码
+                  </button>
                 </div>
               </div>
             ) : null}
