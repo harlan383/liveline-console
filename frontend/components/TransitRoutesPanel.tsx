@@ -884,17 +884,23 @@ export function TransitRoutesPanel() {
 
   function friendlyTransitCreateError(error: unknown) {
     const raw = error instanceof Error ? error.message : String(error || "创建失败。");
+    if (raw.includes("TRANSIT_PREFLIGHT_REQUIRED") || raw.includes("TRANSIT_PREFLIGHT_TARGET_MISMATCH")) {
+      return "只读预检不匹配：请先用当前中转服务器、落地节点、监听端口和目标端口重新完成只读预检。";
+    }
     if (raw.includes("READONLY_PREFLIGHT") || raw.includes("preflight") || raw.includes("预检")) {
       return "只读预检未通过：请确认 Worker 在线、监听端口未占用、落地目标端口可达。";
     }
-    if (raw.includes("TRANSIT_PORT_ALREADY_PLANNED") || raw.includes("LISTEN") || raw.includes("listen") || raw.includes("端口")) {
+    if (raw.includes("TRANSIT_PORT_ALREADY_EXISTS") || raw.includes("TRANSIT_PORT_ALREADY_PLANNED") || raw.includes("LISTEN") || raw.includes("listen") || raw.includes("端口")) {
       return "中转监听端口不可用：端口可能已存在链路、未放行，或 Worker 未检测到监听成功。";
     }
-    if (raw.includes("WORKER") || raw.includes("Worker")) {
+    if (raw.includes("TRANSIT_WORKER_INTERFACE_MISMATCH")) {
+      return "中转 Worker 网卡与最近成功只读预检不一致：请确认选择的是同一台在线中转服务器，并重新执行只读预检。";
+    }
+    if (raw.includes("TRANSIT_WORKER") || raw.includes("WORKER") || raw.includes("Worker")) {
       return "中转 Worker 不在线或版本不满足，请检查中转服务器 Worker 状态。";
     }
     if (raw.includes("APPROVAL") || raw.includes("MISMATCH") || raw.includes("审批")) {
-      return "受保护创建审批未通过：当前真实创建仍要求匹配已审批的中转资源、落地节点、端口和线路名称。";
+      return "受保护创建审批未通过：请确认中转服务器、落地节点、端口、只读预检结果和 Worker 绑定关系一致。";
     }
     if (raw.includes("share_link") || raw.includes("链接")) {
       return "客户端链接生成失败：请确认落地直连节点已经成功生成分享链接。";

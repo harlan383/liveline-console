@@ -2609,6 +2609,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.109 Node create modal close polish | Add visible close / finish controls to the direct node create modal after success or failure |
 | Stage 3.3.109-b Node create modal TS narrowing fix | Remove stale nodePlan render branch after dedicated modal path to restore frontend production build |
 | Stage 3.3.111 Simplified transit route create QR flow | Make transit route creation mirror direct node creation with protected remote create, generated V2Ray link, and QR after successful listen/connectivity checks |
+| Stage 3.3.113 Generalize protected transit route create approval | Replace fixed historical transit route approval with protected active-resource approval while keeping socat, preflight, and no-cutover safeguards |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

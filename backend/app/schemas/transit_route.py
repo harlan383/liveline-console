@@ -1,3 +1,5 @@
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 FORWARDING_METHODS = {"gost", "socat"}
@@ -19,6 +21,7 @@ APPROVED_TRANSIT_ROUTE_ID = "d10d3dcc-679f-4f85-ae37-9e5dfa37e6af"
 APPROVED_TRANSIT_CANDIDATE_NAME = "hk-socat-live-23843-test"
 APPROVED_TRANSIT_SERVICE_NAME = "liveline-socat-23843.service"
 APPROVED_TRANSIT_SERVICE_PATH = "/etc/systemd/system/liveline-socat-23843.service"
+TRANSIT_ROUTE_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
 PROTECTED_CREATE_PORT_MESSAGES = {
     22: "22 是 SSH 端口，不能作为中转监听端口。",
     8443: "8443 当前保留给 gost 回退链路，不能作为新转发端口。",
@@ -310,8 +313,8 @@ class TransitRouteWorkerCreateExecuteRequest(BaseModel):
     @classmethod
     def validate_execute_route_name(cls, value: str) -> str:
         cleaned = value.strip()
-        if cleaned != APPROVED_TRANSIT_ROUTE_NAME:
-            raise ValueError("route_name 不匹配当前审批记录")
+        if not TRANSIT_ROUTE_SAFE_NAME_RE.match(cleaned):
+            raise ValueError("route_name 只能包含字母、数字、点、下划线和短横线，并且必须以字母或数字开头")
         return cleaned
 
     @field_validator("approval_stage")
