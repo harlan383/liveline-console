@@ -609,6 +609,13 @@ export function ServerManagementPanel() {
 
   function friendlyNodeCreateError(error: unknown) {
     const raw = error instanceof Error ? error.message : String(error || "创建失败。");
+    if (
+      raw.includes("FORMAL_SERVER_NOT_APPROVED") ||
+      raw.includes("FORMAL_PREFLIGHT_INTERFACE") ||
+      raw.includes("FORMAL_WORKER_INTERFACE_MISMATCH")
+    ) {
+      return "正式创建审批未通过：请重新运行预检，确认当前落地服务器 Worker 在线、绑定服务器正确，并且 Worker 网卡与默认公网网卡一致。";
+    }
     if (raw.includes("WORKER") || raw.includes("Worker")) {
       return "Worker 不在线或版本不满足，请检查落地服务器 Worker 状态。";
     }

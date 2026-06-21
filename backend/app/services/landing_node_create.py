@@ -23,9 +23,6 @@ from app.services.worker_targeting import (
     worker_supports_command_channel,
 )
 
-APPROVED_FORMAL_SERVER_ID = "968519b3-9017-4b27-a9a0-d5731033f84f"
-APPROVED_FORMAL_SERVER_IP = "64.90.13.19"
-APPROVED_FORMAL_INTERFACE = "ens17"
 LANDING_NODE_CREATE_COMMAND = "landing_node_create"
 DEFAULT_REALITY_SERVER_NAME = "www.microsoft.com"
 DEFAULT_REALITY_DEST = "www.microsoft.com:443"
@@ -53,6 +50,48 @@ def _preflight_clean(command: WorkerCommand | None) -> bool:
     return warning_count == 0 and error_count == 0
 
 
+def _preflight_result(command: WorkerCommand | None) -> dict[str, Any]:
+    if command and isinstance(command.result_json, dict):
+        return command.result_json
+    return {}
+
+
+def _preflight_text(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _preflight_default_interface(command: WorkerCommand | None) -> str | None:
+    result = _preflight_result(command)
+    network = result.get("network") if isinstance(result.get("network"), dict) else {}
+    system = result.get("system") if isinstance(result.get("system"), dict) else {}
+    return (
+        _preflight_text(network.get("default_route_interface"))
+        or _preflight_text(network.get("detected_default_interface"))
+        or _preflight_text(result.get("default_route_interface"))
+        or _preflight_text(result.get("detected_default_interface"))
+        or _preflight_text(system.get("default_route_interface"))
+    )
+
+
+def _preflight_has_interface_mismatch(command: WorkerCommand | None) -> bool:
+    result = _preflight_result(command)
+    network = result.get("network") if isinstance(result.get("network"), dict) else {}
+    system = result.get("system") if isinstance(result.get("system"), dict) else {}
+    if result.get("interface_mismatch") is True or network.get("interface_mismatch") is True or system.get("interface_mismatch") is True:
+        return True
+
+    warnings = result.get("warnings")
+    if isinstance(warnings, list):
+        for item in warnings:
+            if isinstance(item, str) and "interface_mismatch" in item:
+                return True
+            if isinstance(item, dict) and item.get("code") == "interface_mismatch":
+                return True
+    return False
+
+
 def _preflight_has_blocking_xray(command: WorkerCommand | None) -> bool:
     if not command or not isinstance(command.result_json, dict):
         return True
@@ -63,6 +102,10 @@ def _preflight_has_blocking_xray(command: WorkerCommand | None) -> bool:
         or service_installed(result, "3x-ui")
         or xray_existing_config_detected(result)
     )
+
+
+def _vps_is_available_for_create(vps: VpsServer) -> bool:
+    return bool(vps.id and vps.ip and vps.status != "deleted")
 
 
 def _active_node_on_port_exists(db: Session, server_id: str, port: int) -> bool:
@@ -78,25 +121,28 @@ def _active_node_on_port_exists(db: Session, server_id: str, port: int) -> bool:
     )
 
 
-def _approved_worker(db: Session) -> Worker:
+def _approved_worker_for_vps(db: Session, *, vps: VpsServer, preflight: WorkerCommand) -> Worker:
     workers = db.scalars(
         select(Worker)
-        .where(Worker.server_id == APPROVED_FORMAL_SERVER_ID)
+        .where(Worker.server_id == vps.id)
         .where(Worker.role == "landing")
         .where(Worker.status == "online")
-        .where(Worker.interface_name == APPROVED_FORMAL_INTERFACE)
     ).all()
     if not workers:
         raise LandingNodeCreateError(
             "APPROVED_WORKER_NOT_FOUND",
-            "没有找到绑定到审批落地服务器、角色为 landing、网卡为 ens17 的在线 Worker。",
+            "没有找到绑定到当前落地服务器、角色为 landing 的在线 Worker。",
         )
 
-    online_workers = [worker for worker in workers if worker_runtime_status(worker) == "online"]
+    online_workers = [
+        worker
+        for worker in workers
+        if worker.server_id == vps.id and worker.role == "landing" and worker_runtime_status(worker) == "online"
+    ]
     if not online_workers:
         raise LandingNodeCreateError(
             "APPROVED_WORKER_OFFLINE",
-            "审批落地服务器上的 ens17 landing Worker 心跳已过期或不在线。",
+            "当前落地服务器上的 landing Worker 心跳已过期或不在线。",
         )
 
     capable_workers = [
@@ -106,10 +152,24 @@ def _approved_worker(db: Session) -> Worker:
         minimum_version = minimum_worker_version_for_command(LANDING_NODE_CREATE_COMMAND)
         raise LandingNodeCreateError(
             "APPROVED_WORKER_COMMAND_UNSUPPORTED",
-            f"审批落地服务器上的在线 Worker 版本不支持正式创建命令，请先升级到 {minimum_version} 或更高版本。",
+            f"当前落地服务器上的在线 Worker 版本不支持正式创建命令，请先升级到 {minimum_version} 或更高版本。",
         )
 
-    return sorted(capable_workers, key=worker_sort_key, reverse=True)[0]
+    default_interface = _preflight_default_interface(preflight)
+    if not default_interface:
+        raise LandingNodeCreateError(
+            "FORMAL_PREFLIGHT_INTERFACE_UNKNOWN",
+            "最新 landing_preflight 未返回默认公网网卡，不能进入正式创建。",
+        )
+
+    matched_workers = [worker for worker in capable_workers if worker.interface_name == default_interface]
+    if not matched_workers:
+        raise LandingNodeCreateError(
+            "FORMAL_WORKER_INTERFACE_MISMATCH",
+            "当前 landing Worker 绑定网卡与最新 landing_preflight 默认公网网卡不一致，不能进入正式创建。",
+        )
+
+    return sorted(matched_workers, key=worker_sort_key, reverse=True)[0]
 
 
 def validate_landing_node_create_request(
@@ -118,8 +178,8 @@ def validate_landing_node_create_request(
     vps: VpsServer,
     payload: LandingNodeCreateRequest,
 ) -> Worker:
-    if vps.id != APPROVED_FORMAL_SERVER_ID or vps.ip != APPROVED_FORMAL_SERVER_IP:
-        raise LandingNodeCreateError("FORMAL_SERVER_NOT_APPROVED", "本阶段只允许审批锁定的落地服务器进入正式创建。")
+    if not _vps_is_available_for_create(vps):
+        raise LandingNodeCreateError("FORMAL_SERVER_NOT_APPROVED", "当前落地服务器记录不可用于正式创建。")
     if payload.approved_port != APPROVED_FORMAL_LISTEN_PORT:
         raise LandingNodeCreateError("FORMAL_PORT_NOT_APPROVED", "本阶段只允许使用审批端口 27939/TCP。")
 
@@ -138,12 +198,14 @@ def validate_landing_node_create_request(
         raise LandingNodeCreateError("NODE_PORT_ALREADY_EXISTS", "系统中已有未删除节点使用审批端口。")
 
     preflight = latest_landing_preflight(db, vps.id)
+    if _preflight_has_interface_mismatch(preflight):
+        raise LandingNodeCreateError("FORMAL_PREFLIGHT_INTERFACE_MISMATCH", "最新 landing_preflight 显示 Worker 网卡与默认公网网卡不一致。")
     if not _preflight_clean(preflight):
         raise LandingNodeCreateError("LANDING_PREFLIGHT_REQUIRED", "正式创建前必须已有 warnings/errors 均为空的 landing_preflight。")
     if _preflight_has_blocking_xray(preflight):
         raise LandingNodeCreateError("XRAY_ALREADY_PRESENT", "最新 landing_preflight 显示 Xray 或已有配置存在，不能执行创建。")
 
-    return _approved_worker(db)
+    return _approved_worker_for_vps(db, vps=vps, preflight=preflight)
 
 
 def create_landing_node_create_command(
@@ -158,7 +220,7 @@ def create_landing_node_create_command(
         "server_id": vps.id,
         "server_ip": vps.ip,
         "worker_id": worker.id,
-        "interface_name": APPROVED_FORMAL_INTERFACE,
+        "interface_name": worker.interface_name,
         "listen_port": APPROVED_FORMAL_LISTEN_PORT,
         "protocol": "vless",
         "security": "reality",
@@ -212,8 +274,8 @@ def persist_successful_landing_node_result(
         raise LandingNodeCreateError("INVALID_WORKER_RESULT", "Worker 返回结果格式不合法。")
     if result.get("status") != "succeeded":
         raise LandingNodeCreateError("INVALID_WORKER_RESULT_STATUS", "Worker 未返回成功状态，不能写入 node.share_link。")
-    if command.server_id != APPROVED_FORMAL_SERVER_ID:
-        raise LandingNodeCreateError("FORMAL_SERVER_NOT_APPROVED", "Worker 命令不属于审批锁定的服务器。")
+    if not command.server_id:
+        raise LandingNodeCreateError("FORMAL_SERVER_NOT_APPROVED", "Worker 命令缺少绑定落地服务器。")
 
     share_link = _result_string(result, "secure_share_link")
     if not share_link or not share_link.startswith("vless://"):
@@ -221,11 +283,15 @@ def persist_successful_landing_node_result(
     listen_port = _result_int(result, "listen_port")
     if listen_port != APPROVED_FORMAL_LISTEN_PORT:
         raise LandingNodeCreateError("FORMAL_PORT_NOT_APPROVED", "Worker 返回端口不是 27939/TCP。")
-    if _active_node_on_port_exists(db, APPROVED_FORMAL_SERVER_ID, APPROVED_FORMAL_LISTEN_PORT):
+    if _active_node_on_port_exists(db, command.server_id, APPROVED_FORMAL_LISTEN_PORT):
         raise LandingNodeCreateError("NODE_PORT_ALREADY_EXISTS", "系统中已有未删除节点使用审批端口。")
 
+    vps = db.get(VpsServer, command.server_id)
+    if not vps or not _vps_is_available_for_create(vps):
+        raise LandingNodeCreateError("FORMAL_SERVER_NOT_APPROVED", "Worker 命令绑定的落地服务器记录不可用。")
+
     node = Node(
-        vps_id=APPROVED_FORMAL_SERVER_ID,
+        vps_id=command.server_id,
         node_name=_result_string(result, "node_name") or f"liveline-reality-{APPROVED_FORMAL_LISTEN_PORT}",
         protocol="vless",
         transport="tcp",
@@ -247,12 +313,10 @@ def persist_successful_landing_node_result(
         last_sync_status="created_by_liveline_worker",
     )
     db.add(node)
-    vps = db.get(VpsServer, APPROVED_FORMAL_SERVER_ID)
-    if vps:
-        vps.xray_installed = True
-        vps.xray_config_path = MANAGED_XRAY_CONFIG_PATH
-        vps.status = "active"
-        db.add(vps)
+    vps.xray_installed = True
+    vps.xray_config_path = MANAGED_XRAY_CONFIG_PATH
+    vps.status = "active"
+    db.add(vps)
     db.flush()
 
     sanitized = dict(result)
