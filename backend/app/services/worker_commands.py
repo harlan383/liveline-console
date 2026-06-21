@@ -37,6 +37,10 @@ REMOTE_CLEANUP_COMMAND_TYPES = {
     "cleanup_transit_route",
     "cleanup_transit_resource",
 }
+REMOTE_CLEANUP_SERVER_COMMAND_TYPES = {
+    "cleanup_landing_server",
+    "cleanup_transit_resource",
+}
 
 
 def now_utc() -> datetime:
@@ -202,6 +206,7 @@ def normalize_remote_cleanup_result(command_type: str, result: dict[str, Any]) -
     plans_count = _safe_result_int(result.get("plans_count"))
     if plans_count is None:
         plans_count = len(result.get("cleanup_items", [])) if isinstance(result.get("cleanup_items"), list) else None
+    worker_self_cleanup = _normalize_remote_cleanup_worker(result.get("worker_self_cleanup"))
     normalized: dict[str, Any] = {
         "cleanup_type": cleanup_type,
         "status": status,
@@ -214,9 +219,13 @@ def normalize_remote_cleanup_result(command_type: str, result: dict[str, Any]) -
         "interface_name": _safe_result_text(result.get("interface_name")),
         "plans_count": plans_count,
         "cleanup_items": _normalize_remote_cleanup_items(result.get("cleanup_items")),
-        "worker_self_cleanup": _normalize_remote_cleanup_worker(result.get("worker_self_cleanup")),
+        "worker_self_cleanup": worker_self_cleanup,
         "safety_boundary": _normalize_text_list(result.get("safety_boundary"))[:10],
     }
+    if command_type in REMOTE_CLEANUP_SERVER_COMMAND_TYPES:
+        worker_cleanup_status = _remote_cleanup_worker_status(worker_self_cleanup)
+        normalized["worker_cleanup_status"] = worker_cleanup_status
+        normalized["worker_self_cleanup_status"] = worker_cleanup_status
     if redacted_error := _safe_result_text(result.get("redacted_error")):
         normalized["redacted_error"] = redacted_error
     return sanitize_value(normalized)
@@ -257,6 +266,16 @@ def _normalize_remote_cleanup_worker(value: Any) -> dict[str, Any]:
         "delay_seconds": _safe_result_int(value.get("delay_seconds")),
         "detail": _safe_result_text(value.get("detail")),
     }
+
+
+def _remote_cleanup_worker_status(worker_self_cleanup: dict[str, Any]) -> str:
+    if not worker_self_cleanup:
+        return "missing"
+    if worker_self_cleanup.get("scheduled") is True:
+        return "scheduled"
+    if worker_self_cleanup.get("requested") is True:
+        return "requested"
+    return "missing"
 
 
 def _normalize_transit_route_create_diagnostics(value: Any) -> dict[str, Any]:

@@ -115,6 +115,45 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["no_node_share_link_change_confirmed"], True)
         self.assertEqual(payload["share_link"], "[redacted]")
 
+    def test_server_cleanup_missing_worker_self_cleanup_is_marked_missing(self):
+        result = normalize_worker_command_result(
+            "cleanup_landing_server",
+            {
+                "cleanup_type": "cleanup_landing_server",
+                "status": "succeeded",
+                "summary": "Landing server cleanup completed.",
+                "remote_cleanup_performed": True,
+            },
+        )
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["cleanup_type"], "cleanup_landing_server")
+        self.assertEqual(result["worker_cleanup_status"], "missing")
+        self.assertEqual(result["worker_self_cleanup_status"], "missing")
+        self.assertEqual(result["worker_self_cleanup"], {})
+
+    def test_server_cleanup_scheduled_worker_self_cleanup_is_marked_scheduled(self):
+        result = normalize_worker_command_result(
+            "cleanup_transit_resource",
+            {
+                "cleanup_type": "cleanup_transit_resource",
+                "status": "succeeded",
+                "summary": "Transit resource cleanup completed.",
+                "remote_cleanup_performed": True,
+                "worker_self_cleanup": {
+                    "requested": True,
+                    "scheduled": True,
+                    "service_name": "liveline-worker.service",
+                    "delay_seconds": 5,
+                },
+            },
+        )
+
+        self.assertEqual(result["worker_cleanup_status"], "scheduled")
+        self.assertEqual(result["worker_self_cleanup_status"], "scheduled")
+        self.assertTrue(result["worker_self_cleanup"]["requested"])
+        self.assertTrue(result["worker_self_cleanup"]["scheduled"])
+
     def test_transit_route_create_result_is_normalized_as_compact_dry_run(self):
         result = normalize_worker_command_result(
             "transit_route_create",

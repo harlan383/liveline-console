@@ -83,6 +83,7 @@ SENSITIVE_METADATA_MARKERS = (
 LOCAL_WORKER_INSTALL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 WORKER_COMMAND_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "expired", "completed"}
 WORKER_RESULT_BODY_LIMIT_BYTES = 128 * 1024
+WORKER_CLEANUP_EXPECTED_OFFLINE = "cleanup_expected_offline"
 
 
 def now_utc() -> datetime:
@@ -120,6 +121,11 @@ def format_timings(timings: dict[str, float] | None) -> str:
     if not timings:
         return "-"
     return " ".join(f"{key}={value:.2f}" for key, value in timings.items())
+
+
+def worker_cleanup_expected_offline(worker: Worker) -> bool:
+    metadata = worker.metadata_json if isinstance(worker.metadata_json, dict) else {}
+    return worker.status == "deleted" or metadata.get("cleanup_status") == WORKER_CLEANUP_EXPECTED_OFFLINE
 
 
 def log_worker_result_endpoint(
@@ -762,17 +768,33 @@ def worker_heartbeat(
     if payload.hostname:
         worker.hostname = payload.hostname
 
-    worker.status = "online"
-    worker.last_heartbeat_at = current_time
-    worker.metadata_json = {
-        "received_at": current_time.isoformat(),
-        "latest_status": redact_metadata(heartbeat_data),
-    }
-    db.add(worker)
-    if worker.server_id:
-        sync_worker_bound_resource_status(db, worker)
+    cleanup_expected_offline = worker_cleanup_expected_offline(worker)
+    previous_metadata = dict(worker.metadata_json or {})
+    redacted_heartbeat = redact_metadata(heartbeat_data)
+
+    if cleanup_expected_offline:
+        previous_metadata.update(
+            {
+                "received_at": current_time.isoformat(),
+                "latest_status": redacted_heartbeat,
+                "unexpected_heartbeat_after_cleanup": True,
+                "unexpected_heartbeat_at": current_time.isoformat(),
+            }
+        )
+        worker.metadata_json = previous_metadata
     else:
-        try_bind_worker_by_public_ip(db, worker)
+        worker.status = "online"
+        worker.metadata_json = {
+            "received_at": current_time.isoformat(),
+            "latest_status": redacted_heartbeat,
+        }
+    worker.last_heartbeat_at = current_time
+    db.add(worker)
+    if not cleanup_expected_offline:
+        if worker.server_id:
+            sync_worker_bound_resource_status(db, worker)
+        else:
+            try_bind_worker_by_public_ip(db, worker)
     db.commit()
 
     return success_response(
