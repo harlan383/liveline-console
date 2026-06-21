@@ -2606,6 +2606,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.105 Generalize protected landing create server approval | Replace fixed historical landing-server guard with protected active-server approval while keeping fixed port and preflight safeguards |
 | Stage 3.3.107 Landing create Xray listen diagnostics | Add retrying Xray listen checks and safe failure diagnostics for landing_node_create without changing share-link success gates |
 | Stage 3.3.107-b Rebuild Worker binary artifact | Rebuild bundled Linux amd64 Worker binary for 0.1.22-stage-3.3.107 diagnostics before remote Worker upgrade |
+| Stage 3.3.109 Node create modal close polish | Add visible close / finish controls to the direct node create modal after success or failure |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

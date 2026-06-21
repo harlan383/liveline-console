@@ -88,6 +88,17 @@ button.danger:hover {
   background: #b42318;
 }
 
+button.success-button {
+  background: var(--ok);
+  border: 1px solid rgba(50, 213, 131, 0.45);
+  color: #062016;
+}
+
+button.success-button:hover {
+  background: #22c55e;
+  color: #052e16;
+}
+
 button.ghost-button {
   background: transparent;
   border: 1px solid var(--line-strong);
@@ -96,6 +107,27 @@ button.ghost-button {
 
 button.ghost-button:hover {
   background: #172636;
+}
+
+button.modal-close-button {
+  align-items: center;
+  aspect-ratio: 1;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--text);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 22px;
+  height: 38px;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+}
+
+button.modal-close-button:hover {
+  background: #172636;
+  color: #ffffff;
 }
 
 input,
@@ -1479,6 +1511,44 @@ textarea {
 
 .node-create-form {
   width: min(820px, calc(100vw - 48px));
+}
+
+.node-create-modal {
+  display: grid;
+  gap: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: min(90vh, 860px);
+  overflow: hidden;
+  padding: 0;
+  width: min(860px, calc(100vw - 48px));
+}
+
+.node-create-modal-header {
+  background: rgba(10, 20, 31, 0.98);
+  border-bottom: 1px solid var(--line);
+  padding: 16px 18px;
+}
+
+.node-create-modal-header .message {
+  margin: 6px 0 0;
+}
+
+.node-create-modal-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.node-create-modal .node-create-form {
+  width: 100%;
+}
+
+.node-create-modal-footer {
+  background: rgba(10, 20, 31, 0.98);
+  border-top: 1px solid var(--line);
+  justify-content: flex-end;
+  padding: 14px 18px;
 }
 
 .node-create-safety-details {
