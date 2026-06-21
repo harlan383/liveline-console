@@ -152,6 +152,7 @@ const approvedTransitRouteName = "hk-socat-live-23843";
 const approvedTransitListenPort = 23843;
 const approvedTransitRealCreateStage = "Stage 3.3.73d-transit-route-real-create-code-path";
 const transitCreateTerminalStatuses = new Set(["succeeded", "failed", "cancelled", "expired"]);
+const workerCommandNotFoundRetryMs = 30_000;
 
 const transitRouteCreateProgressLabels: Record<TransitRouteCreateStep, string> = {
   idle: "准备中",
@@ -848,11 +849,55 @@ export function TransitRoutesPanel() {
     }
   }
 
+  function formatApiError(result: {
+    error_code?: string | null;
+    message?: string | null;
+    error?: string | null;
+    detail?: unknown;
+  }) {
+    const code = result.error_code || "REQUEST_FAILED";
+    let detailText = "";
+    if (typeof result.detail === "string") {
+      detailText = result.detail;
+    } else if (Array.isArray(result.detail) && result.detail.length > 0) {
+      detailText = "请求参数不正确。";
+    }
+    const message = result.message || result.error || detailText || "请求失败，请稍后重试。";
+    return `${code}: ${message}`;
+  }
+
+  function isWorkerCommandNotFound(result: {
+    error_code?: string | null;
+    message?: string | null;
+    detail?: unknown;
+  }) {
+    const code = (result.error_code || "").toUpperCase();
+    const message = `${result.message || ""} ${typeof result.detail === "string" ? result.detail : ""}`.toLowerCase();
+    return (
+      code === "WORKER_COMMAND_NOT_FOUND" ||
+      code === "COMMAND_NOT_FOUND" ||
+      code === "NOT_FOUND" ||
+      message.includes("not found") ||
+      message.includes("不存在")
+    );
+  }
+
   async function waitForTransitCommandCompletion(commandId: string, runningStep: TransitRouteCreateStep) {
+    const notFoundRetryStartedAt = Date.now();
     for (let attempt = 0; attempt < 90; attempt += 1) {
       const result = await getWorkerCommand(commandId);
       if (!result.success) {
-        throw new Error(`${result.error_code}: ${result.message}`);
+        if (isWorkerCommandNotFound(result) && Date.now() - notFoundRetryStartedAt < workerCommandNotFoundRetryMs) {
+          setCreateStep(runningStep);
+          await sleep(2000);
+          continue;
+        }
+        if (isWorkerCommandNotFound(result)) {
+          throw new Error(
+            "WORKER_COMMAND_STATUS_UNAVAILABLE: Worker 命令状态暂不可读，请刷新后检查任务中心。",
+          );
+        }
+        throw new Error(formatApiError(result));
       }
       setCreateCommand(result.data);
       if (transitCreateTerminalStatuses.has(result.data.status)) {
@@ -884,6 +929,16 @@ export function TransitRoutesPanel() {
 
   function friendlyTransitCreateError(error: unknown) {
     const raw = error instanceof Error ? error.message : String(error || "创建失败。");
+    if (
+      raw.includes("WORKER_COMMAND_STATUS_UNAVAILABLE") ||
+      raw.includes("WORKER_COMMAND_NOT_FOUND") ||
+      raw.includes("COMMAND_NOT_FOUND") ||
+      raw.includes("NOT_FOUND") ||
+      raw.includes("暂不可读") ||
+      raw.includes("404")
+    ) {
+      return "Worker 命令状态暂不可读：请稍候刷新任务状态，或重新打开弹窗查看是否已完成。";
+    }
     if (raw.includes("TRANSIT_PREFLIGHT_REQUIRED") || raw.includes("TRANSIT_PREFLIGHT_TARGET_MISMATCH")) {
       return "只读预检不匹配：请先用当前中转服务器、落地节点、监听端口和目标端口重新完成只读预检。";
     }
@@ -1265,9 +1320,9 @@ export function TransitRoutesPanel() {
     if (!remotePreflightCommand) {
       return;
     }
-    const result = await apiFetch<WorkerCommandData>(`/api/workers/commands/${remotePreflightCommand.id}`);
+    const result = await getWorkerCommand(remotePreflightCommand.id);
     if (!result.success) {
-      setRemotePreflightMessage(`${result.error_code}: ${result.message}`);
+      setRemotePreflightMessage(formatApiError(result));
       return;
     }
     setRemotePreflightCommand(result.data);

@@ -84,6 +84,18 @@ LOCAL_WORKER_INSTALL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 WORKER_COMMAND_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "expired", "completed"}
 WORKER_RESULT_BODY_LIMIT_BYTES = 128 * 1024
 WORKER_CLEANUP_EXPECTED_OFFLINE = "cleanup_expected_offline"
+WORKER_COMMAND_READ_SENSITIVE_MARKERS = (
+    "share_link",
+    "secure_share_link",
+    "candidate_link",
+    "client_link",
+    "vless_link",
+    "uuid",
+    "privatekey",
+    "private_key",
+    "short_id",
+    "shortid",
+)
 
 
 def now_utc() -> datetime:
@@ -111,6 +123,32 @@ def request_content_length(request: Request) -> str:
 
 def worker_command_status_is_terminal(status: str | None) -> bool:
     return status in WORKER_COMMAND_TERMINAL_STATUSES
+
+
+def redact_worker_command_read_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            lowered_key = key_text.lower()
+            if any(marker in lowered_key for marker in WORKER_COMMAND_READ_SENSITIVE_MARKERS):
+                redacted[key_text] = "[redacted]"
+                continue
+            redacted[key_text] = redact_worker_command_read_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_worker_command_read_value(item) for item in value[:50]]
+    if isinstance(value, str):
+        lowered_value = value.lower()
+        if any(marker in lowered_value for marker in ("vless://", "vmess://", "trojan://", "ss://")):
+            return "[redacted-link]"
+    return value
+
+
+def serialize_admin_worker_command_read(command: WorkerCommand, worker: Worker | None = None) -> dict[str, Any]:
+    data = serialize_worker_command(command, worker=worker)
+    data["result_json"] = redact_worker_command_read_value(data.get("result_json") or {})
+    return data
 
 
 def elapsed_ms_since(started_perf: float) -> float:
@@ -1541,6 +1579,21 @@ def create_admin_worker_command(
             "minimum_supported_worker_version": minimum_worker_version_for_command(payload.command_type),
         },
         message,
+    )
+
+
+@router.get("/workers/commands/{command_id}")
+def get_admin_worker_command(command_id: str, request: Request, db: Session = Depends(get_db)):
+    if not require_admin_session(db, request):
+        return auth_error()
+
+    command = db.get(WorkerCommand, command_id)
+    if not command:
+        return error_response(404, "WORKER_COMMAND_NOT_FOUND", "Worker 命令不存在。")
+    worker = db.get(Worker, command.worker_id)
+    return success_response(
+        serialize_admin_worker_command_read(command, worker=worker),
+        "ok",
     )
 
 
