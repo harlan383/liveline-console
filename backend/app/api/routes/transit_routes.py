@@ -25,7 +25,6 @@ from app.schemas.transit_route import (
     APPROVED_TRANSIT_RESOURCE_ID,
     APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
     APPROVED_TRANSIT_SERVICE_NAME,
-    APPROVED_TRANSIT_WORKER_ID,
     APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
     PROTECTED_CREATE_PORT_MESSAGES,
     PROTECTED_CREATE_PORTS,
@@ -80,7 +79,7 @@ TRANSIT_ROUTE_CREATE_DRY_RUN_BOUNDARY = [
     "no cutover",
 ]
 TRANSIT_ROUTE_CREATE_REAL_BOUNDARY = [
-    "approved real create only for hk-socat-live-23843",
+    "protected real create only after matching active resources, online Worker, and successful readonly preflight",
     "no arbitrary shell accepted",
     "no systemd unit content accepted from API",
     "fixed socat forwarding template only",
@@ -91,6 +90,7 @@ TRANSIT_ROUTE_CREATE_REAL_BOUNDARY = [
     "no firewall or cloud security group change",
     "no cutover",
 ]
+TRANSIT_RESOURCE_CREATE_STATUSES = {"active", "worker_online"}
 READONLY_PREFLIGHT_SAFETY_BOUNDARY = [
     "readonly preflight plan only",
     "no SSH executed",
@@ -207,6 +207,21 @@ def has_matching_successful_transit_readonly_preflight(
     landing_target_port: int,
     forwarding_method: str,
 ) -> bool:
+    return (
+        find_matching_successful_transit_readonly_preflight(
+            db,
+            transit_resource_id=transit_resource_id,
+            landing_node_id=landing_node_id,
+            planned_listen_port=planned_listen_port,
+            landing_target_host=landing_target_host,
+            landing_target_port=landing_target_port,
+            forwarding_method=forwarding_method,
+        )
+        is not None
+    )
+
+
+def recent_successful_transit_readonly_preflights(db: Session, transit_resource_id: str) -> list[WorkerCommand]:
     commands = db.scalars(
         select(WorkerCommand)
         .where(WorkerCommand.command_type == TRANSIT_READONLY_PREFLIGHT_COMMAND)
@@ -216,6 +231,20 @@ def has_matching_successful_transit_readonly_preflight(
         .order_by(WorkerCommand.completed_at.desc().nullslast(), WorkerCommand.created_at.desc())
         .limit(20)
     ).all()
+    return list(commands)
+
+
+def find_matching_successful_transit_readonly_preflight(
+    db: Session,
+    *,
+    transit_resource_id: str,
+    landing_node_id: str,
+    planned_listen_port: int,
+    landing_target_host: str,
+    landing_target_port: int,
+    forwarding_method: str,
+) -> WorkerCommand | None:
+    commands = recent_successful_transit_readonly_preflights(db, transit_resource_id)
     for command in commands:
         payload = command.payload_json if isinstance(command.payload_json, dict) else {}
         result = command.result_json if isinstance(command.result_json, dict) else {}
@@ -232,8 +261,32 @@ def has_matching_successful_transit_readonly_preflight(
         if _payload_text(payload, "forwarding_method") != forwarding_method:
             continue
         if result.get("passed") is True or result.get("status") == "passed":
-            return True
-    return False
+            return command
+    return None
+
+
+def preflight_interface_name(command: WorkerCommand | None) -> str | None:
+    if command is None or not isinstance(command.result_json, dict):
+        return None
+    result = command.result_json
+    nested_sources = [
+        result,
+        result.get("network") if isinstance(result.get("network"), dict) else {},
+        result.get("system") if isinstance(result.get("system"), dict) else {},
+    ]
+    for source in nested_sources:
+        if not isinstance(source, dict):
+            continue
+        for key in (
+            "interface_name",
+            "worker_config_interface",
+            "default_route_interface",
+            "primary_interface",
+        ):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
 
 
 def has_in_flight_transit_route_create_command(db: Session, transit_resource_id: str) -> bool:
@@ -1084,20 +1137,16 @@ def create_transit_route_worker_create_execute(
 
     if payload.approval_stage != APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE:
         return error_response(400, "APPROVAL_STAGE_MISMATCH", "真实执行审批阶段不匹配。")
-    if payload.transit_resource_id != APPROVED_TRANSIT_RESOURCE_ID:
-        return error_response(400, "TRANSIT_RESOURCE_APPROVAL_MISMATCH", "中转资源与审批记录不一致。")
-    if payload.landing_node_id != APPROVED_LANDING_NODE_ID:
-        return error_response(400, "LANDING_NODE_APPROVAL_MISMATCH", "落地节点与审批记录不一致。")
     if payload.planned_listen_port != APPROVED_TRANSIT_LISTEN_PORT:
-        return error_response(400, "LISTEN_PORT_APPROVAL_MISMATCH", "监听端口与审批记录不一致。")
-    if payload.landing_target_host != APPROVED_LANDING_TARGET_HOST:
-        return error_response(400, "LANDING_HOST_APPROVAL_MISMATCH", "落地目标 Host 与审批记录不一致。")
+        return error_response(
+            400,
+            "TRANSIT_PORT_NOT_APPROVED",
+            "当前受保护创建入口只允许已审批的 23843/TCP 中转监听端口。",
+        )
     if payload.landing_target_port != APPROVED_LANDING_TARGET_PORT:
-        return error_response(400, "LANDING_PORT_APPROVAL_MISMATCH", "落地目标端口与审批记录不一致。")
+        return error_response(400, "LANDING_TARGET_PORT_MISMATCH", "当前受保护创建入口只允许落地目标端口 27939。")
     if payload.forwarding_method != APPROVED_TRANSIT_FORWARDING_METHOD:
-        return error_response(400, "FORWARDING_METHOD_APPROVAL_MISMATCH", "转发方式与审批记录不一致。")
-    if payload.route_name != APPROVED_TRANSIT_ROUTE_NAME:
-        return error_response(400, "ROUTE_NAME_APPROVAL_MISMATCH", "线路名称与审批记录不一致。")
+        return error_response(400, "TRANSIT_METHOD_NOT_APPROVED", "当前受保护创建入口只允许 socat 转发方式。")
     if payload.planned_listen_port in PROTECTED_CREATE_PORTS:
         return error_response(
             400,
@@ -1107,22 +1156,34 @@ def create_transit_route_worker_create_execute(
 
     resource = db.get(TransitResource, payload.transit_resource_id)
     if not resource or resource.deleted_at is not None:
-        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转服务器记录不存在。")
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转服务器记录不存在或已删除。")
     if resource.resource_type != "server":
-        return error_response(400, "TRANSIT_RESOURCE_TYPE_UNSUPPORTED", "只允许 server 类型中转资源执行真实创建。")
-    if resource.status == "disabled":
-        return error_response(400, "TRANSIT_RESOURCE_DISABLED", "已停用的中转资源不能执行真实创建。")
+        return error_response(400, "TRANSIT_RESOURCE_NOT_USABLE", "只允许 server 类型中转资源执行受保护创建。")
+    if resource.status not in TRANSIT_RESOURCE_CREATE_STATUSES:
+        return error_response(
+            400,
+            "TRANSIT_RESOURCE_NOT_USABLE",
+            "只允许 active 或 worker_online 状态的中转服务器执行受保护创建。",
+        )
+    if not resource.entry_host:
+        return error_response(400, "TRANSIT_RESOURCE_NOT_USABLE", "中转服务器缺少入口地址，不能执行受保护创建。")
 
     node = db.get(Node, payload.landing_node_id)
     if not node or node.deleted_at is not None:
-        return error_response(404, "LANDING_NODE_NOT_FOUND", "落地节点不存在。")
+        return error_response(404, "TRANSIT_LANDING_NODE_NOT_ACTIVE", "落地节点不存在或已删除。")
     if node.status != "active":
-        return error_response(400, "LANDING_NODE_NOT_ACTIVE", "只允许 active 落地节点执行真实创建。")
+        return error_response(400, "TRANSIT_LANDING_NODE_NOT_ACTIVE", "只允许 active 落地节点执行受保护创建。")
+    if not node.share_link:
+        return error_response(
+            400,
+            "TRANSIT_LANDING_NODE_SHARE_LINK_REQUIRED",
+            "落地直连节点缺少已生成的 share_link，不能生成中转客户端候选链接。",
+        )
     landing_host = node.vps.ip if node.vps else None
     if landing_host != payload.landing_target_host:
-        return error_response(400, "LANDING_HOST_MISMATCH", "落地节点当前 IP 与审批目标不一致。")
+        return error_response(400, "TRANSIT_PREFLIGHT_TARGET_MISMATCH", "落地节点当前 IP 与请求目标不一致。")
     if node.xray_port != payload.landing_target_port:
-        return error_response(400, "LANDING_TARGET_PORT_MISMATCH", "落地节点当前端口与审批目标不一致。")
+        return error_response(400, "LANDING_TARGET_PORT_MISMATCH", "落地节点当前端口与请求目标不一致。")
 
     existing_route = db.scalar(
         select(TransitRoute).where(
@@ -1133,12 +1194,13 @@ def create_transit_route_worker_create_execute(
         )
     )
     if existing_route:
-        return error_response(409, "TRANSIT_PORT_ALREADY_PLANNED", "该中转资源已有相同监听端口的 creating/active 线路记录。")
+        return error_response(409, "TRANSIT_PORT_ALREADY_EXISTS", "该中转资源已有相同监听端口的 creating/active 线路记录。")
 
     if has_in_flight_transit_route_create_command(db, resource.id):
         return error_response(409, "TRANSIT_ROUTE_CREATE_COMMAND_IN_FLIGHT", "当前已有 pending/running/claimed 中转链路创建命令。")
 
-    if not has_matching_successful_transit_readonly_preflight(
+    recent_preflights = recent_successful_transit_readonly_preflights(db, resource.id)
+    matching_preflight = find_matching_successful_transit_readonly_preflight(
         db,
         transit_resource_id=resource.id,
         landing_node_id=node.id,
@@ -1146,11 +1208,20 @@ def create_transit_route_worker_create_execute(
         landing_target_host=payload.landing_target_host,
         landing_target_port=payload.landing_target_port,
         forwarding_method=payload.forwarding_method,
-    ):
+    )
+    if not matching_preflight:
+        code = "TRANSIT_PREFLIGHT_TARGET_MISMATCH" if recent_preflights else "TRANSIT_PREFLIGHT_REQUIRED"
         return error_response(
             400,
-            "READONLY_PREFLIGHT_REQUIRED",
-            "未找到匹配的已成功远程只读预检记录，不能执行真实中转链路创建。",
+            code,
+            "未找到与当前中转服务器、落地节点、监听端口和目标端口完全匹配的成功只读预检记录。",
+        )
+    preflight_interface = preflight_interface_name(matching_preflight)
+    if not preflight_interface:
+        return error_response(
+            400,
+            "TRANSIT_PREFLIGHT_TARGET_MISMATCH",
+            "匹配的只读预检结果缺少网卡信息，不能执行受保护创建。",
         )
 
     try:
@@ -1159,27 +1230,29 @@ def create_transit_route_worker_create_execute(
             server_type="transit",
             server_id=resource.id,
             role="transit",
-            requested_worker_id=APPROVED_TRANSIT_WORKER_ID,
             command_type=TRANSIT_ROUTE_CREATE_COMMAND,
         )
     except WorkerTargetError as exc:
-        return error_response(400, exc.code, exc.message)
+        mapped_code = "TRANSIT_WORKER_NOT_ONLINE" if exc.code in {"WORKER_NOT_BOUND", "WORKER_OFFLINE"} else exc.code
+        return error_response(400, mapped_code, exc.message)
 
     target_worker = target.worker
-    if target_worker.id != APPROVED_TRANSIT_WORKER_ID:
-        return error_response(400, "WORKER_APPROVAL_MISMATCH", "目标 Worker 与审批记录不一致。")
-    if target_worker.interface_name != APPROVED_TRANSIT_INTERFACE_NAME:
+    if target_worker.server_id != resource.id:
+        return error_response(400, "TRANSIT_WORKER_SERVER_MISMATCH", "目标 Worker 未绑定到当前中转服务器。")
+    if target_worker.role != "transit":
+        return error_response(400, "TRANSIT_WORKER_NOT_ONLINE", "只允许 transit role Worker 执行受保护创建。")
+    if target_worker.interface_name != preflight_interface:
         return error_response(
             400,
-            "WORKER_INTERFACE_MISMATCH",
-            "目标 Worker interface_name 与审批记录不一致。",
+            "TRANSIT_WORKER_INTERFACE_MISMATCH",
+            "目标 Worker interface_name 与最近成功只读预检结果不一致。",
         )
-    if target_worker.role != "transit":
-        return error_response(400, "WORKER_ROLE_MISMATCH", "只允许 transit role Worker 执行真实创建。")
 
     command_payload = {
         "transit_resource_id": resource.id,
         "transit_resource_name": resource.name,
+        "transit_worker_id": target_worker.id,
+        "interface_name": target_worker.interface_name,
         "landing_node_id": node.id,
         "landing_node_name": node.node_name,
         "planned_listen_port": payload.planned_listen_port,

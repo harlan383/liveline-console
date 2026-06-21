@@ -4,44 +4,56 @@ from datetime import datetime, timezone
 from app.models.node import Node
 from app.models.transit_resource import TransitResource
 from app.models.transit_route import TransitRoute
+from app.models.vps_server import VpsServer
 from app.models.worker_command import WorkerCommand
 from app.schemas.transit_route import (
-    APPROVED_LANDING_NODE_ID,
-    APPROVED_LANDING_TARGET_HOST,
     APPROVED_LANDING_TARGET_PORT,
     APPROVED_TRANSIT_FORWARDING_METHOD,
     APPROVED_TRANSIT_LISTEN_PORT,
-    APPROVED_TRANSIT_RESOURCE_ID,
-    APPROVED_TRANSIT_ROUTE_NAME,
-    APPROVED_TRANSIT_SERVICE_NAME,
-    APPROVED_TRANSIT_SERVICE_PATH,
-    APPROVED_TRANSIT_WORKER_ID,
 )
 from app.services.transit_route_create import persist_successful_transit_route_create_result
 
+TRANSIT_RESOURCE_ID = "02d16c43-d20c-46e9-b84c-a367343b48ae"
+TRANSIT_WORKER_ID = "9c359d1a-f018-4484-992b-d2ed840cb88f"
+LANDING_NODE_ID = "7cf3ec9c-8e76-418e-97c1-5ee3ddb28e31"
+LANDING_VPS_ID = "a3e4c4bf-2b4a-4705-bb45-65d9da9c1cbf"
+ROUTE_NAME = "wepc-socat-live-23843"
+SERVICE_NAME = "liveline-socat-23843.service"
+SERVICE_PATH = "/etc/systemd/system/liveline-socat-23843.service"
+
 
 class FakeSession:
-    def __init__(self, duplicate_route: TransitRoute | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        duplicate_route: TransitRoute | None = None,
+        resource_status: str = "worker_online",
+        node_share_link: bool = True,
+    ) -> None:
         self.resource = TransitResource(
-            id=APPROVED_TRANSIT_RESOURCE_ID,
-            name="香港中转服务器",
+            id=TRANSIT_RESOURCE_ID,
+            name="wepc香港中转",
             resource_type="server",
-            status="active",
+            status=resource_status,
+            entry_host="163.223.216.108",
+            entry_port=22,
         )
         self.node = Node(
-            id=APPROVED_LANDING_NODE_ID,
-            vps_id="landing-vps",
+            id=LANDING_NODE_ID,
+            vps_id=LANDING_VPS_ID,
             node_name="liveline-reality-27939",
             xray_port=APPROVED_LANDING_TARGET_PORT,
             status="active",
+            share_link="redacted-share-link-present" if node_share_link else None,
         )
+        self.node.vps = VpsServer(id=LANDING_VPS_ID, ip="64.90.13.19")
         self.duplicate_route = duplicate_route
         self.added: list[object] = []
 
     def get(self, model, key):
-        if model is TransitResource and key == APPROVED_TRANSIT_RESOURCE_ID:
+        if model is TransitResource and key == TRANSIT_RESOURCE_ID:
             return self.resource
-        if model is Node and key == APPROVED_LANDING_NODE_ID:
+        if model is Node and key == LANDING_NODE_ID:
             return self.node
         return None
 
@@ -57,43 +69,57 @@ class FakeSession:
                 item.id = "created-route"
 
 
-def successful_result() -> dict:
-    return {
-        "execution_mode": "real_create",
-        "real_execution": True,
-        "status": "succeeded",
-        "summary": "Approved socat transit route created.",
-        "worker_version": "0.1.20-stage-3.3.73",
-        "hostname": "WEPC202605221223335",
-        "role": "transit",
-        "interface_name": "eth0",
+def command(**payload_overrides) -> WorkerCommand:
+    payload = {
+        "transit_resource_id": TRANSIT_RESOURCE_ID,
+        "transit_worker_id": TRANSIT_WORKER_ID,
+        "landing_node_id": LANDING_NODE_ID,
         "planned_listen_port": APPROVED_TRANSIT_LISTEN_PORT,
-        "landing_target_host": APPROVED_LANDING_TARGET_HOST,
+        "landing_target_host": "64.90.13.19",
         "landing_target_port": APPROVED_LANDING_TARGET_PORT,
         "forwarding_method": APPROVED_TRANSIT_FORWARDING_METHOD,
-        "route_name": APPROVED_TRANSIT_ROUTE_NAME,
-        "service_name": APPROVED_TRANSIT_SERVICE_NAME,
-        "service_path": APPROVED_TRANSIT_SERVICE_PATH,
-        "safety_boundary": ["no nodes.share_link read or modification", "no cutover"],
-        "checks": [{"name": "listener_verified", "passed": True}],
+        "route_name": ROUTE_NAME,
     }
-
-
-def command() -> WorkerCommand:
+    payload.update(payload_overrides)
     return WorkerCommand(
         id="command-1",
-        worker_id=APPROVED_TRANSIT_WORKER_ID,
+        worker_id=TRANSIT_WORKER_ID,
         server_type="transit",
-        server_id=APPROVED_TRANSIT_RESOURCE_ID,
+        server_id=TRANSIT_RESOURCE_ID,
         command_type="transit_route_create",
+        payload_json=payload,
         status="running",
         attempts=1,
         created_at=datetime.now(timezone.utc),
     )
 
 
+def successful_result(**overrides) -> dict:
+    result = {
+        "execution_mode": "real_create",
+        "real_execution": True,
+        "status": "succeeded",
+        "summary": "Approved socat transit route created.",
+        "worker_version": "0.1.22-stage-3.3.107",
+        "hostname": "WEPC202605221223335",
+        "role": "transit",
+        "interface_name": "eth0",
+        "planned_listen_port": APPROVED_TRANSIT_LISTEN_PORT,
+        "landing_target_host": "64.90.13.19",
+        "landing_target_port": APPROVED_LANDING_TARGET_PORT,
+        "forwarding_method": APPROVED_TRANSIT_FORWARDING_METHOD,
+        "route_name": ROUTE_NAME,
+        "service_name": SERVICE_NAME,
+        "service_path": SERVICE_PATH,
+        "safety_boundary": ["no nodes.share_link read or modification", "no cutover"],
+        "checks": [{"name": "listener_verified", "passed": True}],
+    }
+    result.update(overrides)
+    return result
+
+
 class TransitRouteCreateResultPersistenceTests(unittest.TestCase):
-    def test_real_create_result_creates_transit_route_without_share_link(self):
+    def test_real_create_result_creates_dynamic_transit_route_without_share_link(self):
         db = FakeSession()
         normalized = persist_successful_transit_route_create_result(
             db=db,
@@ -104,13 +130,15 @@ class TransitRouteCreateResultPersistenceTests(unittest.TestCase):
         routes = [item for item in db.added if isinstance(item, TransitRoute)]
         self.assertEqual(len(routes), 1)
         route = routes[0]
-        self.assertEqual(route.name, APPROVED_TRANSIT_ROUTE_NAME)
+        self.assertEqual(route.name, ROUTE_NAME)
+        self.assertEqual(route.transit_resource_id, TRANSIT_RESOURCE_ID)
+        self.assertEqual(route.node_id, LANDING_NODE_ID)
         self.assertEqual(route.listen_port, APPROVED_TRANSIT_LISTEN_PORT)
-        self.assertEqual(route.target_host, APPROVED_LANDING_TARGET_HOST)
+        self.assertEqual(route.target_host, "64.90.13.19")
         self.assertEqual(route.target_port, APPROVED_LANDING_TARGET_PORT)
         self.assertEqual(route.forwarding_method, APPROVED_TRANSIT_FORWARDING_METHOD)
-        self.assertEqual(route.service_name, APPROVED_TRANSIT_SERVICE_NAME)
-        self.assertEqual(route.service_path, APPROVED_TRANSIT_SERVICE_PATH)
+        self.assertEqual(route.service_name, SERVICE_NAME)
+        self.assertEqual(route.service_path, SERVICE_PATH)
         self.assertEqual(route.status, "active")
         self.assertIsNone(route.share_link)
         self.assertTrue(normalized["route_persisted"])
@@ -119,15 +147,15 @@ class TransitRouteCreateResultPersistenceTests(unittest.TestCase):
     def test_real_create_result_is_idempotent_when_route_exists(self):
         existing = TransitRoute(
             id="existing-route",
-            name=APPROVED_TRANSIT_ROUTE_NAME,
-            transit_resource_id=APPROVED_TRANSIT_RESOURCE_ID,
-            node_id=APPROVED_LANDING_NODE_ID,
+            name=ROUTE_NAME,
+            transit_resource_id=TRANSIT_RESOURCE_ID,
+            node_id=LANDING_NODE_ID,
             listen_port=APPROVED_TRANSIT_LISTEN_PORT,
-            target_host=APPROVED_LANDING_TARGET_HOST,
+            target_host="64.90.13.19",
             target_port=APPROVED_LANDING_TARGET_PORT,
             forwarding_method=APPROVED_TRANSIT_FORWARDING_METHOD,
-            service_name=APPROVED_TRANSIT_SERVICE_NAME,
-            service_path=APPROVED_TRANSIT_SERVICE_PATH,
+            service_name=SERVICE_NAME,
+            service_path=SERVICE_PATH,
             status="active",
         )
         db = FakeSession(duplicate_route=existing)
@@ -142,6 +170,36 @@ class TransitRouteCreateResultPersistenceTests(unittest.TestCase):
         self.assertFalse(normalized["route_persisted"])
         self.assertTrue(normalized["route_duplicate_existing"])
         self.assertEqual(normalized["route_id"], "existing-route")
+
+    def test_real_create_result_rejects_missing_landing_share_link(self):
+        with self.assertRaises(Exception) as context:
+            persist_successful_transit_route_create_result(
+                db=FakeSession(node_share_link=False),
+                command=command(),
+                result=successful_result(),
+            )
+
+        self.assertEqual(context.exception.code, "LANDING_NODE_SHARE_LINK_REQUIRED")
+
+    def test_real_create_result_rejects_non_approved_port(self):
+        with self.assertRaises(Exception) as context:
+            persist_successful_transit_route_create_result(
+                db=FakeSession(),
+                command=command(planned_listen_port=25000),
+                result=successful_result(planned_listen_port=25000, service_name="liveline-socat-25000.service"),
+            )
+
+        self.assertEqual(context.exception.code, "LISTEN_PORT_APPROVAL_MISMATCH")
+
+    def test_real_create_result_rejects_mismatched_result_target(self):
+        with self.assertRaises(Exception) as context:
+            persist_successful_transit_route_create_result(
+                db=FakeSession(),
+                command=command(),
+                result=successful_result(landing_target_host="203.0.113.10"),
+            )
+
+        self.assertEqual(context.exception.code, "LANDING_HOST_APPROVAL_MISMATCH")
 
 
 if __name__ == "__main__":

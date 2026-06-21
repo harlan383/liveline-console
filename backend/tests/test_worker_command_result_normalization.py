@@ -372,6 +372,52 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertFalse(parsed.dry_run)
         self.assertEqual(parsed.route_name, "hk-socat-live-23843")
 
+    def test_transit_route_worker_create_execute_schema_accepts_safe_dynamic_route_name(self):
+        payload = {
+            "transit_resource_id": "02d16c43-d20c-46e9-b84c-a367343b48ae",
+            "landing_node_id": "7cf3ec9c-8e76-418e-97c1-5ee3ddb28e31",
+            "planned_listen_port": 23843,
+            "landing_target_host": "64.90.13.19",
+            "landing_target_port": 27939,
+            "forwarding_method": "socat",
+            "route_name": "wepc-socat-live-23843",
+            "approval_stage": APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
+            "dry_run": False,
+            "approval_required": False,
+            "user_approved_real_execution": True,
+            "firewall_security_group_confirmed": True,
+            "cloud_firewall_confirmed": True,
+            "server_firewall_confirmed": True,
+            "no_node_share_link_change_confirmed": True,
+            "no_full_client_link_confirmed": True,
+            "no_cutover_confirmed": True,
+        }
+        parsed = TransitRouteWorkerCreateExecuteRequest(**payload)
+        self.assertEqual(parsed.route_name, "wepc-socat-live-23843")
+
+    def test_transit_route_worker_create_execute_schema_rejects_unsafe_route_name(self):
+        payload = {
+            "transit_resource_id": "02d16c43-d20c-46e9-b84c-a367343b48ae",
+            "landing_node_id": "7cf3ec9c-8e76-418e-97c1-5ee3ddb28e31",
+            "planned_listen_port": 23843,
+            "landing_target_host": "64.90.13.19",
+            "landing_target_port": 27939,
+            "forwarding_method": "socat",
+            "route_name": "bad route; systemctl restart socat",
+            "approval_stage": APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
+            "dry_run": False,
+            "approval_required": False,
+            "user_approved_real_execution": True,
+            "firewall_security_group_confirmed": True,
+            "cloud_firewall_confirmed": True,
+            "server_firewall_confirmed": True,
+            "no_node_share_link_change_confirmed": True,
+            "no_full_client_link_confirmed": True,
+            "no_cutover_confirmed": True,
+        }
+        with self.assertRaises(Exception):
+            TransitRouteWorkerCreateExecuteRequest(**payload)
+
     def test_transit_route_worker_create_execute_schema_rejects_extra_systemd_unit(self):
         payload = {
             "transit_resource_id": "1e222459-9fa2-4c62-800f-a3b35edb7df8",
