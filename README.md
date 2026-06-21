@@ -2599,6 +2599,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.96 Resource safe delete public smoke record | Record public-console smoke test for Stage 3.3.95 safe-delete buttons and confirmation dialogs; no delete executed |
 | Stage 3.3.97 Protected remote cleanup delete flow | Upgrade delete buttons to protected remote cleanup flows for nodes, servers, transit routes, and transit resources; cleanup succeeds before soft-delete |
 | Stage 3.3.99 Remote Worker upgrade to 0.1.21 | Upgrade landing/transit Workers to support protected cleanup commands; no cleanup or production delete executed |
+| Stage 3.3.100 Protected cleanup final approval | Final approval checklist and readonly preflight before any protected remote cleanup execution; no cleanup command created |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
