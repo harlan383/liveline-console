@@ -53,17 +53,7 @@ type NodePlanFormState = {
   cloudFirewallConfirmed: boolean;
   serverFirewallConfirmed: boolean;
   requirePreflightSuccess: boolean;
-};
-
-type FormalCreateConfirmState = {
-  firewallOpen: boolean;
-  installXray: boolean;
-  createRealityNode: boolean;
-  noExistingXray: boolean;
-  listenPortApproved: boolean;
-  generateShareLink: boolean;
-  writeShareLinkAfterSuccess: boolean;
-  rollbackNewArtifactsOnly: boolean;
+  protectedCreateConfirmed: boolean;
 };
 
 type WorkerBootstrapFormState = {
@@ -75,8 +65,6 @@ type WorkerBootstrapFormState = {
 type ServerNodeSummary = VpsServerData["nodes"][number];
 
 const APPROVED_FORMAL_LISTEN_PORT = 27939;
-const NODE_CREATE_RANDOM_PORT_MIN = 10000;
-const NODE_CREATE_RANDOM_PORT_MAX = 30000;
 const BLOCKED_NODE_LISTEN_PORTS = new Set([
   22,
   80,
@@ -122,6 +110,7 @@ function createEmptyNodePlanForm(): NodePlanFormState {
     cloudFirewallConfirmed: true,
     serverFirewallConfirmed: true,
     requirePreflightSuccess: true,
+    protectedCreateConfirmed: false,
   };
 }
 
@@ -141,30 +130,6 @@ const NODE_CREATE_TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired",
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function randomNodePort() {
-  const range = NODE_CREATE_RANDOM_PORT_MAX - NODE_CREATE_RANDOM_PORT_MIN + 1;
-  for (let index = 0; index < 120; index += 1) {
-    const port = NODE_CREATE_RANDOM_PORT_MIN + Math.floor(Math.random() * range);
-    if (!BLOCKED_NODE_LISTEN_PORTS.has(port)) {
-      return port;
-    }
-  }
-  return APPROVED_FORMAL_LISTEN_PORT;
-}
-
-function createEmptyFormalCreateConfirm(): FormalCreateConfirmState {
-  return {
-    firewallOpen: false,
-    installXray: false,
-    createRealityNode: false,
-    noExistingXray: false,
-    listenPortApproved: false,
-    generateShareLink: false,
-    writeShareLinkAfterSuccess: false,
-    rollbackNewArtifactsOnly: false,
-  };
 }
 
 const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
@@ -321,7 +286,6 @@ export function ServerManagementPanel() {
   const [serverForm, setServerForm] = useState<ServerFormState>(emptyServerForm);
   const [nodePlanForm, setNodePlanForm] = useState<NodePlanFormState>(() => createEmptyNodePlanForm());
   const [nodePlanResult, setNodePlanResult] = useState<LandingNodePlanResponse | null>(null);
-  const [formalCreateConfirm, setFormalCreateConfirm] = useState<FormalCreateConfirmState>(() => createEmptyFormalCreateConfirm());
   const [formalCreateResult, setFormalCreateResult] = useState<LandingNodeCreateResponse | null>(null);
   const [nodeCreateStep, setNodeCreateStep] = useState("idle");
   const [nodeCreateCommand, setNodeCreateCommand] = useState<WorkerCommandData | null>(null);
@@ -379,7 +343,6 @@ export function ServerManagementPanel() {
     setServerForm(emptyServerForm);
     setNodePlanForm(createEmptyNodePlanForm());
     setNodePlanResult(null);
-    setFormalCreateConfirm(createEmptyFormalCreateConfirm());
     setFormalCreateResult(null);
     setNodeCreateStep("idle");
     setNodeCreateCommand(null);
@@ -447,7 +410,6 @@ export function ServerManagementPanel() {
     setSelectedServer(server);
     setNodePlanForm(createEmptyNodePlanForm());
     setNodePlanResult(null);
-    setFormalCreateConfirm(createEmptyFormalCreateConfirm());
     setFormalCreateResult(null);
     setNodeCreateStep("idle");
     setNodeCreateCommand(null);
@@ -667,15 +629,6 @@ export function ServerManagementPanel() {
     return server?.nodes.find((node) => node.port === listenPort && node.share_link_present) ?? null;
   }
 
-  function generateNodePort() {
-    const port = randomNodePort();
-    setNodePlanForm((current) => ({
-      ...current,
-      listenPort: String(port),
-      nodeName: current.nodeName.startsWith("liveline-reality-") ? `liveline-reality-${port}` : current.nodeName,
-    }));
-  }
-
   async function submitSimplifiedLandingNodeCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedServer) {
@@ -686,12 +639,16 @@ export function ServerManagementPanel() {
       return;
     }
     const listenPort = Number(nodePlanForm.listenPort);
-    if (!Number.isInteger(listenPort) || listenPort < NODE_CREATE_RANDOM_PORT_MIN || listenPort > NODE_CREATE_RANDOM_PORT_MAX) {
-      setMessage("监听端口建议使用 10000-30000 之间的整数。");
+    if (listenPort !== APPROVED_FORMAL_LISTEN_PORT) {
+      setMessage(`当前正式创建仍使用受保护端口 ${APPROVED_FORMAL_LISTEN_PORT}/TCP。本阶段不支持动态端口正式创建。`);
       return;
     }
     if (BLOCKED_NODE_LISTEN_PORTS.has(listenPort)) {
       setMessage(`端口 ${listenPort} 是常用 / 保留端口，请换一个端口。`);
+      return;
+    }
+    if (!nodePlanForm.protectedCreateConfirmed) {
+      setMessage(`请先确认 ${APPROVED_FORMAL_LISTEN_PORT}/TCP 已在云安全组、云防火墙和服务器本机防火墙放行。`);
       return;
     }
     setSubmitting(true);
@@ -739,9 +696,9 @@ export function ServerManagementPanel() {
           allow_modify_firewall: false,
           allow_generate_share_link: true,
           allow_overwrite_existing_config: false,
-          cloud_security_group_confirmed: true,
-          cloud_firewall_confirmed: true,
-          server_firewall_confirmed: true,
+          cloud_security_group_confirmed: nodePlanForm.protectedCreateConfirmed,
+          cloud_firewall_confirmed: nodePlanForm.protectedCreateConfirmed,
+          server_firewall_confirmed: nodePlanForm.protectedCreateConfirmed,
           require_manual_cloud_firewall_confirmation: true,
           require_preflight_success: true,
         },
@@ -763,15 +720,15 @@ export function ServerManagementPanel() {
       const createResult = await createLandingNodeExecution(
         selectedServer.id,
         {
-          approved_port: listenPort,
+          approved_port: APPROVED_FORMAL_LISTEN_PORT,
           node_name: nodePlanForm.nodeName || null,
           server_name: nodePlanForm.serverName,
           dest: nodePlanForm.dest,
-          confirm_firewall_open: true,
-          confirm_generate_share_link: true,
-          confirm_write_share_link_after_success: true,
-          confirm_no_existing_xray: true,
-          confirm_rollback_new_artifacts_only: true,
+          confirm_firewall_open: nodePlanForm.protectedCreateConfirmed,
+          confirm_generate_share_link: nodePlanForm.protectedCreateConfirmed,
+          confirm_write_share_link_after_success: nodePlanForm.protectedCreateConfirmed,
+          confirm_no_existing_xray: nodePlanForm.protectedCreateConfirmed,
+          confirm_rollback_new_artifacts_only: nodePlanForm.protectedCreateConfirmed,
         },
         csrfToken,
       );
@@ -1045,119 +1002,6 @@ export function ServerManagementPanel() {
       await loadServers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除节点失败。");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitLandingNodePlan(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedServer) {
-      return;
-    }
-    const listenPort = Number(nodePlanForm.listenPort);
-    if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
-      setMessage("计划监听端口必须是 1-65535 之间的整数。");
-      return;
-    }
-    if (listenPort !== APPROVED_FORMAL_LISTEN_PORT) {
-      setMessage(`Stage 3.3.36 的正式审批候选端口固定为 ${APPROVED_FORMAL_LISTEN_PORT}/TCP，本阶段不会为其他端口生成执行计划。`);
-      return;
-    }
-    if (BLOCKED_NODE_LISTEN_PORTS.has(listenPort)) {
-      setMessage(`端口 ${listenPort} 是常用 / 保留端口，不能作为本次落地节点候选监听端口。请改用 10000-30000 中未被保留的 TCP 端口。`);
-      return;
-    }
-    setSubmitting(true);
-    setNodePlanResult(null);
-    setMessage("正在生成落地节点 dry-run 创建计划；不会执行远程命令。");
-    try {
-      const csrfToken = await ensureCsrfToken();
-      const result = await createLandingNodePlan(
-        selectedServer.id,
-        {
-          listen_port: listenPort,
-          protocol: nodePlanForm.protocol,
-          security: nodePlanForm.security,
-          flow: nodePlanForm.flow,
-          server_name: nodePlanForm.serverName,
-          dest: nodePlanForm.dest,
-          remark: nodePlanForm.remark || null,
-          allow_install_xray: nodePlanForm.allowInstallXray,
-          allow_modify_firewall: nodePlanForm.allowModifyFirewall,
-          allow_generate_share_link: nodePlanForm.allowGenerateShareLink,
-          allow_overwrite_existing_config: nodePlanForm.allowOverwriteExistingConfig,
-          cloud_security_group_confirmed: nodePlanForm.cloudSecurityGroupConfirmed,
-          cloud_firewall_confirmed: nodePlanForm.cloudFirewallConfirmed,
-          server_firewall_confirmed: nodePlanForm.serverFirewallConfirmed,
-          require_manual_cloud_firewall_confirmation: true,
-          require_preflight_success: nodePlanForm.requirePreflightSuccess,
-        },
-        csrfToken,
-      );
-      if (!result.success) {
-        setMessage(`${result.error_code}: ${result.message}`);
-        return;
-      }
-      setNodePlanResult(result.data);
-      setMessage(
-        result.data.ready
-          ? "dry-run 计划已生成：当前只表示可进入下一阶段审批，不会创建真实节点。"
-          : `dry-run 计划已生成：存在 ${result.data.blocked_reasons.length} 个阻塞项，不能进入真实创建。`,
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "生成落地节点创建计划失败。");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function allFormalCreateConfirmationsChecked() {
-    return Object.values(formalCreateConfirm).every(Boolean);
-  }
-
-  async function submitFormalLandingNodeCreate() {
-    if (!selectedServer) {
-      return;
-    }
-    if (!nodePlanResult?.ready) {
-      setMessage("必须先生成 Ready 的 dry-run / execution guard 计划。");
-      return;
-    }
-    if (!allFormalCreateConfirmationsChecked()) {
-      setMessage("正式创建前必须完成全部二次确认。");
-      return;
-    }
-    setSubmitting(true);
-    setFormalCreateResult(null);
-    setMessage("正在创建正式落地节点 Worker 命令；真实执行由审批锁定的 Worker 轮询处理。");
-    try {
-      const csrfToken = await ensureCsrfToken();
-      const result = await createLandingNodeExecution(
-        selectedServer.id,
-        {
-          approved_port: APPROVED_FORMAL_LISTEN_PORT,
-          confirm_firewall_open: formalCreateConfirm.firewallOpen,
-          confirm_generate_share_link: formalCreateConfirm.generateShareLink,
-          confirm_write_share_link_after_success: formalCreateConfirm.writeShareLinkAfterSuccess,
-          confirm_no_existing_xray: formalCreateConfirm.noExistingXray,
-          confirm_rollback_new_artifacts_only: formalCreateConfirm.rollbackNewArtifactsOnly,
-        },
-        csrfToken,
-      );
-      if (!result.success) {
-        setMessage(`${result.error_code}: ${result.message}`);
-        return;
-      }
-      setFormalCreateResult(result.data);
-      setLatestWorkerCommandByServerId((current) => ({ ...current, [selectedServer.id]: result.data.command }));
-      setMessage(
-        `正式创建 Worker 命令已创建：${result.data.command_id}。真实链接不会写入命令结果、日志或聊天记录。`,
-      );
-      await loadWorkerCommands(result.data.target_worker_id, selectedServer.id);
-      await loadServers();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "创建正式落地节点命令失败。");
     } finally {
       setSubmitting(false);
     }
@@ -1615,16 +1459,6 @@ export function ServerManagementPanel() {
     return labels[reason] ?? reason;
   }
 
-  function planValue(value: unknown) {
-    if (value === null || value === undefined || value === "") {
-      return "未返回";
-    }
-    if (typeof value === "boolean") {
-      return value ? "是" : "否";
-    }
-    return String(value);
-  }
-
   function renderNodePlanResult() {
     const steps = ["preflight_create", "preflight_running", "plan", "command_create", "command_running", "refresh", "complete"];
     const currentIndex = steps.indexOf(nodeCreateStep);
@@ -1732,7 +1566,7 @@ export function ServerManagementPanel() {
       <form className="form server-modal-form node-create-form" onSubmit={(event) => void submitSimplifiedLandingNodeCreate(event)}>
         <div className="worker-bootstrap-intro wide-field">
           <strong>创建直连 Reality 节点</strong>
-          <span>填写必要信息后点击创建。系统会自动预检、安装 / 启动 Xray、检查端口监听，成功后再允许导出链接和二维码。</span>
+          <span>填写必要信息后点击创建。系统会自动预检、安装 / 启动 Xray、检查受保护端口监听，成功后再允许导出链接和二维码。</span>
           <span>
             服务器：{selectedServer.name || selectedServer.ip} / {selectedServer.ip} / Worker：
             {selectedServer.worker_version || "未注册"}
@@ -1752,26 +1586,9 @@ export function ServerManagementPanel() {
           <input readOnly value={`${selectedServer.name || selectedServer.ip} / ${selectedServer.ip}`} />
         </label>
         <label>
-          端口
-          <div className="node-create-port-row">
-            <input
-              inputMode="numeric"
-              value={nodePlanForm.listenPort}
-              onChange={(event) =>
-                setNodePlanForm({
-                  ...nodePlanForm,
-                  listenPort: event.target.value,
-                  nodeName: nodePlanForm.nodeName.startsWith("liveline-reality-")
-                    ? `liveline-reality-${event.target.value}`
-                    : nodePlanForm.nodeName,
-                })
-              }
-            />
-            <button className="secondary" type="button" onClick={generateNodePort}>
-              自动生成
-            </button>
-          </div>
-          <small>建议使用 10000-30000 中未被占用的 TCP 端口；云安全组 / 云防火墙仍需你自行放行。</small>
+          当前正式创建端口
+          <input readOnly value={`${APPROVED_FORMAL_LISTEN_PORT}/TCP`} />
+          <small>请确认云安全组 / 云防火墙 / 服务器本机防火墙已放行该 TCP 端口。自定义端口能力后续单独进入 dynamic-port create stage。</small>
         </label>
         <label>
           Reality SNI / serverName
@@ -1789,11 +1606,23 @@ export function ServerManagementPanel() {
           <input readOnly value="VLESS / Reality / TCP" />
         </label>
 
+        <label className="node-create-confirm wide-field">
+          <input
+            type="checkbox"
+            checked={nodePlanForm.protectedCreateConfirmed}
+            onChange={(event) => setNodePlanForm({ ...nodePlanForm, protectedCreateConfirmed: event.target.checked })}
+          />
+          <span>
+            我已确认 {APPROVED_FORMAL_LISTEN_PORT}/TCP 已在云安全组、云防火墙和服务器本机防火墙放行，并理解创建成功后会生成可用客户端链接。
+          </span>
+        </label>
+
         <details className="node-create-safety-details wide-field">
           <summary>高级安全说明</summary>
           <div className="node-create-safety-body">
             <span>系统不会自动修改云安全组、云防火墙或服务器本机防火墙；端口放行仍由用户自行确认。</span>
-            <span>禁止使用常用 / 保留端口：22、80、443、8080、8443、18443、3000、3200、8000、8200、5432、6379、15432、16379、10000、27017。</span>
+            <span>本阶段只简化创建体验，不扩展正式动态端口能力；正式创建仍使用当前后端受保护端口能力。</span>
+            <span>如需支持自定义端口，后续需要单独进入 dynamic-port create stage，重新设计后端 / Worker 审批边界。</span>
             <span>创建前会自动运行 landing_preflight，确认端口未监听、Xray 未安装、且没有已有 LiveLine 管理配置。</span>
             <span>只有远程创建成功、Xray 服务启动成功、端口监听成功后，后端才允许写入 node.share_link。</span>
             <span>失败时不会写入 node.share_link，不会展示二维码，也不会生成可复制的完整链接。</span>
@@ -1802,7 +1631,7 @@ export function ServerManagementPanel() {
         </details>
 
         <div className="modal-actions wide-field">
-          <button disabled={submitting} type="submit">
+          <button disabled={submitting || !nodePlanForm.protectedCreateConfirmed} type="submit">
             {submitting ? "创建中..." : "创建"}
           </button>
           <button className="secondary" type="button" onClick={closeModal}>

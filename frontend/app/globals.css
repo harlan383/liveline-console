@@ -1481,13 +1481,6 @@ textarea {
   width: min(820px, calc(100vw - 48px));
 }
 
-.node-create-port-row {
-  align-items: center;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
 .node-create-safety-details {
   background: rgba(19, 31, 45, 0.74);
   border: 1px solid var(--line);
@@ -1508,6 +1501,30 @@ textarea {
   gap: 8px;
   line-height: 1.55;
   padding-top: 10px;
+}
+
+.node-create-confirm {
+  align-items: flex-start;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  gap: 10px;
+  line-height: 1.6;
+  padding: 12px;
+}
+
+.node-create-confirm input {
+  flex: 0 0 auto;
+  margin-top: 5px;
+  width: auto;
+}
+
+.node-create-confirm span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .node-create-result {

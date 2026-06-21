@@ -6,7 +6,7 @@ Stage 3.3.103 simplifies the direct VLESS Reality node creation experience for d
 
 The previous create modal exposed too much Stage 3.3.37 approval text, port review detail, and formal protection checklist. This stage keeps the backend safety boundary intact while making the operator flow shorter:
 
-1. Fill in the node name, landing server, port, and Reality SNI / dest.
+1. Fill in the node name, landing server, protected port, and Reality SNI / dest.
 2. Click create.
 3. The frontend creates a readonly landing preflight command and waits for completion.
 4. The frontend submits the existing protected landing node create command only after the plan is ready.
@@ -20,20 +20,22 @@ The direct node create modal now shows the daily fields first:
 
 - Node name.
 - Landing server.
-- TCP port.
-- Auto-generate port button for the 10000-30000 range, excluding common reserved ports.
+- Current protected TCP port: `27939/TCP`.
+- A short explicit confirmation that `27939/TCP` is allowed in the cloud security group, cloud firewall, and server firewall.
 - Reality SNI / serverName.
 - Reality dest.
 - Create and cancel buttons.
 
 Verbose safety notes, firewall reminders, and historical approval details were moved into a default-collapsed section named `高级安全说明`.
 
+This stage does not add dynamic-port creation. The formal create path still uses the current backend protected port capability. Custom-port creation requires a separate dynamic-port create stage.
+
 ## Backend Safety Boundary
 
 The backend create path remains protected:
 
 - A successful landing preflight is still required.
-- Existing backend validation still gates the selected landing server, Worker, and approved port.
+- Existing backend validation still gates the selected landing server, Worker, and protected approved port.
 - The Worker result must be successful before the backend writes `node.share_link`.
 - The backend writes `node.share_link` only after Xray configuration, service startup, and port-listening verification succeed.
 - Failure does not write `node.share_link`.
