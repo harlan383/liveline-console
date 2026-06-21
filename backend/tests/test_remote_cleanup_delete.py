@@ -334,6 +334,8 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
         self.assertEqual(existing_node.status, "deleted")
         self.assertEqual(existing_worker.status, "deleted")
         self.assertEqual(existing_worker.metadata_json["cleanup_status"], "cleanup_expected_offline")
+        self.assertEqual(result["worker_cleanup_status"], "missing")
+        self.assertEqual(result["worker_self_cleanup_status"], "missing")
         self.assertEqual(token.status, "expired")
 
 
