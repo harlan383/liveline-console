@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.22-stage-3.3.107"
+const workerVersion = "0.1.23-stage-3.3.117"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -47,14 +47,10 @@ const commandTimeout = 180 * time.Second
 const formalLandingPort = 27939
 const approvedTransitCreateStage = "Stage 3.3.71-transit-route-worker-create-path"
 const approvedTransitRealCreateStage = "Stage 3.3.73d-transit-route-real-create-code-path"
-const approvedTransitResourceID = "1e222459-9fa2-4c62-800f-a3b35edb7df8"
-const approvedTransitWorkerID = "f2e16197-e953-46dd-90af-66f64759a2a9"
-const approvedTransitLandingNodeID = "a71472c6-f62c-43b5-a223-9f5f070ae4ef"
 const approvedTransitListenPort = 23843
 const approvedTransitLandingTargetHost = "64.90.13.19"
 const approvedTransitLandingTargetPort = 27939
 const approvedTransitForwardingMethod = "socat"
-const approvedTransitInterfaceName = "eth0"
 const approvedTransitRouteName = "hk-socat-live-23843"
 const approvedTransitSocatServiceName = "liveline-socat-23843.service"
 const approvedTransitSocatServicePath = "/etc/systemd/system/liveline-socat-23843.service"
@@ -81,6 +77,7 @@ var postJSONFunc = postJSON
 var postJSONViaCurlFunc = postJSONViaCurl
 var livelineSocatServiceNameRE = regexp.MustCompile(`^liveline-socat-[0-9]+\.service$`)
 var livelineWorkerServiceNameRE = regexp.MustCompile(`^liveline-worker(?:-[A-Za-z0-9_-]+)?\.service$`)
+var transitRouteNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`)
 
 var protectedTransitListenPorts = map[int]string{
 	22:    "22 is reserved for SSH management",
@@ -92,6 +89,7 @@ var protectedTransitListenPorts = map[int]string{
 type config struct {
 	ConsoleURL               string
 	WorkerID                 string
+	ServerID                 string
 	WorkerSecret             string
 	Role                     string
 	InterfaceName            string
@@ -272,6 +270,7 @@ func runRegister(args []string) error {
 	cfg := config{
 		ConsoleURL:               strings.TrimRight(strings.TrimSpace(*consoleURL), "/"),
 		WorkerID:                 response.Data.WorkerID,
+		ServerID:                 response.Data.ServerID,
 		WorkerSecret:             response.Data.WorkerSecret,
 		Role:                     cleanRole,
 		InterfaceName:            strings.TrimSpace(*interfaceName),
@@ -281,7 +280,7 @@ func runRegister(args []string) error {
 		return err
 	}
 
-	fmt.Printf("LiveLine Worker registered. worker_id=%s role=%s heartbeat=%ds\n", cfg.WorkerID, cfg.Role, cfg.HeartbeatIntervalSeconds)
+	fmt.Printf("LiveLine Worker registered. worker_id=%s server_id=%s role=%s heartbeat=%ds\n", cfg.WorkerID, cfg.ServerID, cfg.Role, cfg.HeartbeatIntervalSeconds)
 	return nil
 }
 
@@ -1161,6 +1160,8 @@ func remoteCleanupFailureResult(cfg config, hostname string, request remoteClean
 
 type transitRouteCreateRequest struct {
 	TransitResourceID string
+	TransitWorkerID   string
+	InterfaceName     string
 	LandingNodeID     string
 	PlannedListenPort int
 	LandingTargetHost string
@@ -1204,8 +1205,8 @@ func executeTransitRouteCreateDryRunWithRequest(cfg config, hostname string, com
 	if err := validateTransitRouteCreateDryRunRequest(request); err != nil {
 		return nil, err
 	}
-	if cfg.InterfaceName != approvedTransitInterfaceName {
-		return nil, fmt.Errorf("transit_route_create interface %s is not approved", cfg.InterfaceName)
+	if request.InterfaceName != "" && request.InterfaceName != cfg.InterfaceName {
+		return nil, errors.New("TRANSIT_INTERFACE_MISMATCH: transit_route_create interface_name does not match current worker")
 	}
 
 	serviceName := transitSocatServiceNameFor(command.ID)
@@ -1329,7 +1330,7 @@ func executeTransitRouteCreateReal(cfg config, hostname string, request transitR
 		"forwarding_method":   approvedTransitForwardingMethod,
 		"purpose":             request.Purpose,
 		"approval_stage":      request.ApprovalStage,
-		"route_name":          approvedTransitRouteName,
+		"route_name":          request.RouteName,
 		"service_name":        approvedTransitSocatServiceName,
 		"service_path":        approvedTransitSocatServicePath,
 		"checks": []any{
@@ -1360,6 +1361,8 @@ func parseTransitRouteCreateRequest(payload map[string]any) (transitRouteCreateR
 	}
 	request := transitRouteCreateRequest{
 		TransitResourceID: stringPayload(payload, "transit_resource_id"),
+		TransitWorkerID:   stringPayload(payload, "transit_worker_id"),
+		InterfaceName:     stringPayload(payload, "interface_name"),
 		LandingNodeID:     stringPayload(payload, "landing_node_id"),
 		PlannedListenPort: intPayload(payload, "planned_listen_port"),
 		LandingTargetHost: stringPayload(payload, "landing_target_host"),
@@ -1383,11 +1386,11 @@ func parseTransitRouteCreateRequest(payload map[string]any) (transitRouteCreateR
 }
 
 func validateTransitRouteCreateApprovedParams(request transitRouteCreateRequest) error {
-	if request.TransitResourceID != approvedTransitResourceID {
-		return errors.New("transit_route_create transit_resource_id is not approved")
+	if request.TransitResourceID == "" {
+		return errors.New("transit_route_create transit_resource_id is required")
 	}
-	if request.LandingNodeID != approvedTransitLandingNodeID {
-		return errors.New("transit_route_create landing_node_id is not approved")
+	if request.LandingNodeID == "" {
+		return errors.New("transit_route_create landing_node_id is required")
 	}
 	if request.PlannedListenPort != approvedTransitListenPort {
 		return errors.New("transit_route_create planned_listen_port is not approved")
@@ -1409,6 +1412,31 @@ func validateTransitRouteCreateApprovedParams(request transitRouteCreateRequest)
 	}
 	if !safeDialTargetHost(request.LandingTargetHost) {
 		return errors.New("transit_route_create landing target host is invalid")
+	}
+	if !transitRouteNameRE.MatchString(request.RouteName) {
+		return errors.New("transit_route_create route_name contains unsafe characters")
+	}
+	return nil
+}
+
+func validateTransitRouteCreateWorkerApproval(cfg config, request transitRouteCreateRequest) error {
+	if request.TransitWorkerID == "" {
+		return errors.New("TRANSIT_WORKER_ID_MISSING: transit_route_create transit_worker_id is required")
+	}
+	if request.TransitWorkerID != cfg.WorkerID {
+		return errors.New("TRANSIT_WORKER_ID_MISMATCH: transit_route_create transit_worker_id does not match current worker")
+	}
+	if cfg.ServerID == "" {
+		return errors.New("TRANSIT_RESOURCE_ID_MISSING: current worker config missing server_id")
+	}
+	if request.TransitResourceID != cfg.ServerID {
+		return errors.New("TRANSIT_RESOURCE_ID_MISMATCH: transit_route_create transit_resource_id does not match current worker server_id")
+	}
+	if request.InterfaceName == "" {
+		return errors.New("TRANSIT_INTERFACE_MISSING: transit_route_create interface_name is required")
+	}
+	if request.InterfaceName != cfg.InterfaceName {
+		return errors.New("TRANSIT_INTERFACE_MISMATCH: transit_route_create interface_name does not match current worker")
 	}
 	return nil
 }
@@ -1448,14 +1476,8 @@ func validateTransitRouteCreateRealRequest(cfg config, request transitRouteCreat
 	if !request.NoShareLinkChange || !request.NoFullClientLink || !request.NoCutover {
 		return errors.New("transit_route_create requires no share-link, no full-link, and no-cutover confirmations")
 	}
-	if request.RouteName != approvedTransitRouteName {
-		return errors.New("transit_route_create route_name is not approved")
-	}
-	if cfg.WorkerID != approvedTransitWorkerID {
-		return errors.New("transit_route_create worker_id is not approved")
-	}
-	if cfg.InterfaceName != approvedTransitInterfaceName {
-		return fmt.Errorf("transit_route_create interface %s is not approved", cfg.InterfaceName)
+	if err := validateTransitRouteCreateWorkerApproval(cfg, request); err != nil {
+		return err
 	}
 	return validateTransitRouteCreateApprovedParams(request)
 }
@@ -1544,7 +1566,7 @@ func transitRouteCreateFailureResult(cfg config, hostname string, request transi
 		"forwarding_method":            approvedTransitForwardingMethod,
 		"purpose":                      request.Purpose,
 		"approval_stage":               request.ApprovalStage,
-		"route_name":                   approvedTransitRouteName,
+		"route_name":                   request.RouteName,
 		"service_name":                 approvedTransitSocatServiceName,
 		"service_path":                 approvedTransitSocatServicePath,
 		"diagnostics":                  diagnostics,
@@ -4750,6 +4772,7 @@ func writeConfig(path string, cfg config) error {
 	content := strings.Join([]string{
 		"console_url: " + quoteConfig(cfg.ConsoleURL),
 		"worker_id: " + quoteConfig(cfg.WorkerID),
+		"server_id: " + quoteConfig(cfg.ServerID),
 		"worker_secret: " + quoteConfig(cfg.WorkerSecret),
 		"role: " + quoteConfig(cfg.Role),
 		"interface_name: " + quoteConfig(cfg.InterfaceName),
@@ -4783,6 +4806,7 @@ func readConfig(path string) (config, error) {
 	return config{
 		ConsoleURL:               values["console_url"],
 		WorkerID:                 values["worker_id"],
+		ServerID:                 values["server_id"],
 		WorkerSecret:             values["worker_secret"],
 		Role:                     values["role"],
 		InterfaceName:            values["interface_name"],

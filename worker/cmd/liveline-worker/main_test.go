@@ -15,6 +15,11 @@ import (
 	"testing"
 )
 
+const testTransitResourceID = "current-transit-resource"
+const testTransitWorkerID = "current-transit-worker"
+const testTransitLandingNodeID = "current-landing-node"
+const testTransitInterfaceName = "eth0"
+
 func TestParseDefaultRoute(t *testing.T) {
 	info := parseDefaultRoute("default via 64.90.13.254 dev ens17 proto dhcp src 64.90.13.19 metric 100\n")
 	if info.Interface != "ens17" {
@@ -113,6 +118,32 @@ func TestValidateManagedXrayBaseDirForPreflightRejectsNonEmptyKnownSubdir(t *tes
 	}
 	if !strings.Contains(err.Error(), "not empty") {
 		t.Fatalf("error = %q, want not empty", err.Error())
+	}
+}
+
+func TestWorkerConfigPersistsServerID(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	original := config{
+		ConsoleURL:               "https://console.example.invalid",
+		WorkerID:                 testTransitWorkerID,
+		ServerID:                 testTransitResourceID,
+		WorkerSecret:             "fake-secret",
+		Role:                     "transit",
+		InterfaceName:            testTransitInterfaceName,
+		HeartbeatIntervalSeconds: 60,
+	}
+	if err := writeConfig(configPath, original); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := readConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ServerID != testTransitResourceID {
+		t.Fatalf("ServerID = %q, want %q", loaded.ServerID, testTransitResourceID)
+	}
+	if loaded.WorkerID != testTransitWorkerID || loaded.InterfaceName != testTransitInterfaceName {
+		t.Fatalf("loaded identity mismatch: %#v", loaded)
 	}
 }
 
@@ -541,8 +572,10 @@ func TestPrepareCommandResultForSubmitLeavesNonTransitUntouched(t *testing.T) {
 
 func approvedTransitRouteCreatePayload() map[string]any {
 	return map[string]any{
-		"transit_resource_id": approvedTransitResourceID,
-		"landing_node_id":     approvedTransitLandingNodeID,
+		"transit_resource_id": testTransitResourceID,
+		"transit_worker_id":   testTransitWorkerID,
+		"interface_name":      testTransitInterfaceName,
+		"landing_node_id":     testTransitLandingNodeID,
 		"planned_listen_port": approvedTransitListenPort,
 		"landing_target_host": approvedTransitLandingTargetHost,
 		"landing_target_port": approvedTransitLandingTargetPort,
@@ -556,6 +589,15 @@ func approvedTransitRouteCreatePayload() map[string]any {
 	}
 }
 
+func approvedTransitRouteCreateConfig() config {
+	return config{
+		Role:          "transit",
+		WorkerID:      testTransitWorkerID,
+		ServerID:      testTransitResourceID,
+		InterfaceName: testTransitInterfaceName,
+	}
+}
+
 func TestTransitRouteCreateDryRunReturnsPlanOnly(t *testing.T) {
 	command := workerCommand{
 		ID:          "12345678-1234-1234-1234-123456789abc",
@@ -563,7 +605,7 @@ func TestTransitRouteCreateDryRunReturnsPlanOnly(t *testing.T) {
 		Payload:     approvedTransitRouteCreatePayload(),
 	}
 	result, err := executeTransitRouteCreate(
-		config{Role: "transit", InterfaceName: "eth0"},
+		approvedTransitRouteCreateConfig(),
 		"WEPC202605221223335",
 		command,
 	)
@@ -659,7 +701,7 @@ func TestTransitRouteCreateRealRequestRejectsNonApprovedPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.PlannedListenPort = 24731
-	err = validateTransitRouteCreateRealRequest(config{Role: "transit", WorkerID: approvedTransitWorkerID, InterfaceName: approvedTransitInterfaceName}, request)
+	err = validateTransitRouteCreateRealRequest(approvedTransitRouteCreateConfig(), request)
 	if err == nil {
 		t.Fatal("validateTransitRouteCreateRealRequest returned nil for non-approved port")
 	}
@@ -674,12 +716,42 @@ func TestTransitRouteCreateRealRequestRejectsNonApprovedTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.LandingTargetHost = "203.0.113.10"
-	err = validateTransitRouteCreateRealRequest(config{Role: "transit", WorkerID: approvedTransitWorkerID, InterfaceName: approvedTransitInterfaceName}, request)
+	err = validateTransitRouteCreateRealRequest(approvedTransitRouteCreateConfig(), request)
 	if err == nil {
 		t.Fatal("validateTransitRouteCreateRealRequest returned nil for non-approved target")
 	}
 	if !strings.Contains(err.Error(), "landing_target_host is not approved") {
 		t.Fatalf("error = %q, want landing_target_host approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealRequestRejectsNonApprovedTargetPort(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.LandingTargetPort = 28000
+	err = validateTransitRouteCreateRealRequest(approvedTransitRouteCreateConfig(), request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRealRequest returned nil for non-approved target port")
+	}
+	if !strings.Contains(err.Error(), "landing_target_port is not approved") {
+		t.Fatalf("error = %q, want landing_target_port approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealRequestRejectsNonSocatForwarding(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ForwardingMethod = "gost"
+	err = validateTransitRouteCreateRealRequest(approvedTransitRouteCreateConfig(), request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRealRequest returned nil for non-socat forwarding")
+	}
+	if !strings.Contains(err.Error(), "only approved socat forwarding") {
+		t.Fatalf("error = %q, want socat approval error", err.Error())
 	}
 }
 
@@ -695,17 +767,75 @@ func TestTransitRouteCreateRealRequestRejectsUnsafePayload(t *testing.T) {
 	}
 }
 
-func TestTransitRouteCreateRealRequestRequiresApprovedWorker(t *testing.T) {
+func TestTransitRouteCreateRealRequestAllowsCurrentWorkerApproval(t *testing.T) {
 	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = validateTransitRouteCreateRealRequest(config{Role: "transit", WorkerID: "other-worker", InterfaceName: approvedTransitInterfaceName}, request)
+	if err := validateTransitRouteCreateRealRequest(approvedTransitRouteCreateConfig(), request); err != nil {
+		t.Fatalf("validateTransitRouteCreateRealRequest returned error for current worker approval: %v", err)
+	}
+}
+
+func TestTransitRouteCreateRealRequestRejectsWorkerMismatch(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateRealRequest(config{Role: "transit", WorkerID: "other-worker", ServerID: testTransitResourceID, InterfaceName: testTransitInterfaceName}, request)
 	if err == nil {
 		t.Fatal("validateTransitRouteCreateRealRequest returned nil for wrong worker")
 	}
-	if !strings.Contains(err.Error(), "worker_id is not approved") {
-		t.Fatalf("error = %q, want worker approval error", err.Error())
+	if !strings.Contains(err.Error(), "TRANSIT_WORKER_ID_MISMATCH") {
+		t.Fatalf("error = %q, want worker mismatch error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealRequestRejectsTransitResourceMismatch(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := approvedTransitRouteCreateConfig()
+	cfg.ServerID = "other-transit-resource"
+	err = validateTransitRouteCreateRealRequest(cfg, request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRealRequest returned nil for wrong transit resource")
+	}
+	if !strings.Contains(err.Error(), "TRANSIT_RESOURCE_ID_MISMATCH") {
+		t.Fatalf("error = %q, want resource mismatch error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealRequestRejectsInterfaceMismatch(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := approvedTransitRouteCreateConfig()
+	cfg.InterfaceName = "ens17"
+	err = validateTransitRouteCreateRealRequest(cfg, request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRealRequest returned nil for wrong interface")
+	}
+	if !strings.Contains(err.Error(), "TRANSIT_INTERFACE_MISMATCH") {
+		t.Fatalf("error = %q, want interface mismatch error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateRealRequestRejectsUnsafeRouteName(t *testing.T) {
+	payload := approvedTransitRouteCreateRealPayload()
+	payload["route_name"] = "hk socat; rm -rf"
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateRealRequest(approvedTransitRouteCreateConfig(), request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateRealRequest returned nil for unsafe route_name")
+	}
+	if !strings.Contains(err.Error(), "route_name contains unsafe characters") {
+		t.Fatalf("error = %q, want route_name safety error", err.Error())
 	}
 }
 
@@ -717,7 +847,7 @@ func TestTransitRouteCreateRealResultCompactKeepsServiceFields(t *testing.T) {
 		"summary":             "approved route created",
 		"hostname":            "WEPC202605221223335",
 		"role":                "transit",
-		"interface_name":      approvedTransitInterfaceName,
+		"interface_name":      testTransitInterfaceName,
 		"planned_listen_port": approvedTransitListenPort,
 		"landing_target_host": approvedTransitLandingTargetHost,
 		"landing_target_port": approvedTransitLandingTargetPort,
@@ -1275,8 +1405,8 @@ func largeTransitRouteCreateDryRunResult() map[string]any {
 		"hostname":            "WEPC202605221223335",
 		"role":                "transit",
 		"interface_name":      "eth0",
-		"transit_resource_id": approvedTransitResourceID,
-		"landing_node_id":     approvedTransitLandingNodeID,
+		"transit_resource_id": testTransitResourceID,
+		"landing_node_id":     testTransitLandingNodeID,
 		"planned_listen_port": approvedTransitListenPort,
 		"landing_target_host": approvedTransitLandingTargetHost,
 		"landing_target_port": approvedTransitLandingTargetPort,
