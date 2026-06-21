@@ -90,6 +90,8 @@ def normalize_worker_command_result(command_type: str, result: Any) -> dict[str,
         raise ValueError("Worker command result must be a JSON object.")
     if command_type == "transit_readonly_preflight":
         return normalize_transit_readonly_preflight_result(result)
+    if command_type == "landing_node_create":
+        return normalize_landing_node_create_result(result)
     if command_type == "transit_route_create":
         return normalize_transit_route_create_result(result)
     if command_type in REMOTE_CLEANUP_COMMAND_TYPES:
@@ -197,6 +199,108 @@ def normalize_transit_route_create_result(result: dict[str, Any]) -> dict[str, A
         normalized["failed_check_names"] = failed_names
 
     return sanitize_value(normalized)
+
+
+def normalize_landing_node_create_result(result: dict[str, Any]) -> dict[str, Any]:
+    status = _safe_result_text(result.get("status")) or "failed"
+    summary = _safe_result_text(result.get("summary")) or "Landing node create returned a result."
+    normalized: dict[str, Any] = {
+        "command_type": "landing_node_create",
+        "status": status,
+        "summary": summary,
+        "redacted_error": _safe_result_text(result.get("redacted_error")),
+        "worker_version": _safe_result_text(result.get("worker_version")),
+        "node_name": _safe_result_text(result.get("node_name")),
+        "listen_port": _safe_result_int(result.get("listen_port")),
+        "xray_service_active": _safe_result_text(result.get("xray_service_active")),
+        "xray_service_enabled": _safe_result_text(result.get("xray_service_enabled")),
+        "xray_config_exists": result.get("xray_config_exists") is True,
+        "xray_binary_exists": result.get("xray_binary_exists") is True,
+        "xray_config_test_ok": result.get("xray_config_test_ok") is True,
+        "xray_config_inbounds_summary": _normalize_landing_xray_inbounds(
+            result.get("xray_config_inbounds_summary")
+        ),
+        "listen_check_attempts": _normalize_landing_listen_attempts(result.get("listen_check_attempts")),
+        "ss_listen_summary": _normalize_text_list(result.get("ss_listen_summary"))[:30],
+        "systemd_status_summary": _safe_result_text(result.get("systemd_status_summary")),
+        "journal_tail_summary": _safe_result_text(result.get("journal_tail_summary")),
+        "rollback_performed": result.get("rollback_performed") is True,
+        "rollback_summary": _normalize_landing_rollback_summary(result.get("rollback_summary")),
+        "phases": _normalize_landing_create_phases(result.get("phases")),
+        "safety_boundary": _normalize_text_list(result.get("safety_boundary"))[:10],
+    }
+    return sanitize_value(normalized)
+
+
+def _normalize_landing_xray_inbounds(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    inbounds: list[dict[str, Any]] = []
+    for item in value[:10]:
+        if not isinstance(item, dict):
+            continue
+        inbounds.append(
+            {
+                "tag": _safe_result_text(item.get("tag")),
+                "listen": _safe_result_text(item.get("listen")),
+                "port": _safe_result_int(item.get("port")),
+                "protocol": _safe_result_text(item.get("protocol")),
+            }
+        )
+    return inbounds
+
+
+def _normalize_landing_listen_attempts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    attempts: list[dict[str, Any]] = []
+    for item in value[:10]:
+        if not isinstance(item, dict):
+            continue
+        attempts.append(
+            {
+                "attempt": _safe_result_int(item.get("attempt")),
+                "xray_service_active": _safe_result_text(item.get("xray_service_active")),
+                "port_listening": item.get("port_listening") is True,
+                "ss_matching_lines": _normalize_text_list(item.get("ss_matching_lines"))[:5],
+            }
+        )
+    return attempts
+
+
+def _normalize_landing_rollback_summary(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    summary: list[dict[str, Any]] = []
+    for item in value[:20]:
+        if not isinstance(item, dict):
+            continue
+        entry: dict[str, Any] = {
+            "action": _safe_result_text(item.get("action")),
+            "target": _safe_result_text(item.get("target")),
+            "ok": item.get("ok") is True,
+        }
+        if error := _safe_result_text(item.get("error")):
+            entry["error"] = error
+        summary.append(entry)
+    return summary
+
+
+def _normalize_landing_create_phases(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    phases: list[dict[str, Any]] = []
+    for item in value[:20]:
+        if not isinstance(item, dict):
+            continue
+        phases.append(
+            {
+                "name": _safe_result_text(item.get("name")),
+                "status": _safe_result_text(item.get("status")),
+                "summary": _safe_result_text(item.get("summary")),
+            }
+        )
+    return phases
 
 
 def normalize_remote_cleanup_result(command_type: str, result: dict[str, Any]) -> dict[str, Any]:

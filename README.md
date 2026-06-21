@@ -2604,6 +2604,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.102 Residual Worker final cleanup | Mark residual Workers cleanup-expected, verify post-cleanup heartbeat guard, then manually stop/disable stale remote Worker services |
 | Stage 3.3.103 Simplified node create QR flow | Simplify direct Reality node creation UX and show V2Ray link/QR only after successful protected remote creation |
 | Stage 3.3.105 Generalize protected landing create server approval | Replace fixed historical landing-server guard with protected active-server approval while keeping fixed port and preflight safeguards |
+| Stage 3.3.107 Landing create Xray listen diagnostics | Add retrying Xray listen checks and safe failure diagnostics for landing_node_create without changing share-link success gates |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

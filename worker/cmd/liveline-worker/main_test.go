@@ -1432,3 +1432,118 @@ func TestRemoteCleanupFailureResultKeepsSystemRecordBoundary(t *testing.T) {
 		t.Fatal("failure result allowed system record delete")
 	}
 }
+
+func TestLandingNodeSSMatchingLinesDetectsListenPort(t *testing.T) {
+	ssOutput := `
+State   Recv-Q Send-Q Local Address:Port Peer Address:Port Process
+LISTEN  0      4096   0.0.0.0:27939     0.0.0.0:*     users:(("xray",pid=123,fd=7))
+LISTEN  0      4096   [::]:27939        [::]:*        users:(("xray",pid=123,fd=8))
+LISTEN  0      4096   *:27939           *:*           users:(("xray",pid=123,fd=9))
+LISTEN  0      4096   127.0.0.1:22      0.0.0.0:*     users:(("sshd",pid=1,fd=3))
+`
+	if !portListeningInSSOutput(ssOutput, 27939) {
+		t.Fatal("portListeningInSSOutput did not detect 27939")
+	}
+	matches := ssMatchingLinesForPort(ssOutput, 27939)
+	if len(matches) != 3 {
+		t.Fatalf("len(matches) = %d, want 3: %#v", len(matches), matches)
+	}
+	if portListeningInSSOutput(ssOutput, 27938) {
+		t.Fatal("portListeningInSSOutput detected wrong port")
+	}
+}
+
+func TestLandingNodeCreateFailedSubmitKeepsDiagnosticsAndDropsSecrets(t *testing.T) {
+	result := map[string]any{
+		"status":               "failed",
+		"summary":              "approved TCP port 27939 is not listening after Xray start",
+		"redacted_error":       "approved TCP port 27939 is not listening after Xray start",
+		"worker_version":       workerVersion,
+		"node_name":            "liveline-reality-27939",
+		"listen_port":          formalLandingPort,
+		"xray_service_active":  "active",
+		"xray_service_enabled": "enabled",
+		"xray_config_exists":   true,
+		"xray_binary_exists":   true,
+		"xray_config_test_ok":  true,
+		"xray_config_inbounds_summary": []any{
+			map[string]any{
+				"tag":        "liveline-reality",
+				"listen":     "0.0.0.0",
+				"port":       formalLandingPort,
+				"protocol":   "vless",
+				"settings":   map[string]any{"clients": []any{map[string]any{"id": "must-not-survive"}}},
+				"privateKey": "must-not-survive",
+			},
+		},
+		"listen_check_attempts": []any{
+			map[string]any{"attempt": 1, "xray_service_active": "active", "port_listening": false, "ss_matching_lines": []any{}},
+		},
+		"ss_listen_summary":      []any{"LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:((\"sshd\"))"},
+		"systemd_status_summary": "liveline-xray.service active",
+		"journal_tail_summary":   "Started liveline-xray.service",
+		"rollback_performed":     true,
+		"rollback_summary":       []any{map[string]any{"action": "remove", "target": managedXrayConfigPath, "ok": true}},
+		"phases":                 []map[string]any{{"name": "verify_listening", "status": "failed", "summary": "not listening"}},
+		"secure_share_link":      "vless" + "://fake-redacted-example",
+		"uuid":                   "must-not-survive",
+		"reality_private_key":    "must-not-survive",
+		"reality_short_id":       "must-not-survive",
+	}
+
+	submitResult, _ := prepareCommandResultForSubmit("landing_node_create", sanitizeCommandResult("landing_node_create", result))
+	if submitResult["status"] != "failed" {
+		t.Fatalf("status = %#v, want failed", submitResult["status"])
+	}
+	if submitResult["xray_service_active"] != "active" {
+		t.Fatalf("xray_service_active = %#v, want active", submitResult["xray_service_active"])
+	}
+	if submitResult["secure_share_link"] != nil {
+		t.Fatal("failed submit result retained secure_share_link")
+	}
+	if submitResult["uuid"] != nil || submitResult["reality_private_key"] != nil || submitResult["reality_short_id"] != nil {
+		t.Fatal("failed submit result retained sensitive Reality fields")
+	}
+	inbounds, ok := submitResult["xray_config_inbounds_summary"].([]any)
+	if !ok || len(inbounds) != 1 {
+		t.Fatalf("xray_config_inbounds_summary = %#v, want one item", submitResult["xray_config_inbounds_summary"])
+	}
+	inbound, ok := inbounds[0].(map[string]any)
+	if !ok {
+		t.Fatalf("inbound summary item = %#v, want map", inbounds[0])
+	}
+	if inbound["settings"] != nil || inbound["privateKey"] != nil {
+		t.Fatalf("inbound summary retained unsafe fields: %#v", inbound)
+	}
+	if inbound["port"] != formalLandingPort {
+		t.Fatalf("inbound port = %#v, want %d", inbound["port"], formalLandingPort)
+	}
+	attempts, ok := submitResult["listen_check_attempts"].([]any)
+	if !ok || len(attempts) != 1 {
+		t.Fatalf("listen_check_attempts = %#v, want one item", submitResult["listen_check_attempts"])
+	}
+	phases, ok := submitResult["phases"].([]any)
+	if !ok || len(phases) != 1 {
+		t.Fatalf("phases = %#v, want one item", submitResult["phases"])
+	}
+}
+
+func TestLandingNodeCreateSuccessSubmitKeepsSecureShareLinkForBackendIngest(t *testing.T) {
+	shareLink := "vless" + "://fake-redacted-example"
+	sanitized := sanitizeCommandResult("landing_node_create", map[string]any{
+		"status":             "succeeded",
+		"node_name":          "liveline-reality-27939",
+		"listen_port":        formalLandingPort,
+		"protocol":           "vless",
+		"security":           "reality",
+		"flow":               "xtls-rprx-vision",
+		"uuid":               "00000000-0000-0000-0000-000000000000",
+		"reality_public_key": "fake-public-key",
+		"reality_short_id":   "abcdef",
+		"secure_share_link":  shareLink,
+		"share_link_present": true,
+	})
+	if sanitized["secure_share_link"] != shareLink {
+		t.Fatalf("secure_share_link = %#v, want backend ingest value", sanitized["secure_share_link"])
+	}
+}

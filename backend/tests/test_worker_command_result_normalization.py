@@ -115,6 +115,70 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["no_node_share_link_change_confirmed"], True)
         self.assertEqual(payload["share_link"], "[redacted]")
 
+    def test_landing_node_create_failed_result_preserves_safe_diagnostics(self):
+        result = normalize_worker_command_result(
+            "landing_node_create",
+            {
+                "status": "failed",
+                "summary": "approved TCP port 27939 is not listening after Xray start",
+                "redacted_error": "approved TCP port 27939 is not listening after Xray start",
+                "worker_version": "0.1.22-stage-3.3.107",
+                "node_name": "liveline-reality-27939",
+                "listen_port": 27939,
+                "xray_service_active": "active",
+                "xray_service_enabled": "enabled",
+                "xray_config_exists": True,
+                "xray_binary_exists": True,
+                "xray_config_test_ok": True,
+                "xray_config_inbounds_summary": [
+                    {
+                        "tag": "liveline-reality",
+                        "listen": "0.0.0.0",
+                        "port": 27939,
+                        "protocol": "vless",
+                        "settings": {"clients": [{"id": "must-not-survive"}]},
+                        "privateKey": "must-not-survive",
+                    }
+                ],
+                "listen_check_attempts": [
+                    {
+                        "attempt": 1,
+                        "xray_service_active": "active",
+                        "port_listening": False,
+                        "ss_matching_lines": [],
+                    }
+                ],
+                "ss_listen_summary": ["LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:((\"sshd\"))"],
+                "systemd_status_summary": "liveline-xray.service active",
+                "journal_tail_summary": "Started liveline-xray.service",
+                "rollback_performed": True,
+                "rollback_summary": [
+                    {"action": "remove", "target": "/opt/liveline-xray/config/config.json", "ok": True}
+                ],
+                "phases": [{"name": "verify_listening", "status": "failed", "summary": "not listening"}],
+                "secure_share_link": "vless" + "://fake-redacted-example",
+                "uuid": "must-not-survive",
+                "reality_private_key": "must-not-survive",
+                "reality_short_id": "must-not-survive",
+            },
+        )
+
+        self.assertEqual(result["command_type"], "landing_node_create")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["listen_port"], 27939)
+        self.assertEqual(result["xray_service_active"], "active")
+        self.assertTrue(result["xray_config_test_ok"])
+        self.assertEqual(result["xray_config_inbounds_summary"][0]["port"], 27939)
+        self.assertNotIn("settings", result["xray_config_inbounds_summary"][0])
+        self.assertNotIn("privateKey", result["xray_config_inbounds_summary"][0])
+        self.assertFalse(result["listen_check_attempts"][0]["port_listening"])
+        self.assertEqual(result["rollback_summary"][0]["action"], "remove")
+        self.assertEqual(result["phases"][0]["name"], "verify_listening")
+        self.assertNotIn("secure_share_link", result)
+        self.assertNotIn("uuid", result)
+        self.assertNotIn("reality_private_key", result)
+        self.assertNotIn("reality_short_id", result)
+
     def test_server_cleanup_missing_worker_self_cleanup_is_marked_missing(self):
         result = normalize_worker_command_result(
             "cleanup_landing_server",
