@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
@@ -21,7 +21,6 @@ from app.schemas.transit_route import (
     APPROVED_TRANSIT_INTERFACE_NAME,
     APPROVED_TRANSIT_LISTEN_PORT,
     APPROVED_TRANSIT_CANDIDATE_NAME,
-    APPROVED_TRANSIT_ROUTE_ID,
     APPROVED_TRANSIT_ROUTE_NAME,
     APPROVED_TRANSIT_RESOURCE_ID,
     APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
@@ -460,18 +459,15 @@ def route_entry_host(route: TransitRoute) -> str | None:
     return resource.entry_host if resource and resource.entry_host else None
 
 
-def is_approved_candidate_route(route: TransitRoute) -> bool:
+def is_exportable_candidate_route(route: TransitRoute) -> bool:
     return (
-        route.id == APPROVED_TRANSIT_ROUTE_ID
-        and route.name == APPROVED_TRANSIT_ROUTE_NAME
-        and route.transit_resource_id == APPROVED_TRANSIT_RESOURCE_ID
-        and route.node_id == APPROVED_LANDING_NODE_ID
-        and route.listen_port == APPROVED_TRANSIT_LISTEN_PORT
-        and route.target_host == APPROVED_LANDING_TARGET_HOST
-        and route.target_port == APPROVED_LANDING_TARGET_PORT
+        route.deleted_at is None
+        and route.status == "active"
         and route.forwarding_method == APPROVED_TRANSIT_FORWARDING_METHOD
-        and route.service_name == APPROVED_TRANSIT_SERVICE_NAME
-        and route.deleted_at is None
+        and bool(route_entry_host(route))
+        and route.listen_port > 0
+        and route.target_port > 0
+        and not bool(route.share_link)
     )
 
 
@@ -508,33 +504,23 @@ def build_transient_candidate_link(route: TransitRoute, node: Node) -> tuple[str
     entry_host = route_entry_host(route)
     if not entry_host:
         return None, "中转入口 IP 缺失，不能生成临时候选配置。"
-    required_values = {
-        "uuid": node.uuid,
-        "reality_public_key": node.reality_public_key,
-        "reality_short_id": node.reality_short_id,
-        "sni": node.sni,
-    }
-    missing = [name for name, value in required_values.items() if not value]
-    if missing:
-        return None, f"落地节点缺少必要 Reality 参数：{', '.join(missing)}。"
+    if not node.share_link:
+        return None, "落地节点缺少已生成的客户端链接，不能临时导出中转配置。"
 
-    values = {
-        "encryption": "none",
-        "security": "reality",
-        "sni": node.sni or "",
-        "fp": node.fingerprint or "",
-        "pbk": node.reality_public_key or "",
-        "sid": node.reality_short_id or "",
-        "type": node.transport or "tcp",
-    }
-    if node.flow:
-        values["flow"] = node.flow
-    scheme = "vless"
-    fragment = quote(APPROVED_TRANSIT_CANDIDATE_NAME, safe="")
-    link = (
-        f"{scheme}://{quote(node.uuid or '', safe='')}@{entry_host}:{route.listen_port}"
-        f"?{urlencode(values)}#{fragment}"
-    )
+    parsed = urlsplit(node.share_link)
+    if parsed.scheme.lower() != "vless" or "@" not in parsed.netloc or not parsed.query:
+        return None, "落地节点客户端链接格式不完整，不能生成中转测试配置。"
+
+    userinfo = parsed.netloc.rsplit("@", 1)[0]
+    if not userinfo:
+        return None, "落地节点客户端链接缺少 UUID，不能生成中转测试配置。"
+
+    host = entry_host.strip()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = f"{userinfo}@{host}:{route.listen_port}"
+    fragment = quote(route.name or APPROVED_TRANSIT_CANDIDATE_NAME, safe="")
+    link = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, fragment))
     return link, None
 
 
@@ -688,10 +674,10 @@ def get_transit_route_candidate_summary(
     route = get_route_or_error(db, route_id)
     if not route:
         return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
-    if not is_approved_candidate_route(route):
-        return error_response(400, "TRANSIT_ROUTE_NOT_APPROVED_CANDIDATE", "该中转链路不是当前审批候选链路。")
     if route.status != "active":
         return error_response(400, "TRANSIT_ROUTE_NOT_ACTIVE", "只有 active 候选链路可以查看候选摘要。")
+    if route.share_link:
+        return error_response(409, "TRANSIT_ROUTE_CUTOVER_BLOCKED", "该中转链路已经写入分享链接，本接口只用于未 cutover 的临时导出。")
 
     return success_response(candidate_summary_payload(route), "candidate summary generated")
 
@@ -721,10 +707,12 @@ def export_transit_route_candidate(
     route = get_route_or_error(db, route_id)
     if not route:
         return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
-    if not is_approved_candidate_route(route):
-        return error_response(400, "TRANSIT_ROUTE_NOT_APPROVED_CANDIDATE", "该中转链路不是当前审批候选链路。")
     if route.status != "active":
         return error_response(400, "TRANSIT_ROUTE_NOT_ACTIVE", "只有 active 候选链路可以临时导出测试配置。")
+    if route.share_link:
+        return error_response(409, "TRANSIT_ROUTE_CUTOVER_BLOCKED", "该中转链路已经写入分享链接，本接口只用于未 cutover 的临时导出。")
+    if not is_exportable_candidate_route(route):
+        return error_response(400, "TRANSIT_ROUTE_NOT_EXPORTABLE", "该中转链路缺少临时导出所需的入口、端口或转发方式。")
 
     node = route.node
     if not node or node.deleted_at is not None:
@@ -753,7 +741,7 @@ def export_transit_route_candidate(
         {
             "route_id": route.id,
             "route_name": route.name,
-            "candidate_name": APPROVED_TRANSIT_CANDIDATE_NAME,
+            "candidate_name": route.name,
             "server": route_entry_host(route),
             "port": route.listen_port,
             "protocol": node.protocol,

@@ -305,6 +305,37 @@ export type TransitReadonlyPreflightCommandResponse = {
   safety_boundary: string[];
 };
 
+export type TransitRouteWorkerCreateExecuteRequest = {
+  transit_resource_id: string;
+  landing_node_id: string;
+  planned_listen_port: number;
+  landing_target_host: string;
+  landing_target_port: number;
+  forwarding_method: "socat";
+  purpose: string | null;
+  route_name: string;
+  approval_stage: string;
+  dry_run: false;
+  approval_required: false;
+  user_approved_real_execution: boolean;
+  firewall_security_group_confirmed: boolean;
+  cloud_firewall_confirmed: boolean;
+  server_firewall_confirmed: boolean;
+  no_node_share_link_change_confirmed: boolean;
+  no_full_client_link_confirmed: boolean;
+  no_cutover_confirmed: boolean;
+};
+
+export type TransitRouteWorkerCreateExecuteResponse = {
+  command: WorkerCommandData;
+  target_worker_id: string;
+  target_worker_version: string | null;
+  minimum_supported_worker_version: string;
+  execution_mode: "real_create";
+  approval_required: boolean;
+  safety_boundary: string[];
+};
+
 export type LandingNodePlanRequest = {
   listen_port: number;
   protocol: string;
@@ -717,6 +748,21 @@ export async function createTransitReadonlyPreflightCommand(
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
   });
+}
+
+export async function createTransitRouteWorkerExecuteCommand(
+  payload: TransitRouteWorkerCreateExecuteRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitRouteWorkerCreateExecuteResponse>> {
+  return apiFetch<TransitRouteWorkerCreateExecuteResponse>("/api/transit-routes/worker-create-execute", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getWorkerCommand(commandId: string): Promise<ApiResponse<WorkerCommandData>> {
+  return apiFetch<WorkerCommandData>(`/api/workers/commands/${commandId}`);
 }
 
 export async function getTransitRouteCandidateSummary(
