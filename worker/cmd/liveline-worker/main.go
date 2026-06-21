@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.21-stage-3.3.97"
+const workerVersion = "0.1.22-stage-3.3.107"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -39,7 +39,7 @@ const transitReadonlyCompactCheckDetailLimit = 48
 const transitRouteCreateCompactPayloadTarget = 1400
 const transitRouteCreateCompactSummaryLimit = 160
 const transitRouteCreateCompactCheckDetailLimit = 48
-const workerFailurePayloadTarget = 1100
+const workerFailurePayloadTarget = 6000
 const workerFailureErrorMessageLimit = 220
 const responseBodyLogLimit = 1200
 const postJSONTimeout = 15 * time.Second
@@ -1994,10 +1994,12 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 	artifacts.ServiceStarted = true
 	addPhase("systemd_start", "passed", "LiveLine 管理的 Xray service 已 enable 并 restart。")
 
-	if err := verifyManagedXrayActiveAndListening(request.ListenPort); err != nil {
+	listenAttempts, err := verifyManagedXrayActiveAndListening(request.ListenPort)
+	if err != nil {
 		addPhase("verify_listening", "failed", err.Error())
-		rollbackLandingNodeCreate(artifacts)
-		return landingNodeFailureResult(request, phases), err
+		diagnostics := collectManagedXrayDiagnostics(request.ListenPort)
+		rollbackSummary := rollbackLandingNodeCreate(artifacts)
+		return landingNodeFailureResultWithDiagnostics(request, phases, err, diagnostics, listenAttempts, rollbackSummary, true), err
 	}
 	addPhase("verify_listening", "passed", "Xray service active，27939/TCP 已监听。")
 
@@ -2519,29 +2521,80 @@ WantedBy=multi-user.target
 	return os.WriteFile(managedXrayServicePath, []byte(content), 0o644)
 }
 
-func verifyManagedXrayActiveAndListening(port int) error {
-	output, err := runCommand(commandTimeout, "systemctl", "is-active", managedXrayServiceName)
-	if err != nil {
-		return err
+func verifyManagedXrayActiveAndListening(port int) ([]any, error) {
+	attempts := []any{}
+	var lastActive string
+	var lastListener bool
+	var lastErr error
+	for index := 1; index <= 10; index++ {
+		output, err := runCommand(8*time.Second, "systemctl", "is-active", managedXrayServiceName)
+		active := strings.TrimSpace(output)
+		if active == "" && err != nil {
+			active = "unknown"
+		}
+		ssOutput, ssErr := readonlyCommandOutput("ss", "-lntp")
+		matchingLines := ssMatchingLinesForPort(ssOutput, port)
+		listener := len(matchingLines) > 0
+		attempt := map[string]any{
+			"attempt":             index,
+			"xray_service_active": active,
+			"port_listening":      listener,
+			"ss_matching_lines":   matchingLines,
+		}
+		if ssErr != "" {
+			attempt["ss_error"] = truncateCompactString(ssErr, 160)
+		}
+		attempts = append(attempts, attempt)
+		fmt.Printf("landing_node_create listen_verification attempt=%d service_active=%s port_listening=%v\n", index, active, listener)
+		lastActive = active
+		lastListener = listener
+		lastErr = err
+		if err == nil && active == "active" && listener {
+			return attempts, nil
+		}
+		if index < 10 {
+			time.Sleep(1 * time.Second)
+		}
 	}
-	if strings.TrimSpace(output) != "active" {
-		return fmt.Errorf("%s is not active", managedXrayServiceName)
+	if lastErr != nil {
+		return attempts, fmt.Errorf("landing_node_create service did not become verifiably active/listening: active=%s listener=%v error=%w", lastActive, lastListener, lastErr)
 	}
-	if !portListening(port) {
-		return fmt.Errorf("approved TCP port %d is not listening after Xray start", port)
+	if lastActive != "active" {
+		return attempts, fmt.Errorf("%s is not active after retry: %s", managedXrayServiceName, lastActive)
 	}
-	return nil
+	return attempts, fmt.Errorf("approved TCP port %d is not listening after Xray start", port)
 }
 
 func portListening(port int) bool {
 	output, _ := readonlyCommandOutput("ss", "-lntup")
-	rows, _ := listeningPortRows(output)
-	for _, row := range rows {
-		if value, ok := row["port"].(int); ok && value == port {
-			return true
+	return portListeningInSSOutput(output, port)
+}
+
+func portListeningInSSOutput(ssOutput string, port int) bool {
+	return len(ssMatchingLinesForPort(ssOutput, port)) > 0
+}
+
+func ssMatchingLinesForPort(ssOutput string, port int) []any {
+	lines := []any{}
+	for _, line := range strings.Split(ssOutput, "\n") {
+		cleaned := strings.TrimSpace(line)
+		if cleaned == "" || strings.HasPrefix(cleaned, "Netid") || strings.HasPrefix(cleaned, "State") {
+			continue
+		}
+		fields := strings.Fields(cleaned)
+		if !isTCPListenLine(fields) {
+			continue
+		}
+		_, parsedPort, ok := parseListenAddressAndPort(localAddressField(fields))
+		if !ok || parsedPort != port {
+			continue
+		}
+		lines = append(lines, truncateCompactString(cleaned, 240))
+		if len(lines) >= 5 {
+			break
 		}
 	}
-	return false
+	return lines
 }
 
 func buildVLESSRealityShareLink(request landingNodeCreateRequest, reality realityMaterial) string {
@@ -2573,47 +2626,234 @@ func maskShareLink(shareLink string) string {
 }
 
 func landingNodeFailureResult(request landingNodeCreateRequest, phases []map[string]any) map[string]any {
+	return landingNodeFailureResultWithDiagnostics(request, phases, nil, nil, nil, nil, false)
+}
+
+func landingNodeFailureResultWithDiagnostics(request landingNodeCreateRequest, phases []map[string]any, commandErr error, diagnostics map[string]any, listenAttempts []any, rollbackSummary []any, rollbackPerformed bool) map[string]any {
+	summary := "landing_node_create failed before completion."
+	if commandErr != nil {
+		summary = compactWorkerFailureMessage(commandErr)
+	}
+	result := map[string]any{
+		"command_type":       "landing_node_create",
+		"status":             "failed",
+		"summary":            summary,
+		"redacted_error":     summary,
+		"worker_version":     workerVersion,
+		"node_name":          request.NodeName,
+		"listen_port":        request.ListenPort,
+		"phases":             phases,
+		"rollback":           "attempted_current_run_artifacts_only",
+		"rollback_performed": rollbackPerformed,
+		"safety_boundary": []any{
+			"no nodes.share_link write on failure",
+			"no full client link generated on failure",
+			"Reality private key not returned",
+			"rollback scope is current run artifacts only",
+			"no firewall mutation",
+			"no cutover",
+		},
+	}
+	if diagnostics != nil {
+		for _, key := range []string{
+			"xray_service_active",
+			"xray_service_enabled",
+			"xray_config_exists",
+			"xray_binary_exists",
+			"xray_config_test_ok",
+			"xray_config_inbounds_summary",
+			"ss_listen_summary",
+			"systemd_status_summary",
+			"journal_tail_summary",
+		} {
+			if value, ok := diagnostics[key]; ok {
+				result[key] = value
+			}
+		}
+	}
+	if len(listenAttempts) > 0 {
+		result["listen_check_attempts"] = listenAttempts
+	}
+	if len(rollbackSummary) > 0 {
+		result["rollback_summary"] = rollbackSummary
+	}
 	return map[string]any{
-		"status":      "failed",
-		"node_name":   request.NodeName,
-		"listen_port": request.ListenPort,
-		"phases":      phases,
-		"rollback":    "attempted_current_run_artifacts_only",
+		"command_type":                 result["command_type"],
+		"status":                       result["status"],
+		"summary":                      result["summary"],
+		"redacted_error":               result["redacted_error"],
+		"worker_version":               result["worker_version"],
+		"node_name":                    result["node_name"],
+		"listen_port":                  result["listen_port"],
+		"phases":                       result["phases"],
+		"rollback":                     result["rollback"],
+		"rollback_performed":           result["rollback_performed"],
+		"rollback_summary":             result["rollback_summary"],
+		"xray_service_active":          result["xray_service_active"],
+		"xray_service_enabled":         result["xray_service_enabled"],
+		"xray_config_exists":           result["xray_config_exists"],
+		"xray_binary_exists":           result["xray_binary_exists"],
+		"xray_config_test_ok":          result["xray_config_test_ok"],
+		"xray_config_inbounds_summary": result["xray_config_inbounds_summary"],
+		"listen_check_attempts":        result["listen_check_attempts"],
+		"ss_listen_summary":            result["ss_listen_summary"],
+		"systemd_status_summary":       result["systemd_status_summary"],
+		"journal_tail_summary":         result["journal_tail_summary"],
+		"safety_boundary":              result["safety_boundary"],
 	}
 }
 
-func rollbackLandingNodeCreate(artifacts *landingNodeCreateArtifacts) {
+func rollbackLandingNodeCreate(artifacts *landingNodeCreateArtifacts) []any {
+	summary := []any{}
+	add := func(action string, target string, err error) {
+		item := map[string]any{
+			"action": action,
+			"target": target,
+			"ok":     err == nil || errors.Is(err, os.ErrNotExist),
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			item["error"] = truncateCompactString(err.Error(), 160)
+		}
+		summary = append(summary, item)
+	}
 	if artifacts == nil {
-		return
+		return summary
 	}
 	if artifacts.ServiceStarted {
-		_, _ = runCommand(30*time.Second, "systemctl", "stop", managedXrayServiceName)
+		_, err := runCommand(30*time.Second, "systemctl", "stop", managedXrayServiceName)
+		add("systemctl_stop", managedXrayServiceName, err)
 	}
 	if artifacts.ServiceWritten {
-		_, _ = runCommand(30*time.Second, "systemctl", "disable", managedXrayServiceName)
-		_ = os.Remove(managedXrayServicePath)
+		_, err := runCommand(30*time.Second, "systemctl", "disable", managedXrayServiceName)
+		add("systemctl_disable", managedXrayServiceName, err)
+		add("remove", managedXrayServicePath, os.Remove(managedXrayServicePath))
 	}
 	if artifacts.ConfigWritten {
-		_ = os.Remove(managedXrayConfigPath)
+		add("remove", managedXrayConfigPath, os.Remove(managedXrayConfigPath))
 	}
 	if artifacts.BinaryWritten {
-		_ = os.Remove(managedXrayBinaryPath)
+		add("remove", managedXrayBinaryPath, os.Remove(managedXrayBinaryPath))
 	}
 	if artifacts.StateDirCreated {
-		_ = os.Remove(managedXrayStateDir)
+		add("remove", managedXrayStateDir, os.Remove(managedXrayStateDir))
 	}
 	if artifacts.ConfigDirCreated {
-		_ = os.Remove(managedXrayConfigDir)
+		add("remove", managedXrayConfigDir, os.Remove(managedXrayConfigDir))
 	}
 	if artifacts.BinDirCreated {
-		_ = os.Remove(managedXrayBinDir)
+		add("remove", managedXrayBinDir, os.Remove(managedXrayBinDir))
 	}
 	if artifacts.BaseDirCreated {
-		_ = os.Remove(managedXrayBaseDir)
+		add("remove", managedXrayBaseDir, os.Remove(managedXrayBaseDir))
 	}
 	if artifacts.DaemonReloaded || artifacts.ServiceWritten {
-		_, _ = runCommand(30*time.Second, "systemctl", "daemon-reload")
+		_, err := runCommand(30*time.Second, "systemctl", "daemon-reload")
+		add("systemctl_daemon_reload", "systemd", err)
 	}
+	return summary
+}
+
+func collectManagedXrayDiagnostics(port int) map[string]any {
+	diagnostics := map[string]any{}
+	activeOutput, activeErr := runCommand(8*time.Second, "systemctl", "is-active", managedXrayServiceName)
+	diagnostics["xray_service_active"] = serviceStateText(activeOutput, activeErr)
+	enabledOutput, enabledErr := runCommand(8*time.Second, "systemctl", "is-enabled", managedXrayServiceName)
+	diagnostics["xray_service_enabled"] = serviceStateText(enabledOutput, enabledErr)
+	diagnostics["xray_config_exists"] = pathExists(managedXrayConfigPath)
+	diagnostics["xray_binary_exists"] = pathExists(managedXrayBinaryPath)
+	diagnostics["xray_config_inbounds_summary"] = xrayConfigInboundsSummary(managedXrayConfigPath)
+	configTestOK := false
+	if pathExists(managedXrayBinaryPath) && pathExists(managedXrayConfigPath) {
+		_, configErr := runCommand(20*time.Second, managedXrayBinaryPath, "run", "-test", "-config", managedXrayConfigPath)
+		configTestOK = configErr == nil
+	}
+	diagnostics["xray_config_test_ok"] = configTestOK
+
+	if output, err := runCommand(10*time.Second, "ss", "-lntp"); err != nil {
+		diagnostics["ss_listen_summary"] = ssListenSummaryStrings(output, 30)
+		diagnostics["ss_error"] = truncateCompactString(err.Error(), 180)
+	} else {
+		diagnostics["ss_listen_summary"] = ssListenSummaryStrings(output, 30)
+		diagnostics["ss_matching_lines"] = ssMatchingLinesForPort(output, port)
+	}
+	if output, err := runCommand(12*time.Second, "systemctl", "status", "--no-pager", "-l", managedXrayServiceName); err != nil {
+		diagnostics["systemd_status_summary"] = truncateCompactString(strings.TrimSpace(output+"\n"+err.Error()), 4000)
+	} else {
+		diagnostics["systemd_status_summary"] = truncateCompactString(strings.TrimSpace(output), 4000)
+	}
+	if output, err := runCommand(12*time.Second, "journalctl", "-u", managedXrayServiceName, "-n", "80", "--no-pager"); err != nil {
+		diagnostics["journal_tail_summary"] = truncateCompactString(strings.TrimSpace(output+"\n"+err.Error()), 4000)
+	} else {
+		diagnostics["journal_tail_summary"] = truncateCompactString(strings.TrimSpace(output), 4000)
+	}
+	return diagnostics
+}
+
+func serviceStateText(output string, err error) string {
+	cleaned := strings.TrimSpace(output)
+	if cleaned != "" {
+		return truncateCompactString(cleaned, 80)
+	}
+	if err != nil {
+		return "unknown"
+	}
+	return "unknown"
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func xrayConfigInboundsSummary(path string) []any {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return []any{}
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(content, &parsed); err != nil {
+		return []any{}
+	}
+	rawInbounds, ok := parsed["inbounds"].([]any)
+	if !ok {
+		return []any{}
+	}
+	summary := []any{}
+	for _, item := range rawInbounds {
+		inbound, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		summary = append(summary, map[string]any{
+			"tag":      truncateCompactString(stringResultValue(inbound["tag"]), 80),
+			"listen":   truncateCompactString(stringResultValue(inbound["listen"]), 80),
+			"port":     intResultValue(inbound["port"]),
+			"protocol": truncateCompactString(stringResultValue(inbound["protocol"]), 32),
+		})
+		if len(summary) >= 10 {
+			break
+		}
+	}
+	return summary
+}
+
+func ssListenSummaryStrings(ssOutput string, limit int) []any {
+	rows, _ := listeningPortRows(ssOutput)
+	summary := []any{}
+	for _, row := range rows {
+		address := stringResultValue(row["listen_address"])
+		port := intResultValue(row["port"])
+		process := stringResultValue(row["process"])
+		line := fmt.Sprintf("tcp LISTEN %s:%d", address, port)
+		if process != "" {
+			line += " " + process
+		}
+		summary = append(summary, truncateCompactString(line, 240))
+		if limit > 0 && len(summary) >= limit {
+			break
+		}
+	}
+	return summary
 }
 
 func runCommand(timeout time.Duration, name string, args ...string) (string, error) {
@@ -2703,7 +2943,219 @@ func sanitizeCommandResult(commandType string, result map[string]any) map[string
 	if commandType == "transit_readonly_preflight" {
 		return sanitizeTransitReadonlyPreflightResult(result)
 	}
+	if commandType == "landing_node_create" {
+		return sanitizeLandingNodeCreateResult(result)
+	}
 	return sanitizeResultMap(result)
+}
+
+func sanitizeLandingNodeCreateResult(result map[string]any) map[string]any {
+	if result == nil {
+		return map[string]any{}
+	}
+	if stringResultValue(result["status"]) == "succeeded" {
+		// Success result must keep secure_share_link for the backend-only ingest path.
+		return map[string]any{
+			"status":              "succeeded",
+			"phases":              sanitizeResultValue(result["phases"]),
+			"node_name":           stringResultValue(result["node_name"]),
+			"listen_port":         intResultValue(result["listen_port"]),
+			"protocol":            stringResultValue(result["protocol"]),
+			"security":            stringResultValue(result["security"]),
+			"flow":                stringResultValue(result["flow"]),
+			"server_name":         stringResultValue(result["server_name"]),
+			"dest":                stringResultValue(result["dest"]),
+			"fingerprint":         stringResultValue(result["fingerprint"]),
+			"uuid":                stringResultValue(result["uuid"]),
+			"reality_public_key":  stringResultValue(result["reality_public_key"]),
+			"reality_short_id":    stringResultValue(result["reality_short_id"]),
+			"managed_config_path": stringResultValue(result["managed_config_path"]),
+			"managed_service":     stringResultValue(result["managed_service"]),
+			"share_link_present":  boolResultValue(result["share_link_present"]),
+			"masked_share_link":   stringResultValue(result["masked_share_link"]),
+			"secure_share_link":   rawStringResultValue(result["secure_share_link"]),
+			"safety_boundary":     sanitizeResultValue(result["safety_boundary"]),
+		}
+	}
+	return compactLandingNodeCreateFailureResult(result)
+}
+
+func rawStringResultValue(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\x00", ""))
+	if len(text) > resultStringLimit {
+		return text[:resultStringLimit] + "...[truncated]"
+	}
+	return text
+}
+
+func compactLandingNodeCreateFailureResult(result map[string]any) map[string]any {
+	summary := truncateCompactString(stringResultValue(result["summary"]), 180)
+	if summary == "" {
+		summary = "landing_node_create failed before completion."
+	}
+	compacted := map[string]any{
+		"command_type":                 "landing_node_create",
+		"status":                       "failed",
+		"summary":                      summary,
+		"redacted_error":               truncateCompactString(stringResultValue(result["redacted_error"]), 180),
+		"worker_version":               workerVersion,
+		"node_name":                    truncateCompactString(stringResultValue(result["node_name"]), 120),
+		"listen_port":                  intResultValue(result["listen_port"]),
+		"xray_service_active":          truncateCompactString(stringResultValue(result["xray_service_active"]), 80),
+		"xray_service_enabled":         truncateCompactString(stringResultValue(result["xray_service_enabled"]), 80),
+		"xray_config_exists":           boolResultValue(result["xray_config_exists"]),
+		"xray_binary_exists":           boolResultValue(result["xray_binary_exists"]),
+		"xray_config_test_ok":          boolResultValue(result["xray_config_test_ok"]),
+		"xray_config_inbounds_summary": compactXrayInboundSummary(result["xray_config_inbounds_summary"]),
+		"listen_check_attempts":        compactLandingListenAttempts(result["listen_check_attempts"]),
+		"ss_listen_summary":            compactStringList(result["ss_listen_summary"], 12, 180),
+		"systemd_status_summary":       truncateCompactString(stringResultValue(result["systemd_status_summary"]), 1000),
+		"journal_tail_summary":         truncateCompactString(stringResultValue(result["journal_tail_summary"]), 1000),
+		"rollback_performed":           boolResultValue(result["rollback_performed"]),
+		"rollback_summary":             compactRollbackSummary(result["rollback_summary"]),
+		"phases":                       compactLandingPhases(result["phases"]),
+		"safety_boundary": []any{
+			"no nodes.share_link write on failure",
+			"no full client link generated on failure",
+			"Reality private key not returned",
+			"rollback scope is current run artifacts only",
+			"no firewall mutation",
+			"no cutover",
+		},
+	}
+	if compacted["redacted_error"] == "" {
+		compacted["redacted_error"] = summary
+	}
+	return compacted
+}
+
+func compactXrayInboundSummary(value any) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return []any{}
+	}
+	summary := []any{}
+	for _, item := range items {
+		inbound, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		summary = append(summary, map[string]any{
+			"tag":      truncateCompactString(stringResultValue(inbound["tag"]), 80),
+			"listen":   truncateCompactString(stringResultValue(inbound["listen"]), 80),
+			"port":     intResultValue(inbound["port"]),
+			"protocol": truncateCompactString(stringResultValue(inbound["protocol"]), 32),
+		})
+		if len(summary) >= 10 {
+			break
+		}
+	}
+	return summary
+}
+
+func compactLandingListenAttempts(value any) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return []any{}
+	}
+	attempts := []any{}
+	for _, item := range items {
+		attempt, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		attempts = append(attempts, map[string]any{
+			"attempt":             intResultValue(attempt["attempt"]),
+			"xray_service_active": truncateCompactString(stringResultValue(attempt["xray_service_active"]), 80),
+			"port_listening":      boolResultValue(attempt["port_listening"]),
+			"ss_matching_lines":   compactStringList(attempt["ss_matching_lines"], 5, 180),
+		})
+		if len(attempts) >= 10 {
+			break
+		}
+	}
+	return attempts
+}
+
+func compactStringList(value any, limit int, itemLimit int) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return []any{}
+	}
+	result := []any{}
+	for _, item := range items {
+		text := truncateCompactString(stringResultValue(item), itemLimit)
+		if text != "" {
+			result = append(result, text)
+		}
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
+
+func compactRollbackSummary(value any) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return []any{}
+	}
+	summary := []any{}
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		compacted := map[string]any{
+			"action": truncateCompactString(stringResultValue(entry["action"]), 80),
+			"target": truncateCompactString(stringResultValue(entry["target"]), 120),
+			"ok":     boolResultValue(entry["ok"]),
+		}
+		if errText := truncateCompactString(stringResultValue(entry["error"]), 120); errText != "" {
+			compacted["error"] = errText
+		}
+		summary = append(summary, compacted)
+		if len(summary) >= 20 {
+			break
+		}
+	}
+	return summary
+}
+
+func compactLandingPhases(value any) []any {
+	phases := []any{}
+	appendPhase := func(phase map[string]any) {
+		phases = append(phases, map[string]any{
+			"name":    truncateCompactString(stringResultValue(phase["name"]), 80),
+			"status":  truncateCompactString(stringResultValue(phase["status"]), 32),
+			"summary": truncateCompactString(stringResultValue(phase["summary"]), 180),
+		})
+	}
+	switch items := value.(type) {
+	case []any:
+		for _, item := range items {
+			phase, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			appendPhase(phase)
+			if len(phases) >= 20 {
+				break
+			}
+		}
+	case []map[string]any:
+		for _, phase := range items {
+			appendPhase(phase)
+			if len(phases) >= 20 {
+				break
+			}
+		}
+	}
+	return phases
 }
 
 func sanitizeTransitReadonlyPreflightResult(result map[string]any) map[string]any {
