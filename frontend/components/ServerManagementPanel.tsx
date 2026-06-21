@@ -418,6 +418,14 @@ export function ServerManagementPanel() {
     setModalMode("nodePlan");
   }
 
+  async function closeNodeCreateModal(refreshAfterSuccess = false) {
+    closeModal();
+    if (refreshAfterSuccess) {
+      await loadServers();
+      setMessage("直连节点创建完成，服务器和节点列表已刷新。");
+    }
+  }
+
   async function fetchNodeDetail(nodeId: string) {
     setNodeDetailLoading(true);
     try {
@@ -1235,6 +1243,30 @@ export function ServerManagementPanel() {
       nodePlan: "创建直连节点",
       workerCommand: "重新生成 Worker 安装命令",
     };
+    if (mode === "nodePlan") {
+      return (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card node-create-modal" role="dialog" aria-modal="true" aria-label={titleMap[mode]}>
+            <div className="modal-header node-create-modal-header">
+              <div>
+                <h3>{titleMap[mode]}</h3>
+                <p className="message">创建成功后可复制 V2Ray 链接、临时显示二维码或下载二维码。</p>
+              </div>
+              <button
+                aria-label="关闭创建直连节点弹窗"
+                className="modal-close-button"
+                type="button"
+                onClick={() => void closeNodeCreateModal(nodeCreateStep === "complete")}
+              >
+                ×
+              </button>
+            </div>
+            <div className="node-create-modal-body">{renderNodePlanForm()}</div>
+            {renderNodeCreateFooterActions()}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="modal-backdrop" role="presentation">
         <div className="modal-card" role="dialog" aria-modal="true" aria-label={titleMap[mode]}>
@@ -1565,12 +1597,50 @@ export function ServerManagementPanel() {
     );
   }
 
+  function renderNodeCreateFooterActions() {
+    if (nodeCreateStep === "complete") {
+      return (
+        <div className="modal-actions node-create-modal-footer">
+          <button className="success-button" type="button" onClick={() => void closeNodeCreateModal(true)}>
+            完成并关闭
+          </button>
+        </div>
+      );
+    }
+    if (nodeCreateStep === "failed") {
+      return (
+        <div className="modal-actions node-create-modal-footer">
+          <button className="secondary" type="button" onClick={() => void closeNodeCreateModal(false)}>
+            关闭
+          </button>
+          <button disabled={submitting || !nodePlanForm.protectedCreateConfirmed} form="node-create-form" type="submit">
+            重新尝试
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="modal-actions node-create-modal-footer">
+        <button className="secondary" type="button" onClick={() => void closeNodeCreateModal(false)}>
+          取消
+        </button>
+        <button disabled={submitting || !nodePlanForm.protectedCreateConfirmed} form="node-create-form" type="submit">
+          {submitting ? "创建中..." : "创建"}
+        </button>
+      </div>
+    );
+  }
+
   function renderNodePlanForm() {
     if (!selectedServer) {
       return null;
     }
     return (
-      <form className="form server-modal-form node-create-form" onSubmit={(event) => void submitSimplifiedLandingNodeCreate(event)}>
+      <form
+        className="form server-modal-form node-create-form"
+        id="node-create-form"
+        onSubmit={(event) => void submitSimplifiedLandingNodeCreate(event)}
+      >
         <div className="worker-bootstrap-intro wide-field">
           <strong>创建直连 Reality 节点</strong>
           <span>填写必要信息后点击创建。系统会自动预检、安装 / 启动 Xray、检查受保护端口监听，成功后再允许导出链接和二维码。</span>
@@ -1636,15 +1706,6 @@ export function ServerManagementPanel() {
             <span>真实链接不得写入日志、文档、PR、测试快照或聊天。</span>
           </div>
         </details>
-
-        <div className="modal-actions wide-field">
-          <button disabled={submitting || !nodePlanForm.protectedCreateConfirmed} type="submit">
-            {submitting ? "创建中..." : "创建"}
-          </button>
-          <button className="secondary" type="button" onClick={closeModal}>
-            取消
-          </button>
-        </div>
 
         {renderNodePlanResult()}
       </form>
