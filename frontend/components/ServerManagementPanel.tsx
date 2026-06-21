@@ -1280,7 +1280,6 @@ export function ServerManagementPanel() {
           {mode === "edit" ? renderServerForm(submitEdit) : null}
           {mode === "delete" ? renderDeleteConfirm() : null}
           {mode === "deleteNode" ? renderDeleteNodeConfirm() : null}
-          {mode === "nodePlan" ? renderNodePlanForm() : null}
         </div>
       </div>
     );
