@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import QRCode from "react-qr-code";
 
 import { TransitReadonlyPreflightSimplePanel } from "@/components/TransitReadonlyPreflightSimplePanel";
 import {
   apiFetch,
+  createTransitRouteWorkerExecuteCommand,
   createTransitReadonlyPreflightCommand,
   createTransitWorkerBootstrap,
   createWorkerCommand,
   exportTransitRouteCandidate,
+  getWorkerCommand,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
   regenerateTransitWorkerBootstrap,
@@ -25,6 +28,7 @@ import {
   type TransitReadonlyPreflightCommandRequest,
   type TransitResourceData,
   type TransitResourceListResult,
+  type TransitRouteWorkerCreateExecuteResponse,
   type TransitRouteData,
   type TransitRouteListResult,
   type WorkerCommandData,
@@ -47,32 +51,25 @@ type TransitRouteDraftState = {
   purpose: string;
 };
 
-type TransitRouteCreatePreviewFormState = {
+type TransitRouteCreateFormState = {
   routeName: string;
   transitResourceId: string;
   landingNodeId: string;
   listenPort: string;
   forwardingMethod: "socat";
+  firewallConfirmed: boolean;
 };
 
-type TransitRouteCreatePreviewConfirmations = {
-  previewOnly: boolean;
-  noWorkerCommand: boolean;
-  noListener: boolean;
-  noShareLinkMutation: boolean;
-  noCutover: boolean;
-};
-
-type TransitRouteCreatePreview = {
-  routeName: string;
-  transitResourceLabel: string;
-  entry: string;
-  landingNodeLabel: string;
-  target: string;
-  forwardingMethod: "socat";
-  serviceName: string;
-  safetyBoundary: string[];
-};
+type TransitRouteCreateStep =
+  | "idle"
+  | "preflight_create"
+  | "preflight_running"
+  | "command_create"
+  | "command_running"
+  | "refresh"
+  | "export_link"
+  | "complete"
+  | "failed";
 
 type TransitRouteWorkerCreatePlanResult = {
   command: WorkerCommandData;
@@ -86,23 +83,6 @@ type TransitRouteWorkerCreatePlanResult = {
   landing_target_port: number;
   safety_boundary: string[];
 };
-
-function SafetyConfirmRow({
-  checked,
-  onChange,
-  children,
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  children: ReactNode;
-}) {
-  return (
-    <label className="safety-confirm-row">
-      <input checked={checked} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
-      <span>{children}</span>
-    </label>
-  );
-}
 
 function SafeDeleteModal({
   title,
@@ -168,23 +148,33 @@ const emptyRouteDraft: TransitRouteDraftState = {
   purpose: "直播",
 };
 
-const emptyRouteCreatePreviewForm: TransitRouteCreatePreviewFormState = {
-  routeName: "hk-socat-live-xxxxx",
+const approvedTransitRouteName = "hk-socat-live-23843";
+const approvedTransitListenPort = 23843;
+const approvedTransitRealCreateStage = "Stage 3.3.73d-transit-route-real-create-code-path";
+const transitCreateTerminalStatuses = new Set(["succeeded", "failed", "cancelled", "expired"]);
+
+const transitRouteCreateProgressLabels: Record<TransitRouteCreateStep, string> = {
+  idle: "准备中",
+  preflight_create: "创建只读预检",
+  preflight_running: "预检中",
+  command_create: "创建中转命令",
+  command_running: "创建 socat 服务 / 检查监听",
+  refresh: "刷新中转链路",
+  export_link: "生成客户端链接",
+  complete: "完成",
+  failed: "创建未完成",
+};
+
+const emptyRouteCreateForm: TransitRouteCreateFormState = {
+  routeName: approvedTransitRouteName,
   transitResourceId: "",
   landingNodeId: "",
-  listenPort: "",
+  listenPort: String(approvedTransitListenPort),
   forwardingMethod: "socat",
+  firewallConfirmed: false,
 };
 
 const approvedCandidateRouteId = "d10d3dcc-679f-4f85-ae37-9e5dfa37e6af";
-
-const emptyRouteCreatePreviewConfirmations: TransitRouteCreatePreviewConfirmations = {
-  previewOnly: false,
-  noWorkerCommand: false,
-  noListener: false,
-  noShareLinkMutation: false,
-  noCutover: false,
-};
 
 function statusClass(status: string) {
   if (["active", "online", "worker_online", "succeeded", "success", "passed"].includes(status)) {
@@ -235,6 +225,12 @@ function parsePort(value: string) {
   }
   const port = Number(trimmed);
   return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function isPlanningSelectableTransitResource(resource: TransitResourceData) {
@@ -707,14 +703,16 @@ export function TransitRoutesPanel() {
   const [deleteRouteConfirmText, setDeleteRouteConfirmText] = useState("");
   const [advancedTransitOpsOpen, setAdvancedTransitOpsOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [createPreviewForm, setCreatePreviewForm] = useState<TransitRouteCreatePreviewFormState>(emptyRouteCreatePreviewForm);
-  const [createPreviewConfirmations, setCreatePreviewConfirmations] = useState<TransitRouteCreatePreviewConfirmations>(
-    emptyRouteCreatePreviewConfirmations,
-  );
-  const [createPreview, setCreatePreview] = useState<TransitRouteCreatePreview | null>(null);
-  const [createPreviewMessage, setCreatePreviewMessage] = useState(
-    "填写参数后生成配置预览；本阶段不会执行远程创建，也不会创建 Worker command。",
-  );
+  const [createForm, setCreateForm] = useState<TransitRouteCreateFormState>(emptyRouteCreateForm);
+  const [createStep, setCreateStep] = useState<TransitRouteCreateStep>("idle");
+  const [createCommand, setCreateCommand] = useState<WorkerCommandData | null>(null);
+  const [createExecuteResult, setCreateExecuteResult] = useState<TransitRouteWorkerCreateExecuteResponse | null>(null);
+  const [createdRoute, setCreatedRoute] = useState<TransitRouteData | null>(null);
+  const [createExport, setCreateExport] = useState<TransitRouteCandidateExportResult | null>(null);
+  const [createError, setCreateError] = useState("");
+  const [createCopyFallbackRequired, setCreateCopyFallbackRequired] = useState(false);
+  const [createQrVisible, setCreateQrVisible] = useState(false);
+  const createQrFrameRef = useRef<HTMLDivElement | null>(null);
   const [candidateRouteId, setCandidateRouteId] = useState("");
 
   const selectableResources = useMemo(() => resources.filter(isPlanningSelectableTransitResource), [resources]);
@@ -727,24 +725,25 @@ export function TransitRoutesPanel() {
   const deleteRoute = routes.find((route) => route.id === deleteRouteId) ?? null;
   const selectedResource = selectableResources.find((resource) => resource.id === draft.transitResourceId) ?? selectableResources[0] ?? null;
   const selectedNode = activeNodes.find((node) => node.id === draft.landingNodeId) ?? activeNodes[0] ?? null;
-  const createPreviewResource =
-    selectableResources.find((resource) => resource.id === createPreviewForm.transitResourceId) ?? selectableResources[0] ?? null;
-  const createPreviewNode = activeNodes.find((node) => node.id === createPreviewForm.landingNodeId) ?? activeNodes[0] ?? null;
+  const createResource = selectableResources.find((resource) => resource.id === createForm.transitResourceId) ?? selectableResources[0] ?? null;
+  const createNode = activeNodes.find((node) => node.id === createForm.landingNodeId) ?? activeNodes[0] ?? null;
   const plannedPort = parsePort(draft.plannedListenPort);
   const targetPort = targetPortForNode(selectedNode);
-  const createPreviewListenPort = parsePort(createPreviewForm.listenPort);
-  const createPreviewTargetPort = targetPortForNode(createPreviewNode);
-  const createPreviewReady =
-    Boolean(createPreviewForm.routeName.trim()) &&
-    Boolean(createPreviewResource) &&
-    Boolean(createPreviewNode) &&
-    createPreviewListenPort !== null &&
-    createPreviewTargetPort > 0 &&
-    createPreviewConfirmations.previewOnly &&
-    createPreviewConfirmations.noWorkerCommand &&
-    createPreviewConfirmations.noListener &&
-    createPreviewConfirmations.noShareLinkMutation &&
-    createPreviewConfirmations.noCutover;
+  const createListenPort = parsePort(createForm.listenPort);
+  const createTargetPort = targetPortForNode(createNode);
+  const createReady =
+    Boolean(createForm.routeName.trim()) &&
+    Boolean(createResource) &&
+    Boolean(createNode) &&
+    createListenPort !== null &&
+    createTargetPort > 0 &&
+    createForm.firewallConfirmed &&
+    createStep !== "preflight_create" &&
+    createStep !== "preflight_running" &&
+    createStep !== "command_create" &&
+    createStep !== "command_running" &&
+    createStep !== "refresh" &&
+    createStep !== "export_link";
 
   const planningIssues = [
     !selectedResource ? "暂无可用于本地规划的中转服务器。" : null,
@@ -760,6 +759,9 @@ export function TransitRoutesPanel() {
 
   async function loadData() {
     setLoading(true);
+    let nextResources: TransitResourceData[] = resources;
+    let nextNodes: NodeData[] = nodes;
+    let nextRoutes: TransitRouteData[] = routes;
     const [resourceResult, nodeResult, routeResult] = await Promise.all([
       apiFetch<TransitResourceListResult>("/api/transit-resources?resource_type=server"),
       apiFetch<NodeListResult>("/api/nodes"),
@@ -767,21 +769,25 @@ export function TransitRoutesPanel() {
     ]);
 
     if (resourceResult.success) {
-      setResources(resourceResult.data.resources);
+      nextResources = resourceResult.data.resources;
+      setResources(nextResources);
     } else {
       setMessage(`${resourceResult.error_code}: ${resourceResult.message}`);
     }
     if (nodeResult.success) {
-      setNodes(nodeResult.data.nodes);
+      nextNodes = nodeResult.data.nodes;
+      setNodes(nextNodes);
     } else {
       setMessage(`${nodeResult.error_code}: ${nodeResult.message}`);
     }
     if (routeResult.success) {
-      setRoutes(routeResult.data.routes);
+      nextRoutes = routeResult.data.routes;
+      setRoutes(nextRoutes);
     } else {
       setMessage(`${routeResult.error_code}: ${routeResult.message}`);
     }
     setLoading(false);
+    return { resources: nextResources, nodes: nextNodes, routes: nextRoutes };
   }
 
   useEffect(() => {
@@ -810,52 +816,220 @@ export function TransitRoutesPanel() {
   }
 
   function openCreateRouteModal() {
-    setCreatePreviewForm({
-      ...emptyRouteCreatePreviewForm,
+    setCreateForm({
+      ...emptyRouteCreateForm,
       transitResourceId: selectedResource?.id ?? selectableResources[0]?.id ?? "",
       landingNodeId: selectedNode?.id ?? activeNodes[0]?.id ?? "",
     });
-    setCreatePreviewConfirmations(emptyRouteCreatePreviewConfirmations);
-    setCreatePreview(null);
-    setCreatePreviewMessage("填写参数后生成配置预览；本阶段不会执行远程创建，也不会创建 Worker command。");
+    setCreateStep("idle");
+    setCreateCommand(null);
+    setCreateExecuteResult(null);
+    setCreatedRoute(null);
+    setCreateExport(null);
+    setCreateError("");
+    setCreateCopyFallbackRequired(false);
+    setCreateQrVisible(false);
     setCreateModalOpen(true);
   }
 
-  function closeCreateRouteModal() {
+  async function closeCreateRouteModal(refresh = false) {
     setCreateModalOpen(false);
-    setCreatePreviewForm(emptyRouteCreatePreviewForm);
-    setCreatePreviewConfirmations(emptyRouteCreatePreviewConfirmations);
-    setCreatePreview(null);
+    setCreateForm(emptyRouteCreateForm);
+    setCreateStep("idle");
+    setCreateCommand(null);
+    setCreateExecuteResult(null);
+    setCreatedRoute(null);
+    setCreateExport(null);
+    setCreateError("");
+    setCreateCopyFallbackRequired(false);
+    setCreateQrVisible(false);
+    if (refresh) {
+      await loadData();
+    }
   }
 
-  function generateCreatePreview() {
-    if (!createPreviewResource || !createPreviewNode || createPreviewListenPort === null || createPreviewTargetPort <= 0) {
-      setCreatePreviewMessage("请先选择中转服务器、落地节点，并填写合法的中转监听端口。");
-      return;
+  async function waitForTransitCommandCompletion(commandId: string, runningStep: TransitRouteCreateStep) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      const result = await getWorkerCommand(commandId);
+      if (!result.success) {
+        throw new Error(`${result.error_code}: ${result.message}`);
+      }
+      setCreateCommand(result.data);
+      if (transitCreateTerminalStatuses.has(result.data.status)) {
+        return result.data;
+      }
+      setCreateStep(runningStep);
+      await sleep(2000);
     }
-    if (!createPreviewReady) {
-      setCreatePreviewMessage("生成配置预览前必须完成所有安全确认。");
-      return;
-    }
+    throw new Error("Worker 命令等待超时。请刷新列表查看最新状态。");
+  }
 
-    // Multi-route real creation is intentionally not wired in this stage. This modal only prepares a local configuration preview.
-    setCreatePreview({
-      routeName: createPreviewForm.routeName.trim(),
-      transitResourceLabel: `${createPreviewResource.name} / ${displayValue(createPreviewResource.entry_host)}`,
-      entry: `${displayValue(createPreviewResource.entry_host)}:${createPreviewListenPort}`,
-      landingNodeLabel: `${createPreviewNode.node_name} / ${displayValue(createPreviewNode.vps_ip)}:${displayValue(createPreviewNode.port)}`,
-      target: `${landingHostForNode(createPreviewNode)}:${createPreviewTargetPort}`,
-      forwardingMethod: "socat",
-      serviceName: `liveline-socat-${createPreviewListenPort}.service`,
-      safetyBoundary: [
-        "未执行远程创建",
-        "未创建 Worker command",
-        "未新增监听端口",
-        "未写数据库 share_link",
-        "未 cutover",
-      ],
-    });
-    setCreatePreviewMessage("配置预览已生成；未执行远程创建，未创建 Worker command。");
+  function findCreatedTransitRoute(routeList: TransitRouteData[]) {
+    if (!createResource || !createNode || createListenPort === null) {
+      return null;
+    }
+    return (
+      routeList.find(
+        (route) =>
+          route.transit_resource_id === createResource.id &&
+          route.node_id === createNode.id &&
+          route.listen_port === createListenPort &&
+          route.target_port === createTargetPort &&
+          route.forwarding_method === "socat" &&
+          route.status === "active" &&
+          !route.deleted_at,
+      ) ?? null
+    );
+  }
+
+  function friendlyTransitCreateError(error: unknown) {
+    const raw = error instanceof Error ? error.message : String(error || "创建失败。");
+    if (raw.includes("READONLY_PREFLIGHT") || raw.includes("preflight") || raw.includes("预检")) {
+      return "只读预检未通过：请确认 Worker 在线、监听端口未占用、落地目标端口可达。";
+    }
+    if (raw.includes("TRANSIT_PORT_ALREADY_PLANNED") || raw.includes("LISTEN") || raw.includes("listen") || raw.includes("端口")) {
+      return "中转监听端口不可用：端口可能已存在链路、未放行，或 Worker 未检测到监听成功。";
+    }
+    if (raw.includes("WORKER") || raw.includes("Worker")) {
+      return "中转 Worker 不在线或版本不满足，请检查中转服务器 Worker 状态。";
+    }
+    if (raw.includes("APPROVAL") || raw.includes("MISMATCH") || raw.includes("审批")) {
+      return "受保护创建审批未通过：当前真实创建仍要求匹配已审批的中转资源、落地节点、端口和线路名称。";
+    }
+    if (raw.includes("share_link") || raw.includes("链接")) {
+      return "客户端链接生成失败：请确认落地直连节点已经成功生成分享链接。";
+    }
+    return raw;
+  }
+
+  async function submitSimplifiedTransitRouteCreate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!createResource || !createNode || createListenPort === null || createTargetPort <= 0) {
+      setCreateError("请先选择中转服务器、落地节点，并填写合法的中转监听端口。");
+      return;
+    }
+    if (!createForm.firewallConfirmed) {
+      setCreateError("请先确认中转监听端口已在云安全组、云防火墙和服务器本机防火墙放行。");
+      return;
+    }
+    setCreateStep("preflight_create");
+    setCreateCommand(null);
+    setCreateExecuteResult(null);
+    setCreatedRoute(null);
+    setCreateExport(null);
+    setCreateError("");
+    setCreateCopyFallbackRequired(false);
+    setCreateQrVisible(false);
+    setMessage("正在自动执行中转只读预检和受保护创建流程。成功后才会临时生成客户端链接和二维码。");
+
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const preflightResult = await createTransitReadonlyPreflightCommand(
+        {
+          transit_resource_id: createResource.id,
+          landing_node_id: createNode.id,
+          planned_listen_port: createListenPort,
+          landing_target_port: createTargetPort,
+          forwarding_method: "socat",
+          purpose: "直播",
+          readonly: true,
+        },
+        csrfToken,
+      );
+      if (!preflightResult.success) {
+        throw new Error(`${preflightResult.error_code}: ${preflightResult.message}`);
+      }
+      setCreateCommand(preflightResult.data.command);
+      const preflightCommand = await waitForTransitCommandCompletion(preflightResult.data.command.id, "preflight_running");
+      if (preflightCommand.status !== "succeeded") {
+        throw new Error(preflightCommand.error_message || "中转只读预检未通过。");
+      }
+
+      setCreateStep("command_create");
+      const createResult = await createTransitRouteWorkerExecuteCommand(
+        {
+          transit_resource_id: createResource.id,
+          landing_node_id: createNode.id,
+          planned_listen_port: createListenPort,
+          landing_target_host: landingHostForNode(createNode),
+          landing_target_port: createTargetPort,
+          forwarding_method: "socat",
+          purpose: "直播",
+          route_name: createForm.routeName.trim(),
+          approval_stage: approvedTransitRealCreateStage,
+          dry_run: false,
+          approval_required: false,
+          user_approved_real_execution: true,
+          firewall_security_group_confirmed: createForm.firewallConfirmed,
+          cloud_firewall_confirmed: createForm.firewallConfirmed,
+          server_firewall_confirmed: createForm.firewallConfirmed,
+          no_node_share_link_change_confirmed: true,
+          no_full_client_link_confirmed: true,
+          no_cutover_confirmed: true,
+        },
+        csrfToken,
+      );
+      if (!createResult.success) {
+        throw new Error(`${createResult.error_code}: ${createResult.message}`);
+      }
+      setCreateExecuteResult(createResult.data);
+      setCreateCommand(createResult.data.command);
+      const createCommandResult = await waitForTransitCommandCompletion(createResult.data.command.id, "command_running");
+      if (createCommandResult.status !== "succeeded") {
+        throw new Error(createCommandResult.error_message || "中转链路创建命令执行失败。");
+      }
+
+      setCreateStep("refresh");
+      const refreshed = await loadData();
+      const route = findCreatedTransitRoute(refreshed.routes);
+      if (!route) {
+        throw new Error("中转链路创建命令已成功，但列表刷新后未找到 active 链路。请刷新页面确认。");
+      }
+      setCreatedRoute(route);
+
+      setCreateStep("export_link");
+      const exportResult = await exportTransitRouteCandidate(
+        route.id,
+        {
+          confirm_transient_export: true,
+          confirm_no_database_write: true,
+          confirm_no_share_link_mutation: true,
+          confirm_no_cutover: true,
+          reason: "transit_route_create_success",
+        },
+        csrfToken,
+      );
+      if (!exportResult.success) {
+        throw new Error(`${exportResult.error_code}: ${exportResult.message}`);
+      }
+      setCreateExport(exportResult.data);
+      setCreateStep("complete");
+      setMessage("中转链路创建完成。可以复制客户端链接或临时显示二维码。");
+    } catch (error) {
+      const friendly = friendlyTransitCreateError(error);
+      setCreateStep("failed");
+      setCreateError(friendly);
+      setMessage(`${friendly} 失败时不会写入 transit_routes.share_link，不会 cutover，也不会显示完整客户端链接。`);
+    }
+  }
+
+  function downloadCreateTransitQrCode() {
+    const svg = createQrFrameRef.current?.querySelector("svg");
+    if (!svg || !createExport) {
+      setMessage("请先显示二维码。");
+      return;
+    }
+    const source = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${createExport.route_name || "liveline-transit"}-qr.svg`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage("中转测试二维码已下载。请妥善保存，不要公开分享。");
   }
 
   function selectCandidateRoute(routeId: string) {
@@ -1518,151 +1692,243 @@ export function TransitRoutesPanel() {
 
       {createModalOpen ? (
         <div className="modal-backdrop">
-          <div className="modal-card transit-route-create-modal">
-            <div className="modal-header">
+          <div className="modal-card node-create-modal transit-route-create-modal">
+            <div className="modal-header node-create-modal-header">
               <div>
-                <h3>新增中转链路</h3>
-                <p className="message">配置中转服务器到落地节点的转发线路。本阶段只生成配置预览，不执行远程创建，不创建 Worker command。</p>
+                <h3>创建中转链路</h3>
+                <p className="message">
+                  填写必要信息后点击创建。系统会自动预检、创建中转转发服务、检查监听和落地连通性，成功后生成可用 V2Ray
+                  链接和二维码。
+                </p>
               </div>
-              <button className="secondary" type="button" onClick={closeCreateRouteModal}>
-                关闭
+              <button className="ghost-button" type="button" aria-label="关闭创建中转链路弹窗" onClick={() => void closeCreateRouteModal(false)}>
+                ×
               </button>
             </div>
 
-            <div className="form server-modal-form">
-              <label>
-                链路名称
-                <input
-                  value={createPreviewForm.routeName}
-                  onChange={(event) => {
-                    setCreatePreview(null);
-                    setCreatePreviewForm({ ...createPreviewForm, routeName: event.target.value });
-                  }}
-                />
-              </label>
-              <label>
-                中转服务器
-                <select
-                  value={createPreviewResource?.id ?? ""}
-                  onChange={(event) => {
-                    setCreatePreview(null);
-                    setCreatePreviewForm({ ...createPreviewForm, transitResourceId: event.target.value });
-                  }}
-                >
-                  {selectableResources.length === 0 ? <option value="">暂无可用于本地规划的中转服务器</option> : null}
-                  {selectableResources.map((resource) => (
-                    <option key={resource.id} value={resource.id}>
-                      {resource.name} / {displayValue(resource.entry_host)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                落地节点 / 落地服务器
-                <select
-                  value={createPreviewNode?.id ?? ""}
-                  onChange={(event) => {
-                    setCreatePreview(null);
-                    setCreatePreviewForm({ ...createPreviewForm, landingNodeId: event.target.value });
-                  }}
-                >
-                  {activeNodes.length === 0 ? <option value="">暂无 active 落地节点</option> : null}
-                  {activeNodes.map((node) => (
-                    <option key={node.id} value={node.id}>
-                      {node.node_name} / {displayValue(node.vps_ip)}:{displayValue(node.port)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                中转监听端口
-                <input
-                  inputMode="numeric"
-                  placeholder="例如 23843"
-                  value={createPreviewForm.listenPort}
-                  onChange={(event) => {
-                    setCreatePreview(null);
-                    setCreatePreviewForm({ ...createPreviewForm, listenPort: event.target.value });
-                  }}
-                />
-                <span className="node-share-status">同一台中转服务器上端口不能重复；本阶段不实际放行端口、不创建监听。</span>
-              </label>
-              <label>
-                转发方式
-                <select disabled value={createPreviewForm.forwardingMethod}>
-                  <option value="socat">socat</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="safety-confirm-list">
-              <SafetyConfirmRow
-                checked={createPreviewConfirmations.previewOnly}
-                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, previewOnly: checked })}
+            <div className="node-create-modal-body">
+              <form
+                className="form server-modal-form node-create-form transit-route-create-form"
+                id="transit-route-create-form"
+                onSubmit={(event) => void submitSimplifiedTransitRouteCreate(event)}
               >
-                我确认这只是配置预览，不执行远程创建。
-              </SafetyConfirmRow>
-              <SafetyConfirmRow
-                checked={createPreviewConfirmations.noWorkerCommand}
-                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, noWorkerCommand: checked })}
-              >
-                我确认不会创建 Worker command。
-              </SafetyConfirmRow>
-              <SafetyConfirmRow
-                checked={createPreviewConfirmations.noListener}
-                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, noListener: checked })}
-              >
-                我确认不会新增监听端口。
-              </SafetyConfirmRow>
-              <SafetyConfirmRow
-                checked={createPreviewConfirmations.noShareLinkMutation}
-                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, noShareLinkMutation: checked })}
-              >
-                我确认不会修改 `nodes.share_link`。
-              </SafetyConfirmRow>
-              <SafetyConfirmRow
-                checked={createPreviewConfirmations.noCutover}
-                onChange={(checked) => setCreatePreviewConfirmations({ ...createPreviewConfirmations, noCutover: checked })}
-              >
-                我确认不会 cutover。
-              </SafetyConfirmRow>
-            </div>
-
-            {createPreview ? (
-              <div className="route-preview-box">
-                <strong>配置预览</strong>
-                <div className="route-preview-grid">
-                  <span>链路名称</span>
-                  <strong>{createPreview.routeName}</strong>
-                  <span>中转服务器</span>
-                  <strong>{createPreview.transitResourceLabel}</strong>
-                  <span>入口端口</span>
-                  <strong>{createPreview.entry}</strong>
-                  <span>落地目标</span>
-                  <strong>{createPreview.target}</strong>
-                  <span>转发方式</span>
-                  <strong>{createPreview.forwardingMethod}</strong>
-                  <span>预计 service</span>
-                  <strong>{createPreview.serviceName}</strong>
+                <div className="worker-bootstrap-intro wide-field">
+                  <strong>创建 socat 中转链路</strong>
+                  <span>
+                    中转客户端链接基于落地直连节点链接生成，只替换服务器地址和端口；不会修改 nodes.share_link，不会写入
+                    transit_routes.share_link，不会 cutover。
+                  </span>
+                  <span>当前真实创建仍走后端受保护审批校验；参数不匹配时会被后端拒绝。</span>
                 </div>
-                <ul className="route-safety-list">
-                  {createPreview.safetyBoundary.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
 
-            <p className="message">{createPreviewMessage}</p>
+                <label>
+                  链路名称
+                  <input
+                    value={createForm.routeName}
+                    onChange={(event) => setCreateForm({ ...createForm, routeName: event.target.value })}
+                    placeholder={approvedTransitRouteName}
+                  />
+                </label>
+                <label>
+                  中转服务器
+                  <select value={createResource?.id ?? ""} onChange={(event) => setCreateForm({ ...createForm, transitResourceId: event.target.value })}>
+                    {selectableResources.length === 0 ? <option value="">暂无可用中转服务器</option> : null}
+                    {selectableResources.map((resource) => (
+                      <option key={resource.id} value={resource.id}>
+                        {resource.name} / {displayValue(resource.entry_host)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  落地节点 / 落地服务器
+                  <select value={createNode?.id ?? ""} onChange={(event) => setCreateForm({ ...createForm, landingNodeId: event.target.value })}>
+                    {activeNodes.length === 0 ? <option value="">暂无 active 落地节点</option> : null}
+                    {activeNodes.map((node) => (
+                      <option key={node.id} value={node.id}>
+                        {node.node_name} / {displayValue(node.vps_ip)}:{displayValue(node.port)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  中转监听端口
+                  <input
+                    inputMode="numeric"
+                    value={createForm.listenPort}
+                    onChange={(event) => setCreateForm({ ...createForm, listenPort: event.target.value })}
+                    placeholder={String(approvedTransitListenPort)}
+                  />
+                  <small>新增或变更中转监听端口时，必须自行确认云安全组 / 云防火墙 / 服务器本机防火墙已放行对应 TCP 端口。</small>
+                </label>
+                <label>
+                  转发方式
+                  <input readOnly value="socat" />
+                </label>
 
-            <div className="modal-actions">
-              <button className="secondary" type="button" onClick={closeCreateRouteModal}>
-                取消
-              </button>
-              <button disabled={!createPreviewReady} type="button" onClick={generateCreatePreview}>
-                生成配置预览
-              </button>
+                <label className="node-create-confirm wide-field">
+                  <input
+                    type="checkbox"
+                    checked={createForm.firewallConfirmed}
+                    onChange={(event) => setCreateForm({ ...createForm, firewallConfirmed: event.target.checked })}
+                  />
+                  <span>
+                    我已确认该中转监听 TCP 端口已在云安全组、云防火墙和服务器本机防火墙放行，并理解创建成功后会生成可用客户端链接。
+                  </span>
+                </label>
+
+                <details className="node-create-safety-details wide-field">
+                  <summary>高级安全说明</summary>
+                  <div className="node-create-safety-body">
+                    <span>创建命令只通过 transit Worker allowlist 执行固定 socat service 模板，不接受任意 shell 或任意 systemd unit。</span>
+                    <span>成功条件包括 systemd service active、监听端口 LISTEN、以及中转服务器到落地目标端口连通。</span>
+                    <span>失败时不会生成完整客户端链接，不写 transit_routes.share_link，不修改落地节点，不 cutover。</span>
+                    <span>本页面不会自动修改防火墙、云安全组或云防火墙；端口放行仍由用户自行确认。</span>
+                  </div>
+                </details>
+
+                {createStep !== "idle" ? (
+                  <div className="landing-plan-result node-create-result wide-field">
+                    <div className={`plan-status-card ${createStep === "failed" ? "blocked" : createStep === "complete" ? "ready" : ""}`}>
+                      <strong>{transitRouteCreateProgressLabels[createStep]}</strong>
+                      <span>系统会先做只读预检，再创建 socat 中转命令。只有创建、监听和连通性检查成功后，才会临时导出客户端链接。</span>
+                    </div>
+
+                    {createStep !== "failed" ? (
+                      <div className="node-create-progress" aria-label="中转链路创建进度">
+                        {(["preflight_create", "preflight_running", "command_create", "command_running", "refresh", "export_link", "complete"] as TransitRouteCreateStep[]).map(
+                          (step, index, steps) => {
+                            const currentIndex = steps.indexOf(createStep);
+                            return (
+                              <span className={index < currentIndex ? "done" : index === currentIndex ? "current" : ""} key={step}>
+                                {transitRouteCreateProgressLabels[step]}
+                              </span>
+                            );
+                          },
+                        )}
+                      </div>
+                    ) : null}
+
+                    {createCommand ? (
+                      <div className="worker-command-panel">
+                        <strong>当前 Worker 命令</strong>
+                        <span>命令 ID：{createCommand.id}</span>
+                        <span>类型：{createCommand.command_type}</span>
+                        <span>状态：{displayStatusLabel(createCommand.status)}</span>
+                        {createCommand.result_summary ? <span>{createCommand.result_summary}</span> : null}
+                        {createCommand.error_message ? <span>{createCommand.error_message}</span> : null}
+                      </div>
+                    ) : null}
+
+                    {createExecuteResult ? (
+                      <div className="worker-command-panel">
+                        <strong>创建命令已提交</strong>
+                        <span>目标 Worker：{createExecuteResult.target_worker_id}</span>
+                        <span>Worker 版本：{createExecuteResult.target_worker_version || "未返回"}</span>
+                        <span>执行模式：{createExecuteResult.execution_mode}</span>
+                      </div>
+                    ) : null}
+
+                    {createError ? (
+                      <div className="failure-box">
+                        <strong>创建未完成</strong>
+                        <span>{createError}</span>
+                        <span>请检查中转端口放行、Worker 在线状态、落地端口连通性，或确认本次参数仍匹配受保护审批记录。</span>
+                        <span>失败时不会写入 transit_routes.share_link，不会 cutover，也不会显示完整客户端链接。</span>
+                      </div>
+                    ) : null}
+
+                    {createdRoute && createExport ? (
+                      <div className="node-create-success-card">
+                        <strong>中转链路已创建，可导入客户端</strong>
+                        <div className="landing-plan-grid">
+                          <span>链路名称</span>
+                          <strong>{createdRoute.name}</strong>
+                          <span>中转入口</span>
+                          <strong>{createExport.server}:{createExport.port}</strong>
+                          <span>目标落地</span>
+                          <strong>{createdRoute.target_host}:{createdRoute.target_port}</strong>
+                          <span>协议</span>
+                          <strong>{createExport.protocol} / {createExport.security} / {createExport.network}</strong>
+                        </div>
+                        <div className="modal-actions">
+                          <button
+                            className="secondary"
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await copyText(createExport.candidate_link);
+                                setCreateCopyFallbackRequired(false);
+                                setMessage("中转客户端链接已复制。请妥善保存，仅自己使用。");
+                              } catch {
+                                setCreateCopyFallbackRequired(true);
+                                setMessage("当前 HTTP 环境不支持自动复制，请使用下方文本框手动复制。");
+                              }
+                            }}
+                          >
+                            复制客户端链接
+                          </button>
+                          <button className="secondary" type="button" onClick={() => setCreateQrVisible(true)}>
+                            临时二维码
+                          </button>
+                          {createQrVisible ? (
+                            <button className="secondary" type="button" onClick={downloadCreateTransitQrCode}>
+                              下载二维码
+                            </button>
+                          ) : null}
+                        </div>
+                        {createCopyFallbackRequired ? (
+                          <label className="candidate-manual-copy transit-export-manual-copy">
+                            手动复制完整客户端链接
+                            <textarea
+                              readOnly
+                              value={createExport.candidate_link}
+                              onClick={(event) => event.currentTarget.select()}
+                              onFocus={(event) => event.currentTarget.select()}
+                            />
+                          </label>
+                        ) : null}
+                        {createQrVisible ? (
+                          <div className="qr-panel">
+                            <div className="qr-frame" ref={createQrFrameRef} aria-label="中转客户端链接二维码">
+                              <QRCode value={createExport.candidate_link} size={220} />
+                            </div>
+                            <small>二维码等同完整客户端链接，仅自己使用，不要写入聊天、日志、README、PR 或文档。</small>
+                          </div>
+                        ) : null}
+                        <small>Shadowrocket / V2RayN / V2RayNG 可通过完整链接或二维码导入。不会写入 nodes.share_link 或 transit_routes.share_link。</small>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </form>
             </div>
+
+            {createStep === "complete" ? (
+              <div className="modal-actions node-create-modal-footer">
+                <button className="success-button" type="button" onClick={() => void closeCreateRouteModal(true)}>
+                  完成并关闭
+                </button>
+              </div>
+            ) : createStep === "failed" ? (
+              <div className="modal-actions node-create-modal-footer">
+                <button className="secondary" type="button" onClick={() => void closeCreateRouteModal(false)}>
+                  关闭
+                </button>
+                <button disabled={!createReady} form="transit-route-create-form" type="submit">
+                  重新尝试
+                </button>
+              </div>
+            ) : (
+              <div className="modal-actions node-create-modal-footer">
+                <button className="secondary" type="button" onClick={() => void closeCreateRouteModal(false)}>
+                  取消
+                </button>
+                <button disabled={!createReady} form="transit-route-create-form" type="submit">
+                  {createStep === "idle" ? "创建中转链路" : "创建中..."}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : null}

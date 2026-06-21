@@ -88,7 +88,12 @@ def make_candidate_route(*, status: str = "active", route_id: str = APPROVED_TRA
         reality_short_id="fake-short-id",
         sni="www.example.com",
         fingerprint="chrome",
-        share_link="vless" + "://original-node-share-link-should-not-be-returned",
+        share_link=(
+            "vless"
+            + "://11111111-2222-3333-4444-555555555555@64.90.13.19:27939"
+            "?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com"
+            "&fp=chrome&pbk=fake-public-key-for-test&sid=fake-short-id&type=tcp#liveline-reality-27939"
+        ),
         status="active",
     )
     vps = VpsServer(id="landing-vps", ip=APPROVED_LANDING_TARGET_HOST)
@@ -221,6 +226,11 @@ class TransitCandidateExportApiTests(unittest.TestCase):
         self.assertFalse(exported["transit_route_share_link_mutated"])
         self.assertTrue(exported["candidate_link"].startswith("vless" + "://"))
         self.assertIn("@163.223.216.108:23843", exported["candidate_link"])
+        self.assertIn("pbk=fake-public-key-for-test", exported["candidate_link"])
+        self.assertIn("sid=fake-short-id", exported["candidate_link"])
+        self.assertIn("sni=www.example.com", exported["candidate_link"])
+        self.assertIn("flow=xtls-rprx-vision", exported["candidate_link"])
+        self.assertTrue(exported["candidate_link"].endswith("#hk-socat-live-23843"))
         self.assertNotEqual(exported["candidate_link"], original_node_share_link)
         self.assertEqual(route.node.share_link, original_node_share_link)
         self.assertIsNone(route.share_link)
@@ -230,6 +240,65 @@ class TransitCandidateExportApiTests(unittest.TestCase):
         self.assertEqual(audit_logs[0].action, "export_transit_route_candidate")
         self.assertEqual(audit_logs[0].resource_id, route.id)
         self.assertNotIn(exported["candidate_link"], str(audit_logs[0].__dict__))
+
+    def test_export_rejects_missing_landing_node_share_link(self):
+        route = make_candidate_route()
+        route.node.share_link = None
+        payload = valid_export_payload()
+
+        with patch.object(transit_routes, "require_admin_session", return_value=FakeAdminSession()), patch.object(
+            transit_routes, "csrf_valid", return_value=True
+        ):
+            response = transit_routes.export_transit_route_candidate(
+                route.id,
+                payload,
+                make_request(f"/api/transit-routes/{route.id}/candidate-export"),
+                FakeSession(route=route),
+            )
+        data = response_payload(response)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(data["error_code"], "CANDIDATE_LINK_MATERIAL_INCOMPLETE")
+
+    def test_export_allows_active_non_cutover_route_without_fixed_route_id(self):
+        route = make_candidate_route(route_id="custom-route-1")
+        route.name = "custom-socat-route"
+        route.listen_port = 24001
+        payload = valid_export_payload()
+
+        with patch.object(transit_routes, "require_admin_session", return_value=FakeAdminSession()), patch.object(
+            transit_routes, "csrf_valid", return_value=True
+        ):
+            response = transit_routes.export_transit_route_candidate(
+                route.id,
+                payload,
+                make_request(f"/api/transit-routes/{route.id}/candidate-export"),
+                FakeSession(route=route),
+            )
+        data = response_payload(response)
+
+        self.assertTrue(data["success"])
+        self.assertIn("@163.223.216.108:24001", data["data"]["candidate_link"])
+        self.assertTrue(data["data"]["candidate_link"].endswith("#custom-socat-route"))
+
+    def test_export_rejects_cutover_route(self):
+        route = make_candidate_route()
+        route.share_link = "stored-transit-link-redacted"
+        payload = valid_export_payload()
+
+        with patch.object(transit_routes, "require_admin_session", return_value=FakeAdminSession()), patch.object(
+            transit_routes, "csrf_valid", return_value=True
+        ):
+            response = transit_routes.export_transit_route_candidate(
+                route.id,
+                payload,
+                make_request(f"/api/transit-routes/{route.id}/candidate-export"),
+                FakeSession(route=route),
+            )
+        data = response_payload(response)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(data["error_code"], "TRANSIT_ROUTE_CUTOVER_BLOCKED")
 
 
 if __name__ == "__main__":
