@@ -351,6 +351,9 @@ export type LandingNodePlanResponse = {
 
 export type LandingNodeCreateRequest = {
   approved_port: number;
+  node_name?: string | null;
+  server_name?: string;
+  dest?: string;
   confirm_firewall_open: boolean;
   confirm_generate_share_link: boolean;
   confirm_write_share_link_after_success: boolean;

@@ -65,11 +65,30 @@ class LandingNodePlanResponse(BaseModel):
 
 class LandingNodeCreateRequest(BaseModel):
     approved_port: int = Field(ge=1, le=65535)
+    node_name: str | None = Field(default=None, max_length=120)
+    server_name: str = Field(default="www.microsoft.com", max_length=255)
+    dest: str = Field(default="www.microsoft.com:443", max_length=255)
     confirm_firewall_open: bool = False
     confirm_generate_share_link: bool = False
     confirm_write_share_link_after_success: bool = False
     confirm_no_existing_xray: bool = False
     confirm_rollback_new_artifacts_only: bool = False
+
+    @field_validator("node_name")
+    @classmethod
+    def clean_optional_node_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("server_name", "dest")
+    @classmethod
+    def clean_create_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("value cannot be empty")
+        return cleaned
 
 
 class LandingNodeCreateResponse(BaseModel):

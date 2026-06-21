@@ -1477,6 +1477,101 @@ textarea {
   gap: 12px;
 }
 
+.node-create-form {
+  width: min(820px, calc(100vw - 48px));
+}
+
+.node-create-safety-details {
+  background: rgba(19, 31, 45, 0.74);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.node-create-safety-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.node-create-safety-body {
+  color: var(--muted);
+  display: grid;
+  font-size: 13px;
+  gap: 8px;
+  line-height: 1.55;
+  padding-top: 10px;
+}
+
+.node-create-confirm {
+  align-items: flex-start;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  gap: 10px;
+  line-height: 1.6;
+  padding: 12px;
+}
+
+.node-create-confirm input {
+  flex: 0 0 auto;
+  margin-top: 5px;
+  width: auto;
+}
+
+.node-create-confirm span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.node-create-result {
+  margin-top: 4px;
+}
+
+.node-create-progress {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.node-create-progress span {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.node-create-progress span.done {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: var(--success);
+}
+
+.node-create-progress span.current {
+  border-color: rgba(96, 165, 250, 0.65);
+  color: var(--accent);
+}
+
+.node-create-success-card {
+  background: rgba(15, 118, 110, 0.12);
+  border: 1px solid rgba(45, 212, 191, 0.24);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.node-create-success-card small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .plan-status-card {
   border-radius: 8px;
   display: grid;
