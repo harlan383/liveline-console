@@ -2613,6 +2613,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.115 Worker command read endpoint and transit poll fix | Add admin WorkerCommand status read endpoint and make transit create polling tolerate short command visibility delays without undefined errors |
 | Stage 3.3.117 Generalize worker-side transit route create approval | Replace historical Worker id approval in transit_route_create with dynamic payload/current-worker approval while keeping socat and no-cutover safeguards |
 | Stage 3.3.119 Unified delete offline local remove | Upgrade existing delete buttons to support offline local soft-removal for expired transit servers, landing servers, direct nodes, and transit routes without remote cleanup |
+| Stage 3.3.125 Worker 0.1.24 deploy plan | Documents the Worker 0.1.24 deployment plan and rollback checklist for HAProxy TCP readiness; no deployment, Worker replacement, HAProxy route creation, socat mutation, firewall mutation, cutover, or share-link mutation occurred |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
