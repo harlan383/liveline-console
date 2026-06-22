@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.23-stage-3.3.117"
+const workerVersion = "0.1.24-stage-3.3.122"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -1263,6 +1263,11 @@ func executeTransitRouteCreateDryRunWithRequest(cfg config, hostname string, com
 }
 
 func executeTransitRouteCreateReal(cfg config, hostname string, request transitRouteCreateRequest) (map[string]any, error) {
+	if isTransitHaproxyForwardingMethod(request.ForwardingMethod) {
+		request.ForwardingMethod = transitHaproxyForwardingMethod
+		return executeTransitRouteCreateHaproxy(cfg, hostname, request)
+	}
+
 	if err := validateTransitRouteCreateRealRequest(cfg, request); err != nil {
 		return nil, err
 	}
