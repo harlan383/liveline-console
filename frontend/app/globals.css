@@ -3606,6 +3606,99 @@ button.ghost-action {
   overflow-wrap: anywhere;
 }
 
+.haproxy-readiness-panel {
+  background: rgba(13, 23, 34, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.haproxy-readiness-grid {
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.haproxy-readiness-grid span,
+.haproxy-readiness-check span,
+.haproxy-readiness-check small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.haproxy-readiness-grid strong,
+.haproxy-readiness-check strong {
+  overflow-wrap: anywhere;
+}
+
+.haproxy-readiness-warning,
+.haproxy-disabled-actions,
+.haproxy-readiness-result {
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.haproxy-readiness-warning {
+  background: rgba(245, 158, 11, 0.11);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.haproxy-disabled-actions {
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px dashed var(--line);
+}
+
+.haproxy-confirm-list {
+  display: grid;
+  gap: 8px;
+}
+
+.haproxy-confirm-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
+  line-height: 1.6;
+}
+
+.haproxy-confirm-row input {
+  flex: 0 0 auto;
+  margin-top: 5px;
+  width: auto;
+}
+
+.haproxy-confirm-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.haproxy-readiness-result.ready {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.haproxy-readiness-result.blocked {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.haproxy-readiness-checks {
+  display: grid;
+  gap: 8px;
+}
+
+.haproxy-readiness-check {
+  align-items: start;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 6px 10px;
+  grid-template-columns: 72px minmax(160px, 0.45fr) minmax(0, 1fr);
+  padding-top: 8px;
+}
+
 .node-actions,
 .credential-grid {
   display: grid;
@@ -3760,6 +3853,11 @@ button.ghost-action {
   }
 
   .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .haproxy-readiness-grid,
+  .haproxy-readiness-check {
     grid-template-columns: 1fr;
   }
 }

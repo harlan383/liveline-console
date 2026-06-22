@@ -309,6 +309,63 @@ export type TransitReadonlyPreflightCommandResponse = {
   safety_boundary: string[];
 };
 
+export type TransitHaproxyReadinessApprovalRequest = {
+  transit_resource_id: string;
+  landing_node_id: string;
+  planned_listen_port: number;
+  landing_target_port: number;
+  forwarding_method: "haproxy_tcp";
+  purpose: string | null;
+  firewall_security_group_confirmed: boolean;
+  cloud_firewall_confirmed: boolean;
+  server_firewall_confirmed: boolean;
+  no_cutover_confirmed: boolean;
+  no_node_share_link_change_confirmed: boolean;
+  no_full_client_link_confirmed: boolean;
+};
+
+export type TransitHaproxyReadinessApprovalResult = {
+  ready: boolean;
+  blocked: boolean;
+  status: string;
+  summary: string;
+  next_action: string;
+  transit_resource: {
+    id: string;
+    name: string | null;
+    entry_host: string | null;
+    status: string;
+    deleted: boolean;
+  };
+  transit_worker: {
+    id: string | null;
+    role: string | null;
+    status: string;
+    worker_version: string | null;
+    interface_name: string | null;
+    minimum_supported_worker_version: string;
+  };
+  landing_node: {
+    id: string;
+    name: string | null;
+    target_host: string | null;
+    target_port: number | null;
+    status: string;
+  };
+  planned_route: {
+    route_name: string;
+    planned_listen_port: number;
+    landing_target_host: string | null;
+    landing_target_port: number;
+    forwarding_method: "haproxy_tcp";
+    purpose: string | null;
+    service_name: string;
+    dry_readiness_only: boolean;
+  };
+  checks: ReadonlyPreflightCheckItem[];
+  safety_boundary: string[];
+};
+
 export type TransitRouteWorkerCreateExecuteRequest = {
   transit_resource_id: string;
   landing_node_id: string;
@@ -856,6 +913,15 @@ export async function createTransitReadonlyPreflightCommand(
   return apiFetch<TransitReadonlyPreflightCommandResponse>("/api/transit-routes/readonly-preflight-command", {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function requestTransitHaproxyReadinessApproval(
+  payload: TransitHaproxyReadinessApprovalRequest,
+): Promise<ApiResponse<TransitHaproxyReadinessApprovalResult>> {
+  return apiFetch<TransitHaproxyReadinessApprovalResult>("/api/transit-routes/haproxy-readiness-approval", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }

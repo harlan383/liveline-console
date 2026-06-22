@@ -234,6 +234,39 @@ class TransitReadonlyPreflightCommandRequest(BaseModel):
         return cleaned or None
 
 
+class TransitHaproxyReadinessApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transit_resource_id: str = Field(min_length=1, max_length=36)
+    landing_node_id: str = Field(min_length=1, max_length=36)
+    planned_listen_port: int = Field(ge=1, le=65535)
+    landing_target_port: int = Field(ge=1, le=65535)
+    forwarding_method: str = FORWARDING_METHOD_HAPROXY_TCP
+    purpose: str | None = Field(default=None, max_length=120)
+    firewall_security_group_confirmed: bool = False
+    cloud_firewall_confirmed: bool = False
+    server_firewall_confirmed: bool = False
+    no_cutover_confirmed: bool = False
+    no_node_share_link_change_confirmed: bool = False
+    no_full_client_link_confirmed: bool = False
+
+    @field_validator("forwarding_method")
+    @classmethod
+    def validate_haproxy_readiness_forwarding_method(cls, value: str) -> str:
+        return normalize_forwarding_method(value)
+
+    @field_validator("purpose")
+    @classmethod
+    def clean_haproxy_readiness_purpose(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        lowered = cleaned.lower()
+        if "://" in lowered or "private key" in lowered or "token" in lowered or "password" in lowered:
+            raise ValueError("purpose 不能包含链接、token、密码或私钥内容")
+        return cleaned or None
+
+
 class TransitRouteWorkerCreatePlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
