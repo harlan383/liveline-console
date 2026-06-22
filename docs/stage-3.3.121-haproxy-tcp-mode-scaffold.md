@@ -14,6 +14,20 @@ target = 64.90.13.19:27939
 transit_routes.share_link = NULL
 ```
 
+## Updated priority after user decision
+
+The user decided to postpone route-diagnosis tooling until the end and implement HAProxy TCP mode first.
+
+Priority order is now:
+
+```text
+1. Finish HAProxy TCP mode feature.
+2. Keep current socat route available and unchanged during rollout.
+3. Add route-diagnosis / fault attribution tooling later.
+```
+
+Diagnostics requirement is preserved as a later system principle, but it is no longer the immediate next implementation stage.
+
 ## Why HAProxy TCP mode
 
 HAProxy TCP mode is a Layer 4 forwarding mode. It relays TCP streams without parsing HTTP, which is suitable for transparent forwarding from a transit VPS to the landing Reality/Xray TCP listener. HAProxy also supports TCP health checks, making it a better long-term production forwarding method than a bare `socat` process.
@@ -162,7 +176,7 @@ gost          -> no new behavior unless separately approved
 
 For `haproxy_tcp`, cleanup must first verify the service and config are LiveLine-owned and match the specific listen port before stop/disable/remove.
 
-## UI requirements for a later full feature stage
+## UI requirements for the full feature stage
 
 The UI should show:
 
@@ -177,6 +191,18 @@ The create modal should warn:
 选择 HAProxy TCP mode 前，中转 VPS 必须已安装 haproxy，并且监听端口必须已在云安全组、云防火墙、服务器本机防火墙放行。
 ```
 
+## Next implementation stages
+
+Proceed with HAProxy first:
+
+```text
+Stage 3.3.122-haproxy-tcp-worker-create
+Stage 3.3.123-haproxy-tcp-ui-and-backend-create-path
+Stage 3.3.124-haproxy-tcp-worker-upgrade-and-public-deploy
+```
+
+Diagnosis / fault-attribution tooling is postponed until after HAProxy TCP mode is fully usable.
+
 ## Current stage result
 
-This stage only introduces the schema-level method scaffold and documents the safe full implementation path. It does not deploy HAProxy and does not modify the current live route.
+This stage introduces the schema-level method scaffold and documents the safe full implementation path. It does not deploy HAProxy and does not modify the current live route.
