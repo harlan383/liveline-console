@@ -706,6 +706,17 @@ export async function createTransitWorkerBootstrap(
   });
 }
 
+export async function createTransitResource(
+  payload: TransitResourcePayload,
+  csrfToken: string,
+): Promise<ApiResponse<TransitResourceData>> {
+  return apiFetch<TransitResourceData>("/api/transit-resources", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function regenerateTransitWorkerBootstrap(
   resourceId: string,
   payload: TransitWorkerBootstrapRegenerateRequest,
