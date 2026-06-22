@@ -176,7 +176,8 @@ class TransitWorkerInstallCommandGenerationTests(unittest.TestCase):
             server_id=resource.id,
             expires_at=datetime.now(timezone.utc),
         )
-        install_command = "curl -s http://my-con.golirong.xyz:8200/worker_setup_script/raw-install-token | bash -s eth0 transit"
+        raw_token = "fixture-token-value"
+        install_command = "curl -s http://example.invalid/setup-fixture | bash -s eth0 transit"
         db = FakeDb(scalar_values=[resource], scalars_values=[[], [old_token]])
 
         with patch.object(transit_resources, "require_admin_session", return_value=FakeAdminSession()), patch.object(
@@ -188,7 +189,7 @@ class TransitWorkerInstallCommandGenerationTests(unittest.TestCase):
         ), patch.object(
             transit_resources,
             "create_bound_worker_token",
-            return_value=(new_token, "raw-install-token", install_command),
+            return_value=(new_token, raw_token, install_command),
         ):
             response = transit_resources.generate_transit_resource_worker_install_command(
                 "resource-1",
@@ -204,7 +205,7 @@ class TransitWorkerInstallCommandGenerationTests(unittest.TestCase):
         self.assertEqual(data["data"]["install_command"], install_command)
         self.assertNotIn("worker_token", data["data"])
         self.assertNotIn("raw_token", data["data"])
-        self.assertEqual(data["data"]["token"]["masked_token"], "raw-in...-token")
+        self.assertEqual(data["data"]["token"]["masked_token"], "fixtur...-value")
         self.assertEqual(old_token.status, "revoked")
         self.assertTrue(db.committed)
 
