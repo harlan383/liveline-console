@@ -1582,6 +1582,60 @@ textarea {
   color: #ffe0a3;
 }
 
+.worker-install-dry-run {
+  background: rgba(7, 16, 24, 0.72);
+  border: 1px solid rgba(40, 229, 197, 0.18);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.dry-run-safety-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.worker-install-dry-run-grid,
+.worker-install-dry-run-checks {
+  background: rgba(2, 8, 23, 0.42);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: 188px minmax(0, 1fr);
+  min-width: 0;
+  padding: 12px;
+}
+
+.worker-install-dry-run-grid span,
+.worker-install-dry-run-checks span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.worker-install-dry-run-grid strong,
+.worker-install-dry-run-checks strong {
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dry-run-command-template {
+  background: rgba(2, 8, 23, 0.42);
+}
+
+.dry-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .worker-install-placeholder-command {
   background: #071018;
   border: 1px solid rgba(40, 229, 197, 0.2);
@@ -1606,7 +1660,9 @@ textarea {
 
 @media (max-width: 720px) {
   .transit-worker-approval-grid,
-  .transit-worker-approval-requirements {
+  .transit-worker-approval-requirements,
+  .worker-install-dry-run-grid,
+  .worker-install-dry-run-checks {
     grid-template-columns: 1fr;
   }
 }
