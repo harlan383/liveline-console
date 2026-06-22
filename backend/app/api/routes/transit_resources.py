@@ -45,6 +45,8 @@ from app.services.worker_binding import (
 from app.services.worker_commands import serialize_worker_command
 
 router = APIRouter()
+EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.24-stage-3.3.122"
+TRANSIT_WORKER_ACCEPTANCE_RESOURCE_STATUSES = {"pending_worker", "worker_online", "worker_offline"}
 
 
 class TransitWorkerBootstrapRequest(BaseModel):
@@ -97,6 +99,138 @@ def serialize_transit_resource(resource: TransitResource, *, worker=None) -> dic
         "created_at": resource.created_at.isoformat() if resource.created_at else None,
         "updated_at": resource.updated_at.isoformat() if resource.updated_at else None,
         "deleted_at": resource.deleted_at.isoformat() if resource.deleted_at else None,
+    }
+
+
+def worker_acceptance_check(check_id: str, label: str, passed: bool, detail: str) -> dict:
+    return {
+        "id": check_id,
+        "label": label,
+        "passed": passed,
+        "status": "passed" if passed else "pending",
+        "detail": detail,
+    }
+
+
+def transit_worker_acceptance_next_action(*, worker_found: bool, role_ok: bool, heartbeat_ok: bool, version_ok: bool, accepted: bool) -> str:
+    if accepted:
+        return "Worker manual install acceptance passed. 下一阶段可进入 HAProxy readiness / route creation approval。"
+    if not worker_found:
+        return "请确认已在真实测试中转 VPS 手动执行安装命令，并等待 10-30 秒后刷新。"
+    if not heartbeat_ok:
+        return "Worker 记录已存在但未在线，请检查真实测试 VPS 上 liveline-worker 服务状态。"
+    if not role_ok:
+        return "Worker role 不正确，必须是 transit。"
+    if not version_ok:
+        return "Worker 版本不满足要求，需要使用 Stage 3.3.134 生成的新安装命令重新安装或升级。"
+    return "请检查 Worker 绑定信息后刷新验收状态。"
+
+
+def serialize_transit_worker_acceptance(resource: TransitResource, worker: Worker | None) -> dict:
+    runtime_status = worker_runtime_status(worker) if worker else None
+    worker_found = worker is not None
+    server_binding_ok = bool(worker and worker.server_id == resource.id)
+    role_ok = bool(worker and worker.role == "transit")
+    heartbeat_ok = runtime_status == "online"
+    version_ok = bool(worker and worker.worker_version == EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION)
+    interface_detected = bool(worker and worker.interface_name)
+    accepted = worker_found and server_binding_ok and role_ok and heartbeat_ok and version_ok
+    next_action = transit_worker_acceptance_next_action(
+        worker_found=worker_found,
+        role_ok=role_ok,
+        heartbeat_ok=heartbeat_ok,
+        version_ok=version_ok,
+        accepted=accepted,
+    )
+    checks = [
+        worker_acceptance_check(
+            "manual_install_command_was_user_executed",
+            "用户已手动执行安装命令",
+            worker_found,
+            "系统不验证命令内容，只通过 Worker heartbeat 与绑定状态判断人工安装结果。",
+        ),
+        worker_acceptance_check(
+            "worker_record_found",
+            "找到绑定当前资源的 Worker",
+            worker_found,
+            "查询当前 transit resource 绑定的最新 Worker 记录。",
+        ),
+        worker_acceptance_check(
+            "server_binding_ok",
+            "Worker server_id 绑定正确",
+            server_binding_ok,
+            "Worker.server_id 必须等于当前 transit resource id。",
+        ),
+        worker_acceptance_check(
+            "role_ok",
+            "Worker role 正确",
+            role_ok,
+            "Worker.role 必须是 transit。",
+        ),
+        worker_acceptance_check(
+            "heartbeat_ok",
+            "Worker heartbeat 在线",
+            heartbeat_ok,
+            "worker_runtime_status(worker) 必须是 online。",
+        ),
+        worker_acceptance_check(
+            "version_ok",
+            "Worker version 满足要求",
+            version_ok,
+            f"当前采用精确版本比较，目标版本为 {EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION}。",
+        ),
+        worker_acceptance_check(
+            "interface_detected",
+            "Worker 上报 interface_name",
+            interface_detected,
+            "interface_name 用于后续 HAProxy / route readiness 审批参考。",
+        ),
+        worker_acceptance_check("token_not_exposed", "不输出 token", True, "本接口不返回 Worker token 或 install command。"),
+        worker_acceptance_check("remote_execution_not_performed", "未执行远程命令", True, "本接口只读，不 SSH，不安装 Worker。"),
+        worker_acceptance_check("worker_command_not_created", "未创建 Worker command", True, "本接口不会创建 Worker command。"),
+        worker_acceptance_check("haproxy_not_created", "未创建 HAProxy route", True, "本接口不会安装 HAProxy 或创建 HAProxy route。"),
+    ]
+    return {
+        "resource_id": resource.id,
+        "resource_name": resource.name,
+        "resource_status": resource.status,
+        "expected_role": "transit",
+        "expected_worker_version": EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION,
+        "worker_found": worker_found,
+        "worker_id": worker.id if worker else None,
+        "worker_role": worker.role if worker else None,
+        "worker_status": runtime_status,
+        "worker_online": heartbeat_ok,
+        "worker_version": worker.worker_version if worker else None,
+        "worker_hostname": worker.hostname if worker else None,
+        "worker_interface_name": worker.interface_name if worker else None,
+        "worker_last_heartbeat_at": worker.last_heartbeat_at.isoformat() if worker and worker.last_heartbeat_at else None,
+        "server_binding_ok": server_binding_ok,
+        "role_ok": role_ok,
+        "version_ok": version_ok,
+        "heartbeat_ok": heartbeat_ok,
+        "interface_detected": interface_detected,
+        "accepted": accepted,
+        "blocked": not accepted,
+        "summary": (
+            "Worker 手动安装验收通过：role / binding / version / heartbeat 均满足要求。"
+            if accepted
+            else "Worker 手动安装验收未完成，请按下一步建议处理后刷新。"
+        ),
+        "next_action": next_action,
+        "checks": checks,
+        "safety_boundary": [
+            "本接口不返回安装命令。",
+            "本接口不返回 Worker token。",
+            "本接口不执行 SSH 或远程命令。",
+            "本接口不安装 Worker。",
+            "本接口不创建 Worker command。",
+            "本接口不创建 HAProxy route。",
+            "本接口不修改 firewall / security group / cloud firewall。",
+            "本接口不读取或修改 nodes.share_link。",
+            "本接口不写 transit_routes.share_link。",
+            "本接口不 cutover。",
+        ],
     }
 
 
@@ -458,6 +592,39 @@ def generate_transit_resource_worker_install_command(
             ],
         },
         "一次性 Worker 安装命令已生成。明文 token 只在本次响应的安装命令中出现，请立即复制并妥善保存。",
+    )
+
+
+@router.get("/{resource_id}/worker-acceptance")
+def get_transit_resource_worker_acceptance(
+    resource_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    if not require_admin_session(db, request):
+        return auth_error()
+
+    resource = get_transit_resource_or_error(db, resource_id)
+    if not resource:
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
+    if resource.resource_type != "server":
+        return error_response(400, "TRANSIT_RESOURCE_NOT_SERVER", "只允许 server 类型中转资源执行 Worker 手动安装验收。")
+    if resource.status not in TRANSIT_WORKER_ACCEPTANCE_RESOURCE_STATUSES:
+        return error_response(
+            400,
+            "TRANSIT_RESOURCE_STATUS_NOT_ACCEPTABLE",
+            "只允许 pending_worker / worker_online / worker_offline 中转资源执行 Worker 手动安装验收。",
+        )
+
+    worker = db.scalar(
+        select(Worker)
+        .where(Worker.server_id == resource.id)
+        .order_by(Worker.last_heartbeat_at.desc().nullslast(), Worker.created_at.desc())
+        .limit(1)
+    )
+    return success_response(
+        serialize_transit_worker_acceptance(resource, worker),
+        "Worker 手动安装与心跳验收状态已读取。",
     )
 
 

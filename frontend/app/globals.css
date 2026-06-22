@@ -1614,6 +1614,32 @@ textarea {
   padding: 12px;
 }
 
+.worker-acceptance-panel {
+  border-color: rgba(124, 225, 255, 0.22);
+}
+
+.worker-acceptance-checks {
+  display: grid;
+  gap: 8px;
+}
+
+.worker-acceptance-check-row {
+  align-items: start;
+  background: rgba(8, 21, 34, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 72px minmax(160px, 0.8fr) minmax(0, 1.2fr);
+  padding: 10px;
+}
+
+.worker-acceptance-check-row small {
+  color: var(--muted);
+  line-height: 1.55;
+  min-width: 0;
+}
+
 .dry-run-safety-list {
   display: grid;
   gap: 6px;

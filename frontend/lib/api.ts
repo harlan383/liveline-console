@@ -566,6 +566,42 @@ export type TransitWorkerInstallCommandGenerationResult = {
   safety_notice: string[];
 };
 
+export type TransitWorkerAcceptanceCheck = {
+  id: string;
+  label: string;
+  passed: boolean;
+  status: string;
+  detail: string;
+};
+
+export type TransitWorkerAcceptanceResult = {
+  resource_id: string;
+  resource_name: string;
+  resource_status: string;
+  expected_role: "transit";
+  expected_worker_version: string;
+  worker_found: boolean;
+  worker_id: string | null;
+  worker_role: WorkerRole | null;
+  worker_status: string | null;
+  worker_online: boolean;
+  worker_version: string | null;
+  worker_hostname: string | null;
+  worker_interface_name: string | null;
+  worker_last_heartbeat_at: string | null;
+  server_binding_ok: boolean;
+  role_ok: boolean;
+  version_ok: boolean;
+  heartbeat_ok: boolean;
+  interface_detected: boolean;
+  accepted: boolean;
+  blocked: boolean;
+  summary: string;
+  next_action: string;
+  checks: TransitWorkerAcceptanceCheck[];
+  safety_boundary: string[];
+};
+
 export type WorkerMetadataSummary = {
   received_at?: string | null;
   uptime_seconds?: number | null;
@@ -755,6 +791,12 @@ export async function generateTransitWorkerInstallCommand(
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
   });
+}
+
+export async function getTransitWorkerAcceptance(
+  resourceId: string,
+): Promise<ApiResponse<TransitWorkerAcceptanceResult>> {
+  return apiFetch<TransitWorkerAcceptanceResult>(`/api/transit-resources/${resourceId}/worker-acceptance`);
 }
 
 export type CsrfResult = {

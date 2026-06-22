@@ -12,6 +12,7 @@ import {
   createWorkerCommand,
   exportTransitRouteCandidate,
   generateTransitWorkerInstallCommand,
+  getTransitWorkerAcceptance,
   getWorkerCommand,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
@@ -33,6 +34,7 @@ import {
   type TransitReadonlyPreflightCommandRequest,
   type TransitResourceData,
   type TransitResourceListResult,
+  type TransitWorkerAcceptanceResult,
   type TransitWorkerInstallCommandGenerationResult,
   type TransitRouteWorkerCreateExecuteResponse,
   type TransitRouteData,
@@ -750,6 +752,8 @@ export function TransitServersPanel() {
     useState<TransitWorkerInstallCommandGenerationResult | null>(null);
   const [workerInstallCommandCopied, setWorkerInstallCommandCopied] = useState(false);
   const [workerInstallCommandGenerating, setWorkerInstallCommandGenerating] = useState(false);
+  const [workerAcceptanceResult, setWorkerAcceptanceResult] = useState<TransitWorkerAcceptanceResult | null>(null);
+  const [workerAcceptanceLoading, setWorkerAcceptanceLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -801,6 +805,8 @@ export function TransitServersPanel() {
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
+    setWorkerAcceptanceResult(null);
+    setWorkerAcceptanceLoading(false);
   }
 
   function openAdd() {
@@ -834,6 +840,8 @@ export function TransitServersPanel() {
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
+    setWorkerAcceptanceResult(null);
+    setWorkerAcceptanceLoading(false);
   }
 
   async function copyWorkerInstallApprovalChecklist(resource: TransitResourceData) {
@@ -935,6 +943,25 @@ export function TransitServersPanel() {
     } catch (error) {
       setWorkerInstallCommandCopied(false);
       setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制安装命令失败。");
+    }
+  }
+
+  async function refreshWorkerAcceptance(resource: TransitResourceData) {
+    setWorkerAcceptanceLoading(true);
+    try {
+      const result = await getTransitWorkerAcceptance(resource.id);
+      if (!result.success) {
+        setWorkerAcceptanceResult(null);
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setWorkerAcceptanceResult(result.data);
+      setMessage(result.data.accepted ? "Worker 手动安装验收通过。" : result.data.next_action);
+    } catch (error) {
+      setWorkerAcceptanceResult(null);
+      setMessage(error instanceof Error ? error.message : "读取 Worker 验收状态失败。");
+    } finally {
+      setWorkerAcceptanceLoading(false);
     }
   }
 
@@ -1104,6 +1131,10 @@ export function TransitServersPanel() {
           ? resources.map((resource) => {
               const commands = resource.worker_id ? workerCommandsByWorkerId[resource.worker_id] ?? [] : [];
               const pendingWorkerDraft = resource.status === "pending_worker" && !resource.worker_online;
+              const canOpenWorkerAcceptance =
+                pendingWorkerDraft ||
+                Boolean(resource.worker_id) ||
+                ["online", "worker_online", "worker_offline"].includes(resource.display_status);
               return (
                 <div className="server-table-group" key={resource.id}>
                   <div className="server-table-row">
@@ -1114,9 +1145,9 @@ export function TransitServersPanel() {
                       {displayStatusLabel(resource.display_status)}
                     </span>
                     <div className="server-actions">
-                      {pendingWorkerDraft ? (
+                      {canOpenWorkerAcceptance ? (
                         <button className="secondary" type="button" onClick={() => openWorkerInstallApprovalPreview(resource)}>
-                          查看 Worker 安装审批预览
+                          {pendingWorkerDraft ? "查看 Worker 安装 / 验收" : "Worker 验收"}
                         </button>
                       ) : null}
                       <button className="secondary" type="button" onClick={() => openEdit(resource)}>
@@ -1201,9 +1232,9 @@ export function TransitServersPanel() {
               </button>
             </div>
             <div className="worker-bootstrap-intro">
-              <strong>只读审批包 / 不可执行</strong>
+              <strong>Worker 安装审批与只读验收</strong>
               <span>
-                本阶段只展示 pending_worker 草稿资源的安装前审批信息。不会生成 Worker token，不会生成真实 install command，不会安装 Worker，也不会创建 Worker command。
+                这里展示安装前审批、一次性命令生成入口，以及用户手动安装后的 heartbeat 验收。刷新验收状态只读，不会 SSH、不会安装 Worker、不会创建 Worker command。
               </span>
             </div>
             <div className="transit-worker-approval-grid">
@@ -1230,6 +1261,88 @@ export function TransitServersPanel() {
               <span>公网主控 URL</span>
               <strong>{transitWorkerPublicControllerUrl}</strong>
             </div>
+            <div className="transit-worker-approval-section worker-acceptance-panel">
+              <strong>手动安装与心跳验收</strong>
+              <span>
+                先在 Stage 3.3.134 生成一次性 Worker 安装命令，再由用户手动复制到真实测试中转 VPS 执行。不要在公网主控 VPS
+                执行该命令，也不要把命令写入 README / docs / PR / chat / logs / notes。执行完成后点击刷新。
+              </span>
+              <div className="worker-install-real-approval-grid">
+                <span>当前资源名称</span>
+                <strong>{approvalPreviewResource.name}</strong>
+                <span>当前资源状态</span>
+                <strong>{approvalPreviewResource.status}</strong>
+                <span>期望 Worker role</span>
+                <strong>transit</strong>
+                <span>期望 Worker version</span>
+                <strong>{requiredTransitWorkerVersion}</strong>
+                <span>是否发现 Worker</span>
+                <strong className={workerAcceptanceResult?.worker_found ? "approval-state-ok" : "approval-state-warn"}>
+                  {workerAcceptanceResult ? (workerAcceptanceResult.worker_found ? "是" : "否") : "待刷新"}
+                </strong>
+                <span>Worker 在线状态</span>
+                <strong className={workerAcceptanceResult?.heartbeat_ok ? "approval-state-ok" : "approval-state-warn"}>
+                  {workerAcceptanceResult ? displayStatusLabel(workerAcceptanceResult.worker_status ?? "unknown") : "待刷新"}
+                </strong>
+                <span>Worker hostname</span>
+                <strong>{workerAcceptanceResult?.worker_hostname || "待刷新"}</strong>
+                <span>Worker interface_name</span>
+                <strong>{workerAcceptanceResult?.worker_interface_name || "待刷新"}</strong>
+                <span>Worker version</span>
+                <strong className={workerAcceptanceResult?.version_ok ? "approval-state-ok" : "approval-state-warn"}>
+                  {workerAcceptanceResult?.worker_version || "待刷新"}
+                </strong>
+                <span>最后心跳时间</span>
+                <strong>{formatTime(workerAcceptanceResult?.worker_last_heartbeat_at ?? null)}</strong>
+                <span>绑定是否正确</span>
+                <strong className={workerAcceptanceResult?.server_binding_ok ? "approval-state-ok" : "approval-state-warn"}>
+                  {workerAcceptanceResult ? (workerAcceptanceResult.server_binding_ok ? "是" : "否") : "待刷新"}
+                </strong>
+                <span>验收结论</span>
+                <strong className={workerAcceptanceResult?.accepted ? "approval-state-ok" : "approval-state-warn"}>
+                  {workerAcceptanceResult ? (workerAcceptanceResult.accepted ? "通过" : "未完成") : "待刷新"}
+                </strong>
+              </div>
+              <div className={`approval-gate-status ${workerAcceptanceResult?.accepted ? "ok" : "warn"}`}>
+                {workerAcceptanceResult
+                  ? workerAcceptanceResult.summary
+                  : "等待用户在真实测试中转 VPS 手动执行安装命令，然后刷新 Worker 验收状态。"}
+              </div>
+              {workerAcceptanceResult ? <p className="message">下一步：{workerAcceptanceResult.next_action}</p> : null}
+              {workerAcceptanceResult ? (
+                <div className="worker-acceptance-checks">
+                  {workerAcceptanceResult.checks.map((check) => (
+                    <div className="worker-acceptance-check-row" key={check.id}>
+                      <span className={check.passed ? "approval-state-ok" : "approval-state-warn"}>
+                        {check.passed ? "通过" : "待处理"}
+                      </span>
+                      <strong>{check.label}</strong>
+                      <small>{check.detail}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <ul className="dry-run-safety-list">
+                <li>本按钮不会 SSH。</li>
+                <li>本按钮不会安装 Worker。</li>
+                <li>本按钮不会创建 Worker command。</li>
+                <li>本按钮不会创建 HAProxy route。</li>
+                <li>本按钮不会修改防火墙。</li>
+              </ul>
+              <div className="dry-run-actions">
+                <button
+                  className="secondary"
+                  type="button"
+                  disabled={workerAcceptanceLoading}
+                  onClick={() => void refreshWorkerAcceptance(approvalPreviewResource)}
+                >
+                  {workerAcceptanceLoading ? "刷新中..." : "刷新 Worker 验收状态"}
+                </button>
+              </div>
+              {workerAcceptanceResult?.accepted ? (
+                <p className="approval-copy-status">Worker 手动安装验收通过：role / binding / version / heartbeat 均满足要求。</p>
+              ) : null}
+            </div>
             <div className="transit-worker-approval-section">
               <strong>占位安装命令模板</strong>
               <span>这不是本阶段可执行命令；`worker-token` 是后续独立阶段生成的占位符。</span>
@@ -1249,7 +1362,7 @@ export function TransitServersPanel() {
             <div className="transit-worker-approval-section command-generation-gate">
               <strong>生成命令前审批门</strong>
               <span>
-                这里仅演示未来生成一次性 Worker token / install command 前需要确认的条件。本阶段不会调用 token/bootstrap API，也不会生成真实安装命令。
+                这里展示生成一次性 Worker token / install command 前需要确认的条件。仅输入确认不会生成；只有点击生成按钮才会调用受保护 API。
               </span>
               <div className="transit-worker-approval-requirements" aria-label="生成命令前审批要求">
                 <span>资源状态必须是 pending_worker</span>
@@ -1288,7 +1401,7 @@ export function TransitServersPanel() {
               </label>
               <div className={`approval-gate-status ${commandApprovalConfirmed ? "ok" : "warn"}`}>
                 {commandApprovalConfirmed
-                  ? "审批门 UI 已确认；真实命令生成仍必须进入后续独立阶段。"
+                  ? "审批门 UI 已确认；仍需最终确认并点击生成按钮才会生成命令。"
                   : `请输入 ${transitWorkerInstallCommandApprovalConfirmText} 以模拟后续审批确认。`}
               </div>
               <button
@@ -1368,7 +1481,7 @@ export function TransitServersPanel() {
                     ))}
                   </div>
                   <label className="command-approval-confirm">
-                    <span>最终 typed confirmation。本阶段输入后只表示满足进入下一阶段的审批条件。</span>
+                    <span>最终 typed confirmation。输入后不会自动生成命令，只有点击生成按钮才会调用受保护 API。</span>
                     <input
                       value={realCommandApprovalConfirmText}
                       onChange={(event) => {
@@ -1382,7 +1495,7 @@ export function TransitServersPanel() {
                   </label>
                   <div className={`approval-gate-status ${realCommandApprovalConfirmed ? "ok" : "warn"}`}>
                     {realCommandApprovalConfirmed
-                      ? "最终审批门已通过。下一阶段才允许在明确授权下生成一次性 Worker token / install command。"
+                      ? "最终审批门已通过。点击生成按钮才会生成一次性 Worker token / install command。"
                       : "尚未确认进入真实命令生成阶段。"}
                   </div>
                   <ul className="dry-run-safety-list">
