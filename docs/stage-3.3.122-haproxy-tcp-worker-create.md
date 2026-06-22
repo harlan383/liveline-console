@@ -76,7 +76,7 @@ redacted diagnostics
 safe rollback for only LiveLine-owned HAProxy artifacts
 ```
 
-Stage 3.3.122-c also added backend version helpers for forwarding-method-aware targeting:
+Stage 3.3.122-c added backend version helpers for forwarding-method-aware targeting:
 
 ```text
 minimum_worker_version_for_transit_forwarding_method()
@@ -86,7 +86,46 @@ worker_supports_transit_forwarding_method()
 
 This lets later backend/UI code require Worker `0.1.24-stage-3.3.122` for `haproxy_tcp` while preserving the existing `socat` minimum Worker version.
 
-The helper is intentionally not wired into the existing transit create real execution branch yet. This keeps the current production socat path untouched while the helper and backend targeting support are reviewed.
+## Stage 3.3.122-d main.go patch target
+
+The precise Worker entry point has been identified in `worker/cmd/liveline-worker/main.go`:
+
+```text
+executeTransitRouteCreate()
+  parseTransitRouteCreateRequest()
+  dry_run -> executeTransitRouteCreateDryRunWithRequest()
+  real    -> executeTransitRouteCreateReal()
+```
+
+The current real execution function is still the fixed socat path. Stage 3.3.122-d should patch it like this:
+
+```go
+func executeTransitRouteCreateReal(cfg config, hostname string, request transitRouteCreateRequest) (map[string]any, error) {
+    if isTransitHaproxyForwardingMethod(request.ForwardingMethod) {
+        request.ForwardingMethod = transitHaproxyForwardingMethod
+        return executeTransitRouteCreateHaproxy(cfg, hostname, request)
+    }
+
+    if err := validateTransitRouteCreateRealRequest(cfg, request); err != nil {
+        return nil, err
+    }
+    // existing socat path continues unchanged below
+}
+```
+
+Worker version should also change from:
+
+```text
+0.1.23-stage-3.3.117
+```
+
+to:
+
+```text
+0.1.24-stage-3.3.122
+```
+
+This main.go patch was not applied through the connector because `main.go` is a 5000+ line file and the available connector write path requires whole-file replacement. Applying it without local `gofmt`, `go test`, and `go build` would risk breaking the Worker. The exact patch target is documented for local Codex / local repo execution.
 
 ## Target Worker version
 
@@ -164,4 +203,4 @@ Do not modify firewalls automatically unless the user explicitly approves.
 
 ## Stage status
 
-The HAProxy helper exists and backend forwarding-method Worker version helpers exist, but the helper is not yet connected to the main Worker create execution branch. Remote deploy, Worker binary replacement, and real HAProxy route creation are not part of the current commits.
+The HAProxy helper exists and backend forwarding-method Worker version helpers exist. The exact main.go patch target is documented, but the patch itself still requires local repo execution with `gofmt`, `go test`, `go build`, and Worker binary rebuild before deployment. Remote deploy, Worker binary replacement, and real HAProxy route creation are not part of the current commits.
