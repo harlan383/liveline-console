@@ -1441,12 +1441,15 @@ export function TransitServersPanel() {
               ) : null}
             </div>
             <div className="transit-worker-approval-section">
-              <strong>只读确认项</strong>
+              <strong>Stage 3.3.134 执行边界确认</strong>
               <ul>
-                <li>我确认本阶段不生成 Worker token。</li>
-                <li>我确认本阶段不生成真实 install command。</li>
-                <li>我确认本阶段不安装 Worker。</li>
-                <li>真实安装必须在后续独立审批阶段执行。</li>
+                <li>我确认本阶段只生成一次性 Worker token / install command。</li>
+                <li>我确认本阶段不自动安装 Worker。</li>
+                <li>我确认本阶段不执行 SSH / 远程命令。</li>
+                <li>我确认本阶段不创建 Worker command。</li>
+                <li>我确认本阶段不创建 HAProxy route。</li>
+                <li>我确认生成的命令只在当前页面复制使用，不写入 README / docs / PR / chat / logs / notes。</li>
+                <li>真实 Worker 安装与心跳验收必须在后续独立阶段执行。</li>
               </ul>
             </div>
             <div className="modal-actions">
