@@ -51,7 +51,7 @@ No arbitrary shell/systemd/config payload from API.
 
 ## Current code progress
 
-This stage has added the Worker-side HAProxy helper file:
+This stage added the Worker-side HAProxy helper file:
 
 ```text
 worker/cmd/liveline-worker/transit_haproxy.go
@@ -86,56 +86,62 @@ worker_supports_transit_forwarding_method()
 
 This lets later backend/UI code require Worker `0.1.24-stage-3.3.122` for `haproxy_tcp` while preserving the existing `socat` minimum Worker version.
 
-## Stage 3.3.122-d main.go patch target
+## Stage 3.3.122-d main.go patch
 
-The precise Worker entry point has been identified in `worker/cmd/liveline-worker/main.go`:
+The local Codex patch has been applied and pushed as commit:
 
 ```text
-executeTransitRouteCreate()
-  parseTransitRouteCreateRequest()
-  dry_run -> executeTransitRouteCreateDryRunWithRequest()
-  real    -> executeTransitRouteCreateReal()
+f0e28f0
 ```
 
-The current real execution function is still the fixed socat path. Stage 3.3.122-d should patch it like this:
+Worker version is now:
+
+```text
+0.1.24-stage-3.3.122
+```
+
+The Worker real-create entry now branches by forwarding method:
 
 ```go
 func executeTransitRouteCreateReal(cfg config, hostname string, request transitRouteCreateRequest) (map[string]any, error) {
-    if isTransitHaproxyForwardingMethod(request.ForwardingMethod) {
-        request.ForwardingMethod = transitHaproxyForwardingMethod
-        return executeTransitRouteCreateHaproxy(cfg, hostname, request)
-    }
+	if isTransitHaproxyForwardingMethod(request.ForwardingMethod) {
+		request.ForwardingMethod = transitHaproxyForwardingMethod
+		return executeTransitRouteCreateHaproxy(cfg, hostname, request)
+	}
 
-    if err := validateTransitRouteCreateRealRequest(cfg, request); err != nil {
-        return nil, err
-    }
-    // existing socat path continues unchanged below
+	if err := validateTransitRouteCreateRealRequest(cfg, request); err != nil {
+		return nil, err
+	}
+	// existing socat path continues unchanged below
 }
 ```
 
-Worker version should also change from:
+Expected routing:
 
 ```text
-0.1.23-stage-3.3.117
+forwarding_method=socat
+  -> existing fixed socat path remains unchanged
+
+forwarding_method=haproxy_tcp / haproxy / haproxy-tcp
+  -> executeTransitRouteCreateHaproxy()
 ```
 
-to:
+Local validation reported for commit `f0e28f0`:
 
 ```text
-0.1.24-stage-3.3.122
+gofmt -w worker/cmd/liveline-worker/main.go worker/cmd/liveline-worker/transit_haproxy.go: passed
+cd worker && GOCACHE=/private/tmp/liveline-go-cache go test ./cmd/liveline-worker: passed
+cd worker && GOCACHE=/private/tmp/liveline-go-cache go build ./cmd/liveline-worker: passed
+git diff --check: passed
+git diff --cached --check: passed
+git status: clean
 ```
 
-This main.go patch was not applied through the connector because `main.go` is a 5000+ line file and the available connector write path requires whole-file replacement. Applying it without local `gofmt`, `go test`, and `go build` would risk breaking the Worker. The exact patch target is documented for local Codex / local repo execution.
-
-## Target Worker version
-
-```text
-0.1.24-stage-3.3.122
-```
+Note: root-level `go test ./worker/cmd/liveline-worker` and `go build ./worker/cmd/liveline-worker` fail because the repository root has no Go module; validation must run from the `worker` module directory.
 
 ## Target HAProxy route artifacts
 
-For `forwarding_method=haproxy_tcp`, Worker should create only LiveLine-owned files:
+For `forwarding_method=haproxy_tcp`, Worker creates only LiveLine-owned files:
 
 ```text
 /etc/haproxy/liveline/routes/liveline-haproxy-<listen_port>.cfg
@@ -144,7 +150,7 @@ For `forwarding_method=haproxy_tcp`, Worker should create only LiveLine-owned fi
 
 ## Worker validations before write/start
 
-Worker must validate all of these before creating files:
+Worker validates all of these before creating files:
 
 ```text
 transit_worker_id matches current Worker id
@@ -203,4 +209,4 @@ Do not modify firewalls automatically unless the user explicitly approves.
 
 ## Stage status
 
-The HAProxy helper exists and backend forwarding-method Worker version helpers exist. The exact main.go patch target is documented, but the patch itself still requires local repo execution with `gofmt`, `go test`, `go build`, and Worker binary rebuild before deployment. Remote deploy, Worker binary replacement, and real HAProxy route creation are not part of the current commits.
+Stage 3.3.122-e review confirmed the Worker helper, main real-create branch, and backend forwarding-method version helpers are in PR #196. Remote deploy, Worker binary replacement on the transit VPS, and real HAProxy route creation are not part of this stage.
