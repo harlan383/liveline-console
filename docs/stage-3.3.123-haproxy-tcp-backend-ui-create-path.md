@@ -225,3 +225,37 @@ cloud security group
 cloud firewall
 server local firewall
 ```
+
+## Stage 3.3.123-b implementation record
+
+Stage 3.3.123-b wires the existing HAProxy TCP Worker helper into the backend/UI create path without deploying or executing it.
+
+Implemented changes:
+
+```text
+backend worker-create-plan accepts socat and haproxy_tcp only
+backend worker-create-execute accepts socat and haproxy_tcp only
+backend checks selected forwarding method against the online Worker version
+haproxy_tcp reports minimum Worker version 0.1.24-stage-3.3.122
+dry-run HAProxy plan uses hk-haproxy-live-<listen_port> route naming
+candidate export remains transient and does not write transit_routes.share_link
+Transit route create modal now lets the operator choose socat or HAProxy TCP mode
+HAProxy TCP mode displays install/firewall/no-cutover warnings before create
+```
+
+Safety record:
+
+```text
+No public deploy.
+No Worker binary rebuild or replacement.
+No remote Worker upgrade.
+No Worker command created by this PR.
+No real HAProxy route created.
+No existing socat route stopped, restarted, disabled, or deleted.
+No Xray mutation.
+No firewall, cloud security group, or cloud firewall mutation.
+No cutover.
+No nodes.share_link full read, print, log, or mutation.
+No transit_routes.share_link write.
+No full VLESS/V2Ray link recorded in this document.
+```

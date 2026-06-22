@@ -17,7 +17,6 @@ from app.schemas.transit_route import (
     APPROVED_LANDING_NODE_ID,
     APPROVED_LANDING_TARGET_HOST,
     APPROVED_LANDING_TARGET_PORT,
-    APPROVED_TRANSIT_FORWARDING_METHOD,
     APPROVED_TRANSIT_INTERFACE_NAME,
     APPROVED_TRANSIT_LISTEN_PORT,
     APPROVED_TRANSIT_CANDIDATE_NAME,
@@ -26,6 +25,8 @@ from app.schemas.transit_route import (
     APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE,
     APPROVED_TRANSIT_SERVICE_NAME,
     APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
+    FORWARDING_METHOD_HAPROXY_TCP,
+    FORWARDING_METHOD_SOCAT,
     PROTECTED_CREATE_PORT_MESSAGES,
     PROTECTED_CREATE_PORTS,
     ReadonlyPreflightPlanCheck,
@@ -48,7 +49,9 @@ from app.services.remote_cleanup_delete import (
 from app.services.worker_targeting import (
     WorkerTargetError,
     minimum_worker_version_for_command,
+    minimum_worker_version_for_transit_forwarding_method,
     resolve_command_target_worker,
+    worker_supports_transit_forwarding_method,
 )
 
 router = APIRouter()
@@ -56,6 +59,10 @@ router = APIRouter()
 
 TRANSIT_READONLY_PREFLIGHT_COMMAND = "transit_readonly_preflight"
 TRANSIT_ROUTE_CREATE_COMMAND = "transit_route_create"
+TRANSIT_ROUTE_CREATE_FORWARDING_METHODS = {
+    FORWARDING_METHOD_SOCAT,
+    FORWARDING_METHOD_HAPROXY_TCP,
+}
 TRANSIT_READONLY_PREFLIGHT_BOUNDARY = [
     "remote readonly preflight only",
     "no arbitrary shell accepted",
@@ -73,7 +80,7 @@ TRANSIT_ROUTE_CREATE_DRY_RUN_BOUNDARY = [
     "approval required before real execution",
     "no arbitrary shell accepted",
     "no systemd unit content accepted from API",
-    "fixed socat forwarding template only",
+    "fixed LiveLine-owned forwarding template only",
     "no real transit route created",
     "no socat/gost install, start, stop, or restart",
     "no listener binding",
@@ -87,7 +94,7 @@ TRANSIT_ROUTE_CREATE_REAL_BOUNDARY = [
     "protected real create only after matching active resources, online Worker, and successful readonly preflight",
     "no arbitrary shell accepted",
     "no systemd unit content accepted from API",
-    "fixed socat forwarding template only",
+    "fixed LiveLine-owned forwarding template only",
     "no nodes.share_link read or modification",
     "no full client link export",
     "no Xray modification",
@@ -521,7 +528,7 @@ def is_exportable_candidate_route(route: TransitRoute) -> bool:
     return (
         route.deleted_at is None
         and route.status == "active"
-        and route.forwarding_method == APPROVED_TRANSIT_FORWARDING_METHOD
+        and route.forwarding_method in TRANSIT_ROUTE_CREATE_FORWARDING_METHODS
         and bool(route_entry_host(route))
         and route.listen_port > 0
         and route.target_port > 0
@@ -1011,8 +1018,8 @@ def create_transit_route_worker_create_plan(
         return error_response(400, "LANDING_HOST_APPROVAL_MISMATCH", "落地目标 Host 与 Stage 3.3.70 审批记录不一致。")
     if payload.landing_target_port != APPROVED_LANDING_TARGET_PORT:
         return error_response(400, "LANDING_PORT_APPROVAL_MISMATCH", "落地目标端口与 Stage 3.3.70 审批记录不一致。")
-    if payload.forwarding_method != APPROVED_TRANSIT_FORWARDING_METHOD:
-        return error_response(400, "FORWARDING_METHOD_APPROVAL_MISMATCH", "转发方式与 Stage 3.3.70 审批记录不一致。")
+    if payload.forwarding_method not in TRANSIT_ROUTE_CREATE_FORWARDING_METHODS:
+        return error_response(400, "TRANSIT_METHOD_NOT_SUPPORTED", "当前只允许 socat 或 HAProxy TCP mode。")
     if payload.planned_listen_port in PROTECTED_CREATE_PORTS:
         return error_response(
             400,
@@ -1083,6 +1090,24 @@ def create_transit_route_worker_create_plan(
             "WORKER_INTERFACE_MISMATCH",
             "目标 Worker interface_name 与 Stage 3.3.70 审批记录不一致。",
         )
+    if not worker_supports_transit_forwarding_method(target_worker, payload.forwarding_method):
+        return error_response(
+            400,
+            "WORKER_FORWARDING_METHOD_UNSUPPORTED",
+            "当前在线 Worker 版本不支持所选转发方式，请先升级中转 Worker。",
+            {
+                "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
+                    payload.forwarding_method
+                ),
+                "target_worker_version": target_worker.worker_version,
+                "forwarding_method": payload.forwarding_method,
+            },
+        )
+    route_name = (
+        f"hk-haproxy-live-{payload.planned_listen_port}"
+        if payload.forwarding_method == FORWARDING_METHOD_HAPROXY_TCP
+        else APPROVED_TRANSIT_ROUTE_NAME
+    )
     command_payload = {
         "transit_resource_id": resource.id,
         "transit_resource_name": resource.name,
@@ -1096,7 +1121,7 @@ def create_transit_route_worker_create_plan(
         "approval_stage": payload.approval_stage,
         "dry_run": True,
         "approval_required": True,
-        "route_name": "hk-socat-live-23843",
+        "route_name": route_name,
         "safety_boundary": TRANSIT_ROUTE_CREATE_DRY_RUN_BOUNDARY,
     }
     command = create_worker_command(db, target_worker, TRANSIT_ROUTE_CREATE_COMMAND, command_payload)
@@ -1117,7 +1142,9 @@ def create_transit_route_worker_create_plan(
             "command": serialize_worker_command(command, include_payload=True, worker=target_worker),
             "target_worker_id": target_worker.id,
             "target_worker_version": target_worker.worker_version,
-            "minimum_supported_worker_version": minimum_worker_version_for_command(TRANSIT_ROUTE_CREATE_COMMAND),
+            "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
+                payload.forwarding_method
+            ),
             "execution_mode": "dry_run",
             "approval_required": True,
             "safety_boundary": TRANSIT_ROUTE_CREATE_DRY_RUN_BOUNDARY,
@@ -1149,9 +1176,17 @@ def create_transit_route_worker_create_execute(
     if not payload.user_approved_real_execution:
         return error_response(400, "REAL_EXECUTION_APPROVAL_REQUIRED", "必须确认允许真实创建本次固定中转链路。")
     if not payload.firewall_security_group_confirmed:
-        return error_response(400, "SECURITY_GROUP_CONFIRMATION_REQUIRED", "必须确认云安全组已放行 23843/TCP。")
+        return error_response(
+            400,
+            "SECURITY_GROUP_CONFIRMATION_REQUIRED",
+            f"必须确认云安全组已放行 {payload.planned_listen_port}/TCP。",
+        )
     if not payload.cloud_firewall_confirmed:
-        return error_response(400, "CLOUD_FIREWALL_CONFIRMATION_REQUIRED", "必须确认云防火墙已放行 23843/TCP。")
+        return error_response(
+            400,
+            "CLOUD_FIREWALL_CONFIRMATION_REQUIRED",
+            f"必须确认云防火墙已放行 {payload.planned_listen_port}/TCP。",
+        )
     if not payload.server_firewall_confirmed:
         return error_response(400, "SERVER_FIREWALL_CONFIRMATION_REQUIRED", "必须确认服务器防火墙已放行或无阻断。")
     if not payload.no_node_share_link_change_confirmed:
@@ -1175,8 +1210,8 @@ def create_transit_route_worker_create_execute(
         )
     if payload.landing_target_port != APPROVED_LANDING_TARGET_PORT:
         return error_response(400, "LANDING_TARGET_PORT_MISMATCH", "当前受保护创建入口只允许落地目标端口 27939。")
-    if payload.forwarding_method != APPROVED_TRANSIT_FORWARDING_METHOD:
-        return error_response(400, "TRANSIT_METHOD_NOT_APPROVED", "当前受保护创建入口只允许 socat 转发方式。")
+    if payload.forwarding_method not in TRANSIT_ROUTE_CREATE_FORWARDING_METHODS:
+        return error_response(400, "TRANSIT_METHOD_NOT_SUPPORTED", "当前只允许 socat 或 HAProxy TCP mode。")
     if payload.planned_listen_port in PROTECTED_CREATE_PORTS:
         return error_response(
             400,
@@ -1277,6 +1312,19 @@ def create_transit_route_worker_create_execute(
             "TRANSIT_WORKER_INTERFACE_MISMATCH",
             "目标 Worker interface_name 与最近成功只读预检结果不一致。",
         )
+    if not worker_supports_transit_forwarding_method(target_worker, payload.forwarding_method):
+        return error_response(
+            400,
+            "WORKER_FORWARDING_METHOD_UNSUPPORTED",
+            "当前在线 Worker 版本不支持所选转发方式，请先升级中转 Worker。",
+            {
+                "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
+                    payload.forwarding_method
+                ),
+                "target_worker_version": target_worker.worker_version,
+                "forwarding_method": payload.forwarding_method,
+            },
+        )
 
     command_payload = {
         "transit_resource_id": resource.id,
@@ -1322,7 +1370,9 @@ def create_transit_route_worker_create_execute(
             "command": serialize_worker_command(command, include_payload=True, worker=target_worker),
             "target_worker_id": target_worker.id,
             "target_worker_version": target_worker.worker_version,
-            "minimum_supported_worker_version": minimum_worker_version_for_command(TRANSIT_ROUTE_CREATE_COMMAND),
+            "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
+                payload.forwarding_method
+            ),
             "execution_mode": "real_create",
             "approval_required": False,
             "safety_boundary": TRANSIT_ROUTE_CREATE_REAL_BOUNDARY,

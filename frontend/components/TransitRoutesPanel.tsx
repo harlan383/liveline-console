@@ -28,6 +28,8 @@ import {
   type RemoteCleanupUnavailableData,
   type TransitRouteCandidateExportResult,
   type TransitRouteCandidateSummary,
+  type TransitCreateForwardingMethod,
+  type TransitForwardingMethod,
   type TransitReadonlyPreflightCommandRequest,
   type TransitResourceData,
   type TransitResourceListResult,
@@ -37,8 +39,6 @@ import {
   type WorkerCommandData,
   type WorkerTokenCreateResult,
 } from "@/lib/api";
-
-type ForwardingMethod = "socat" | "gost";
 
 type TransitWorkerBootstrapFormState = {
   name: string;
@@ -50,7 +50,7 @@ type TransitRouteDraftState = {
   transitResourceId: string;
   landingNodeId: string;
   plannedListenPort: string;
-  forwardingMethod: ForwardingMethod;
+  forwardingMethod: TransitForwardingMethod;
   purpose: string;
 };
 
@@ -59,7 +59,7 @@ type TransitRouteCreateFormState = {
   transitResourceId: string;
   landingNodeId: string;
   listenPort: string;
-  forwardingMethod: "socat";
+  forwardingMethod: TransitCreateForwardingMethod;
   firewallConfirmed: boolean;
 };
 
@@ -205,6 +205,31 @@ const transitRouteCreateProgressLabels: Record<TransitRouteCreateStep, string> =
   complete: "完成",
   failed: "创建未完成",
 };
+
+function forwardingMethodLabel(method: string | null | undefined) {
+  if (method === "haproxy_tcp") {
+    return "HAProxy TCP mode";
+  }
+  if (method === "socat") {
+    return "socat";
+  }
+  if (method === "gost") {
+    return "gost";
+  }
+  return method || "-";
+}
+
+function defaultTransitRouteName(method: TransitCreateForwardingMethod, listenPort: string) {
+  const cleanedPort = listenPort.trim() || String(approvedTransitListenPort);
+  return method === "haproxy_tcp" ? `hk-haproxy-live-${cleanedPort}` : approvedTransitRouteName;
+}
+
+function transitRouteCreateProgressLabel(step: TransitRouteCreateStep, method: TransitCreateForwardingMethod) {
+  if (step === "command_running") {
+    return method === "haproxy_tcp" ? "创建 HAProxy TCP 服务 / 检查监听" : "创建 socat 服务 / 检查监听";
+  }
+  return transitRouteCreateProgressLabels[step];
+}
 
 const emptyRouteCreateForm: TransitRouteCreateFormState = {
   routeName: approvedTransitRouteName,
@@ -638,7 +663,7 @@ export function TransitServersPanel() {
           onConfirm={() => void submitDeleteResource()}
           description={
             <>
-              这会真实清理该中转服务器下所有中转链路的 socat 服务，并清理 transit Worker。该中转服务器将不再被 LiveLine Console 纳管。
+              这会真实清理该中转服务器下所有中转链路的中转服务，并清理 transit Worker。该中转服务器将不再被 LiveLine Console 纳管。
               清理成功后，中转链路记录和中转服务器记录会被软删除。不会修改防火墙、云安全组或云防火墙。
             </>
           }
@@ -980,7 +1005,7 @@ export function TransitRoutesPanel() {
           route.node_id === createNode.id &&
           route.listen_port === createListenPort &&
           route.target_port === createTargetPort &&
-          route.forwarding_method === "socat" &&
+          route.forwarding_method === createForm.forwardingMethod &&
           route.status === "active" &&
           !route.deleted_at,
       ) ?? null
@@ -1051,7 +1076,7 @@ export function TransitRoutesPanel() {
           landing_node_id: createNode.id,
           planned_listen_port: createListenPort,
           landing_target_port: createTargetPort,
-          forwarding_method: "socat",
+          forwarding_method: createForm.forwardingMethod,
           purpose: "直播",
           readonly: true,
         },
@@ -1074,7 +1099,7 @@ export function TransitRoutesPanel() {
           planned_listen_port: createListenPort,
           landing_target_host: landingHostForNode(createNode),
           landing_target_port: createTargetPort,
-          forwarding_method: "socat",
+          forwarding_method: createForm.forwardingMethod,
           purpose: "直播",
           route_name: createForm.routeName.trim(),
           approval_stage: approvedTransitRealCreateStage,
@@ -1175,7 +1200,7 @@ export function TransitRoutesPanel() {
     setDeleteRouteId(routeId);
     setDeleteRouteConfirmText("");
     setDeleteRouteMode("remote_cleanup");
-    setMessage("删除中转链路只会删除系统记录；不会停止 socat 或关闭端口。");
+    setMessage("删除中转链路只会删除系统记录；不会停止中转服务或关闭端口。");
   }
 
   function closeDeleteRouteModal() {
@@ -1531,7 +1556,7 @@ export function TransitRoutesPanel() {
                     <span className="table-ellipsis" title={targetLabel}>
                       {targetLabel}
                     </span>
-                    <span>{route.forwarding_method}</span>
+                    <span>{forwardingMethodLabel(route.forwarding_method)}</span>
                     <span title={route.status}>
                       <span className={`pill ${statusClass(route.status)}`}>{displayStatusLabel(route.status)}</span>
                     </span>
@@ -1655,8 +1680,12 @@ export function TransitRoutesPanel() {
             </label>
             <label>
               转发方式
-              <select value={draft.forwardingMethod} onChange={(event) => setDraft({ ...draft, forwardingMethod: event.target.value as ForwardingMethod })}>
+              <select
+                value={draft.forwardingMethod}
+                onChange={(event) => setDraft({ ...draft, forwardingMethod: event.target.value as TransitForwardingMethod })}
+              >
                 <option value="socat">socat</option>
+                <option value="haproxy_tcp">HAProxy TCP mode</option>
                 <option value="gost">gost</option>
               </select>
             </label>
@@ -1734,7 +1763,7 @@ export function TransitRoutesPanel() {
           onConfirm={() => void submitDeleteRoute()}
           description={
             <>
-              这会真实停止并删除该中转链路对应的 socat 服务，入口端口会失效。清理成功后，中转链路记录会被软删除。
+              这会真实停止并删除该中转链路对应的中转服务，入口端口会失效。清理成功后，中转链路记录会被软删除。
               不会修改防火墙、云安全组、云防火墙，也不会 cutover。
             </>
           }
@@ -1852,7 +1881,7 @@ export function TransitRoutesPanel() {
                 onSubmit={(event) => void submitSimplifiedTransitRouteCreate(event)}
               >
                 <div className="worker-bootstrap-intro wide-field">
-                  <strong>创建 socat 中转链路</strong>
+                  <strong>创建中转链路</strong>
                   <span>
                     中转客户端链接基于落地直连节点链接生成，只替换服务器地址和端口；不会修改 nodes.share_link，不会写入
                     transit_routes.share_link，不会 cutover。
@@ -1895,15 +1924,49 @@ export function TransitRoutesPanel() {
                   <input
                     inputMode="numeric"
                     value={createForm.listenPort}
-                    onChange={(event) => setCreateForm({ ...createForm, listenPort: event.target.value })}
+                    onChange={(event) => {
+                      const nextListenPort = event.target.value;
+                      setCreateForm((current) => {
+                        const previousDefaultName = defaultTransitRouteName(current.forwardingMethod, current.listenPort);
+                        const nextDefaultName = defaultTransitRouteName(current.forwardingMethod, nextListenPort);
+                        return {
+                          ...current,
+                          listenPort: nextListenPort,
+                          routeName: current.routeName === previousDefaultName ? nextDefaultName : current.routeName,
+                        };
+                      });
+                    }}
                     placeholder={String(approvedTransitListenPort)}
                   />
                   <small>新增或变更中转监听端口时，必须自行确认云安全组 / 云防火墙 / 服务器本机防火墙已放行对应 TCP 端口。</small>
                 </label>
                 <label>
                   转发方式
-                  <input readOnly value="socat" />
+                  <select
+                    value={createForm.forwardingMethod}
+                    onChange={(event) => {
+                      const nextMethod = event.target.value as TransitCreateForwardingMethod;
+                      setCreateForm((current) => ({
+                        ...current,
+                        forwardingMethod: nextMethod,
+                        routeName: defaultTransitRouteName(nextMethod, current.listenPort),
+                      }));
+                    }}
+                  >
+                    <option value="socat">socat</option>
+                    <option value="haproxy_tcp">HAProxy TCP mode</option>
+                  </select>
                 </label>
+
+                {createForm.forwardingMethod === "haproxy_tcp" ? (
+                  <div className="warning-box wide-field">
+                    <strong>HAProxy TCP mode 安全提醒</strong>
+                    <span>中转 VPS 必须已安装 HAProxy。</span>
+                    <span>HAProxy TCP mode 会创建 liveline-haproxy-&lt;port&gt;.service。</span>
+                    <span>新监听端口必须已在云安全组、云防火墙、服务器本机防火墙放行。</span>
+                    <span>当前页面不会自动安装 HAProxy，不会修改防火墙，不会 cutover。</span>
+                  </div>
+                ) : null}
 
                 <label className="node-create-confirm wide-field">
                   <input
@@ -1919,7 +1982,7 @@ export function TransitRoutesPanel() {
                 <details className="node-create-safety-details wide-field">
                   <summary>高级安全说明</summary>
                   <div className="node-create-safety-body">
-                    <span>创建命令只通过 transit Worker allowlist 执行固定 socat service 模板，不接受任意 shell 或任意 systemd unit。</span>
+                    <span>创建命令只通过 transit Worker allowlist 执行固定 LiveLine-owned service 模板，不接受任意 shell 或任意 systemd unit。</span>
                     <span>成功条件包括 systemd service active、监听端口 LISTEN、以及中转服务器到落地目标端口连通。</span>
                     <span>失败时不会生成完整客户端链接，不写 transit_routes.share_link，不修改落地节点，不 cutover。</span>
                     <span>本页面不会自动修改防火墙、云安全组或云防火墙；端口放行仍由用户自行确认。</span>
@@ -1929,8 +1992,8 @@ export function TransitRoutesPanel() {
                 {createStep !== "idle" ? (
                   <div className="landing-plan-result node-create-result wide-field">
                     <div className={`plan-status-card ${createStep === "failed" ? "blocked" : createStep === "complete" ? "ready" : ""}`}>
-                      <strong>{transitRouteCreateProgressLabels[createStep]}</strong>
-                      <span>系统会先做只读预检，再创建 socat 中转命令。只有创建、监听和连通性检查成功后，才会临时导出客户端链接。</span>
+                      <strong>{transitRouteCreateProgressLabel(createStep, createForm.forwardingMethod)}</strong>
+                      <span>系统会先做只读预检，再创建中转命令。只有创建、监听和连通性检查成功后，才会临时导出客户端链接。</span>
                     </div>
 
                     {createStep !== "failed" ? (
@@ -1940,7 +2003,7 @@ export function TransitRoutesPanel() {
                             const currentIndex = steps.indexOf(createStep);
                             return (
                               <span className={index < currentIndex ? "done" : index === currentIndex ? "current" : ""} key={step}>
-                                {transitRouteCreateProgressLabels[step]}
+                                {transitRouteCreateProgressLabel(step, createForm.forwardingMethod)}
                               </span>
                             );
                           },
