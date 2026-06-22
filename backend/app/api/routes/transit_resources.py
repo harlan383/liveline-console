@@ -17,8 +17,10 @@ from app.schemas.transit_resource import (
     PROTOCOL_HINTS,
     RESOURCE_STATUSES,
     RESOURCE_TYPES,
+    TRANSIT_WORKER_INSTALL_COMMAND_GENERATION_CONFIRMATION,
     TransitResourceCreate,
     TransitResourceUpdate,
+    TransitWorkerInstallCommandGenerationRequest,
 )
 from app.services.auth_service import record_audit
 from app.services.remote_cleanup_delete import (
@@ -35,6 +37,7 @@ from app.services.worker_binding import (
     latest_workers_by_server,
     serialize_worker_token_bootstrap,
     transit_display_status,
+    worker_public_base_url,
     worker_public_url_error_response,
     worker_runtime_status,
     worker_summary_fields,
@@ -354,6 +357,107 @@ def regenerate_transit_resource_worker_bootstrap(
             "expires_at": token.expires_at.isoformat() if token.expires_at else None,
         },
         "新的 Worker 安装命令已生成，请立即复制并妥善保存。",
+    )
+
+
+@router.post("/{resource_id}/worker-install-command")
+def generate_transit_resource_worker_install_command(
+    resource_id: str,
+    payload: TransitWorkerInstallCommandGenerationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    if payload.confirmation != TRANSIT_WORKER_INSTALL_COMMAND_GENERATION_CONFIRMATION:
+        return error_response(400, "CONFIRMATION_MISMATCH", "真实生成命令审批确认文本不匹配。")
+
+    resource = get_transit_resource_or_error(db, resource_id)
+    if not resource:
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
+    if resource.resource_type != "server":
+        return error_response(400, "TRANSIT_RESOURCE_NOT_SERVER", "只允许 server 类型中转资源生成 Worker 安装命令。")
+    if resource.status != WORKER_PENDING_STATUS:
+        return error_response(
+            400,
+            "TRANSIT_RESOURCE_NOT_PENDING_WORKER",
+            "只允许 pending_worker 中转服务器生成 Worker 安装命令。",
+        )
+    if not resource.entry_host:
+        return error_response(400, "TRANSIT_RESOURCE_ENTRY_HOST_REQUIRED", "生成安装命令前必须填写中转 VPS 公网 IP 或域名。")
+
+    bound_workers = db.scalars(
+        select(Worker).where(
+            Worker.role == "transit",
+            Worker.server_id == resource.id,
+        )
+    ).all()
+    online_workers = [worker for worker in bound_workers if worker_runtime_status(worker) == "online"]
+    if online_workers:
+        return error_response(
+            409,
+            "TRANSIT_RESOURCE_WORKER_ALREADY_ONLINE",
+            "该中转服务器已有在线 Worker，不允许生成新的安装命令。",
+        )
+
+    try:
+        controller_url = worker_public_base_url()
+        old_tokens = db.scalars(
+            select(WorkerToken).where(
+                WorkerToken.server_id == resource.id,
+                WorkerToken.role == "transit",
+                WorkerToken.status == "active",
+            )
+        ).all()
+        for old_token in old_tokens:
+            old_token.status = "revoked"
+            db.add(old_token)
+
+        token, raw_token, install_command = create_bound_worker_token(
+            db,
+            role="transit",
+            name=resource.name,
+            server_id=resource.id,
+            admin_id=session.admin_id,
+            expires_in_minutes=payload.expires_in_minutes,
+        )
+        record_audit(
+            db,
+            admin_id=session.admin_id,
+            action="generate_transit_resource_worker_install_command",
+            result="success",
+            request=request,
+            resource_type="transit_resource",
+            resource_id=resource.id,
+        )
+        db.commit()
+        db.refresh(resource)
+        db.refresh(token)
+    except WorkerPublicUrlError as exc:
+        db.rollback()
+        return worker_public_url_error_response(exc)
+
+    return success_response(
+        {
+            "resource": serialize_transit_resource(resource),
+            "token": serialize_worker_token_bootstrap(token, raw_token, install_command),
+            "install_command": install_command,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+            "controller_url": controller_url,
+            "role": "transit",
+            "token_expires_in_minutes": payload.expires_in_minutes,
+            "safety_notice": [
+                "该命令只用于用户手动复制到真实测试 VPS 执行。",
+                "本阶段不会自动 SSH。",
+                "本阶段不会安装 Worker。",
+                "不要把命令或 token 发到 README/docs/PR/chat/logs。",
+            ],
+        },
+        "一次性 Worker 安装命令已生成。明文 token 只在本次响应的安装命令中出现，请立即复制并妥善保存。",
     )
 
 

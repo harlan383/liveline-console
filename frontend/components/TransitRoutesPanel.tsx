@@ -11,6 +11,7 @@ import {
   createTransitReadonlyPreflightCommand,
   createWorkerCommand,
   exportTransitRouteCandidate,
+  generateTransitWorkerInstallCommand,
   getWorkerCommand,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
@@ -32,6 +33,7 @@ import {
   type TransitReadonlyPreflightCommandRequest,
   type TransitResourceData,
   type TransitResourceListResult,
+  type TransitWorkerInstallCommandGenerationResult,
   type TransitRouteWorkerCreateExecuteResponse,
   type TransitRouteData,
   type TransitRouteListResult,
@@ -744,6 +746,10 @@ export function TransitServersPanel() {
   const [placeholderCommandCopied, setPlaceholderCommandCopied] = useState(false);
   const [realCommandApprovalConfirmText, setRealCommandApprovalConfirmText] = useState("");
   const [realCommandApprovalCopied, setRealCommandApprovalCopied] = useState(false);
+  const [workerInstallCommandResult, setWorkerInstallCommandResult] =
+    useState<TransitWorkerInstallCommandGenerationResult | null>(null);
+  const [workerInstallCommandCopied, setWorkerInstallCommandCopied] = useState(false);
+  const [workerInstallCommandGenerating, setWorkerInstallCommandGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -792,6 +798,9 @@ export function TransitServersPanel() {
     setPlaceholderCommandCopied(false);
     setRealCommandApprovalConfirmText("");
     setRealCommandApprovalCopied(false);
+    setWorkerInstallCommandResult(null);
+    setWorkerInstallCommandCopied(false);
+    setWorkerInstallCommandGenerating(false);
   }
 
   function openAdd() {
@@ -822,6 +831,9 @@ export function TransitServersPanel() {
     setPlaceholderCommandCopied(false);
     setRealCommandApprovalConfirmText("");
     setRealCommandApprovalCopied(false);
+    setWorkerInstallCommandResult(null);
+    setWorkerInstallCommandCopied(false);
+    setWorkerInstallCommandGenerating(false);
   }
 
   async function copyWorkerInstallApprovalChecklist(resource: TransitResourceData) {
@@ -877,6 +889,52 @@ export function TransitServersPanel() {
     } catch (error) {
       setRealCommandApprovalCopied(false);
       setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制真实生成命令最终审批包失败。");
+    }
+  }
+
+  async function submitWorkerInstallCommandGeneration(resource: TransitResourceData) {
+    if (resource.status !== "pending_worker" || realCommandApprovalConfirmText !== transitWorkerRealCommandApprovalConfirmText) {
+      setMessage("请先完成真实生成命令最终审批。");
+      return;
+    }
+    setWorkerInstallCommandGenerating(true);
+    setWorkerInstallCommandCopied(false);
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await generateTransitWorkerInstallCommand(
+        resource.id,
+        {
+          confirmation: transitWorkerRealCommandApprovalConfirmText,
+          expires_in_minutes: 60,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setWorkerInstallCommandResult(null);
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setWorkerInstallCommandResult(result.data);
+      setMessage("一次性 Worker 安装命令已生成；请只在当前页面复制，不要写入 README/docs/PR/chat/logs。");
+    } catch (error) {
+      setWorkerInstallCommandResult(null);
+      setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
+    } finally {
+      setWorkerInstallCommandGenerating(false);
+    }
+  }
+
+  async function copyGeneratedWorkerInstallCommand() {
+    if (!workerInstallCommandResult) {
+      return;
+    }
+    try {
+      await copyText(workerInstallCommandResult.install_command);
+      setWorkerInstallCommandCopied(true);
+      setMessage("安装命令已复制。请不要粘贴到 README/docs/PR/chat/logs。");
+    } catch (error) {
+      setWorkerInstallCommandCopied(false);
+      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制安装命令失败。");
     }
   }
 
@@ -1222,6 +1280,8 @@ export function TransitServersPanel() {
                     setPlaceholderCommandCopied(false);
                     setRealCommandApprovalConfirmText("");
                     setRealCommandApprovalCopied(false);
+                    setWorkerInstallCommandResult(null);
+                    setWorkerInstallCommandCopied(false);
                   }}
                   placeholder={transitWorkerInstallCommandApprovalConfirmText}
                 />
@@ -1314,6 +1374,8 @@ export function TransitServersPanel() {
                       onChange={(event) => {
                         setRealCommandApprovalConfirmText(event.target.value);
                         setRealCommandApprovalCopied(false);
+                        setWorkerInstallCommandResult(null);
+                        setWorkerInstallCommandCopied(false);
                       }}
                       placeholder={transitWorkerRealCommandApprovalConfirmText}
                     />
@@ -1324,8 +1386,8 @@ export function TransitServersPanel() {
                       : "尚未确认进入真实命令生成阶段。"}
                   </div>
                   <ul className="dry-run-safety-list">
-                    <li>本阶段不会生成 Worker token。</li>
-                    <li>本阶段不会生成真实 install command。</li>
+                    <li>仅输入最终确认不会生成 Worker token。</li>
+                    <li>点击生成按钮后，只生成一次性 token / install command。</li>
                     <li>本阶段不会安装 Worker。</li>
                     <li>本阶段不会 SSH 或远程执行。</li>
                   </ul>
@@ -1333,9 +1395,47 @@ export function TransitServersPanel() {
                     <button className="secondary" type="button" onClick={() => void copyWorkerRealCommandApprovalPackage(approvalPreviewResource)}>
                       复制真实生成命令最终审批包
                     </button>
+                    <button
+                      type="button"
+                      disabled={!realCommandApprovalConfirmed || workerInstallCommandGenerating}
+                      onClick={() => void submitWorkerInstallCommandGeneration(approvalPreviewResource)}
+                    >
+                      {workerInstallCommandGenerating ? "生成中..." : "生成一次性 Worker 安装命令"}
+                    </button>
                   </div>
+                  <p className="message">只生成命令，不安装 Worker，不 SSH，不创建 Worker command。</p>
                   {realCommandApprovalCopied ? (
                     <p className="approval-copy-status">真实生成命令最终审批包已复制；不包含真实 token 或真实安装命令。</p>
+                  ) : null}
+                  {workerInstallCommandResult ? (
+                    <div className="worker-install-command-result" aria-label="一次性 Worker 安装命令已生成">
+                      <strong>一次性 Worker 安装命令已生成</strong>
+                      <div className="worker-install-real-approval-grid">
+                        <span>资源名</span>
+                        <strong>{workerInstallCommandResult.resource.name}</strong>
+                        <span>资源状态</span>
+                        <strong>{workerInstallCommandResult.resource.status}</strong>
+                        <span>controller_url</span>
+                        <strong>{workerInstallCommandResult.controller_url}</strong>
+                        <span>role</span>
+                        <strong>{workerInstallCommandResult.role}</strong>
+                        <span>token 过期时间</span>
+                        <strong>{formatTime(workerInstallCommandResult.expires_at)}</strong>
+                      </div>
+                      <div className="approval-gate-status warn">
+                        该命令包含一次性 token，只显示一次。不要保存到 README / docs / PR / chat / logs。不要在未确认真实 VPS 前执行。
+                        下一阶段才进行手动安装验收。
+                      </div>
+                      <pre className="worker-install-placeholder-command">{workerInstallCommandResult.install_command}</pre>
+                      <div className="dry-run-actions">
+                        <button className="secondary" type="button" onClick={() => void copyGeneratedWorkerInstallCommand()}>
+                          复制安装命令
+                        </button>
+                      </div>
+                      {workerInstallCommandCopied ? (
+                        <p className="approval-copy-status">安装命令已复制；请只在真实测试 VPS 的手动安装阶段使用。</p>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               ) : null}
