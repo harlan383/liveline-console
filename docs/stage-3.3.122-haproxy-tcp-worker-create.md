@@ -76,7 +76,17 @@ redacted diagnostics
 safe rollback for only LiveLine-owned HAProxy artifacts
 ```
 
-The helper is intentionally not wired into the existing transit create real execution branch yet. This keeps the current production socat path untouched while the helper is reviewed.
+Stage 3.3.122-c also added backend version helpers for forwarding-method-aware targeting:
+
+```text
+minimum_worker_version_for_transit_forwarding_method()
+minimum_worker_version_key_for_transit_forwarding_method()
+worker_supports_transit_forwarding_method()
+```
+
+This lets later backend/UI code require Worker `0.1.24-stage-3.3.122` for `haproxy_tcp` while preserving the existing `socat` minimum Worker version.
+
+The helper is intentionally not wired into the existing transit create real execution branch yet. This keeps the current production socat path untouched while the helper and backend targeting support are reviewed.
 
 ## Target Worker version
 
@@ -154,4 +164,4 @@ Do not modify firewalls automatically unless the user explicitly approves.
 
 ## Stage status
 
-The HAProxy helper exists but is not yet connected to the main Worker create execution branch. Remote deploy, Worker binary replacement, and real HAProxy route creation are not part of the current commits.
+The HAProxy helper exists and backend forwarding-method Worker version helpers exist, but the helper is not yet connected to the main Worker create execution branch. Remote deploy, Worker binary replacement, and real HAProxy route creation are not part of the current commits.
