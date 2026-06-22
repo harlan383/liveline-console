@@ -6,16 +6,15 @@ import QRCode from "react-qr-code";
 import { TransitReadonlyPreflightSimplePanel } from "@/components/TransitReadonlyPreflightSimplePanel";
 import {
   apiFetch,
+  createTransitResource,
   createTransitRouteWorkerExecuteCommand,
   createTransitReadonlyPreflightCommand,
-  createTransitWorkerBootstrap,
   createWorkerCommand,
   exportTransitRouteCandidate,
   getWorkerCommand,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
   OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT,
-  regenerateTransitWorkerBootstrap,
   remoteCleanupDeleteTransitResource,
   remoteCleanupDeleteTransitRoute,
   REMOTE_CLEANUP_CONFIRM_TEXT,
@@ -36,14 +35,25 @@ import {
   type TransitRouteWorkerCreateExecuteResponse,
   type TransitRouteData,
   type TransitRouteListResult,
+  type TransitResourcePayload,
   type WorkerCommandData,
-  type WorkerTokenCreateResult,
 } from "@/lib/api";
 
-type TransitWorkerBootstrapFormState = {
+type TransitResourceDraftFormState = {
   name: string;
-  ip: string;
-  expiresInMinutes: string;
+  provider: string;
+  entryHost: string;
+  sshHost: string;
+  sshPort: string;
+  sshUsername: string;
+  entryRegion: string;
+  exitRegion: string;
+  bandwidthMbps: string;
+  trafficLimitGb: string;
+  plannedInterface: string;
+  protocolHint: "haproxy_tcp" | "socat" | "unknown";
+  hasSsh: boolean;
+  notes: string;
 };
 
 type TransitRouteDraftState = {
@@ -174,10 +184,24 @@ function SafeDeleteModal({
   );
 }
 
-const emptyBootstrapForm: TransitWorkerBootstrapFormState = {
+const requiredTransitWorkerVersion = "0.1.24-stage-3.3.122";
+const transitWorkerBinaryChecksum = "cf7990f3ba0f85348fa714edb69a94d36b8752323fe9c843fa676cf50f38fcce";
+
+const emptyTransitResourceDraftForm: TransitResourceDraftFormState = {
   name: "",
-  ip: "",
-  expiresInMinutes: "60",
+  provider: "",
+  entryHost: "",
+  sshHost: "",
+  sshPort: "22",
+  sshUsername: "root",
+  entryRegion: "",
+  exitRegion: "",
+  bandwidthMbps: "",
+  trafficLimitGb: "",
+  plannedInterface: "eth0",
+  protocolHint: "haproxy_tcp",
+  hasSsh: false,
+  notes: "",
 };
 
 const emptyRouteDraft: TransitRouteDraftState = {
@@ -284,6 +308,106 @@ function displayValue(value: unknown) {
   return String(value);
 }
 
+function nullableText(value: string) {
+  const cleaned = value.trim();
+  return cleaned ? cleaned : null;
+}
+
+function nullableInteger(value: string) {
+  const cleaned = value.trim();
+  if (!cleaned) {
+    return null;
+  }
+  if (!/^\d+$/.test(cleaned)) {
+    return null;
+  }
+  const parsed = Number(cleaned);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function nullableDecimal(value: string) {
+  const cleaned = value.trim();
+  if (!cleaned) {
+    return null;
+  }
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function protocolHintLabel(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    haproxy_tcp: "HAProxy TCP",
+    socat: "socat",
+    tcp: "TCP",
+    udp: "UDP",
+    tcp_udp: "TCP/UDP",
+    unknown: "待确认",
+  };
+  return labels[value ?? ""] ?? value ?? "待确认";
+}
+
+function buildTransitResourceDraftNotes(form: TransitResourceDraftFormState) {
+  const lines = [
+    "Draft resource only. No Worker install credential generated.",
+    `Planned interface: ${form.plannedInterface.trim() || "pending"}`,
+    `Preferred forwarding: ${form.protocolHint}`,
+  ];
+  const notes = form.notes.trim();
+  if (notes) {
+    lines.push(`Operator notes: ${notes}`);
+  }
+  return lines.join("\n");
+}
+
+function transitResourcePayloadFromForm(
+  form: TransitResourceDraftFormState,
+  status = "pending_worker",
+): TransitResourcePayload {
+  const sshPort = nullableInteger(form.sshPort);
+  return {
+    name: form.name.trim(),
+    resource_type: "server",
+    provider: nullableText(form.provider),
+    entry_host: nullableText(form.entryHost),
+    entry_port: null,
+    entry_region: nullableText(form.entryRegion),
+    exit_region: nullableText(form.exitRegion),
+    bandwidth_mbps: nullableInteger(form.bandwidthMbps),
+    traffic_limit_gb: nullableDecimal(form.trafficLimitGb),
+    traffic_used_gb: null,
+    protocol_hint: form.protocolHint,
+    has_ssh: form.hasSsh,
+    ssh_host: form.hasSsh ? nullableText(form.sshHost) : null,
+    ssh_port: form.hasSsh ? sshPort : null,
+    ssh_username: form.hasSsh ? nullableText(form.sshUsername) : null,
+    status,
+    expires_at: null,
+    notes: buildTransitResourceDraftNotes(form),
+  };
+}
+
+function draftFormFromResource(resource: TransitResourceData): TransitResourceDraftFormState {
+  return {
+    name: resource.name,
+    provider: resource.provider ?? "",
+    entryHost: resource.entry_host ?? "",
+    sshHost: resource.ssh_host ?? "",
+    sshPort: resource.ssh_port ? String(resource.ssh_port) : "22",
+    sshUsername: resource.ssh_username ?? "root",
+    entryRegion: resource.entry_region ?? "",
+    exitRegion: resource.exit_region ?? "",
+    bandwidthMbps: resource.bandwidth_mbps !== null ? String(resource.bandwidth_mbps) : "",
+    trafficLimitGb: resource.traffic_limit_gb !== null ? String(resource.traffic_limit_gb) : "",
+    plannedInterface: resource.worker_interface_name ?? "eth0",
+    protocolHint:
+      resource.protocol_hint === "haproxy_tcp" || resource.protocol_hint === "socat"
+        ? resource.protocol_hint
+        : "unknown",
+    hasSsh: resource.has_ssh,
+    notes: resource.notes ?? "",
+  };
+}
+
 function parsePort(value: string) {
   const trimmed = value.trim();
   if (!/^\d+$/.test(trimmed)) {
@@ -335,11 +459,10 @@ async function copyText(value: string) {
 export function TransitServersPanel() {
   const [resources, setResources] = useState<TransitResourceData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("中转服务器页面只管理 Worker 接入资源；不会执行旧 SSH/RQ 检测或安装。");
-  const [modalMode, setModalMode] = useState<"add" | "edit" | "install" | "delete" | null>(null);
+  const [message, setMessage] = useState("中转服务器页面可保存待安装 Worker 的草稿资源；不会生成 Worker token 或执行远程安装。");
+  const [modalMode, setModalMode] = useState<"add" | "edit" | "delete" | null>(null);
   const [selectedResource, setSelectedResource] = useState<TransitResourceData | null>(null);
-  const [bootstrapForm, setBootstrapForm] = useState<TransitWorkerBootstrapFormState>(emptyBootstrapForm);
-  const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
+  const [draftForm, setDraftForm] = useState<TransitResourceDraftFormState>(emptyTransitResourceDraftForm);
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
@@ -377,38 +500,21 @@ export function TransitServersPanel() {
   function closeModal() {
     setModalMode(null);
     setSelectedResource(null);
-    setBootstrapForm(emptyBootstrapForm);
-    setWorkerTokenResult(null);
+    setDraftForm(emptyTransitResourceDraftForm);
     setDeleteConfirmText("");
     setDeleteMode("remote_cleanup");
   }
 
   function openAdd() {
     setSelectedResource(null);
-    setBootstrapForm(emptyBootstrapForm);
-    setWorkerTokenResult(null);
+    setDraftForm(emptyTransitResourceDraftForm);
     setModalMode("add");
   }
 
   function openEdit(resource: TransitResourceData) {
     setSelectedResource(resource);
-    setBootstrapForm({
-      name: resource.name,
-      ip: resource.entry_host ?? "",
-      expiresInMinutes: "60",
-    });
+    setDraftForm(draftFormFromResource(resource));
     setModalMode("edit");
-  }
-
-  function openInstallCommand(resource: TransitResourceData) {
-    setSelectedResource(resource);
-    setBootstrapForm({
-      name: resource.name,
-      ip: resource.entry_host ?? "",
-      expiresInMinutes: "60",
-    });
-    setWorkerTokenResult(null);
-    setModalMode("install");
   }
 
   function openDeleteResource(resource: TransitResourceData) {
@@ -418,36 +524,31 @@ export function TransitServersPanel() {
     setModalMode("delete");
   }
 
-  async function submitWorkerBootstrap(event: FormEvent<HTMLFormElement>) {
+  async function submitDraftResource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const name = bootstrapForm.name.trim();
-    const ip = bootstrapForm.ip.trim();
-    const expiresInMinutes = Number(bootstrapForm.expiresInMinutes);
-    if (!name || !ip) {
-      setMessage("请填写中转服务器名称和 IP。");
+    const payload = transitResourcePayloadFromForm(draftForm, "pending_worker");
+    if (!payload.name) {
+      setMessage("请填写中转资源名称。");
       return;
     }
-    if (!Number.isInteger(expiresInMinutes) || expiresInMinutes < 1 || expiresInMinutes > 10080) {
-      setMessage("过期时间必须是 1 到 10080 分钟。");
+    if (draftForm.hasSsh && draftForm.sshPort.trim() && parsePort(draftForm.sshPort) === null) {
+      setMessage("SSH 端口必须是 1-65535 之间的整数；也可以取消 SSH 管理能力。");
       return;
     }
 
     setSubmitting(true);
     try {
       const csrfToken = await ensureCsrfToken();
-      const result =
-        modalMode === "install" && selectedResource
-          ? await regenerateTransitWorkerBootstrap(selectedResource.id, { expires_in_minutes: expiresInMinutes }, csrfToken)
-          : await createTransitWorkerBootstrap({ name, ip, expires_in_minutes: expiresInMinutes }, csrfToken);
+      const result = await createTransitResource(payload, csrfToken);
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setWorkerTokenResult(result.data.token);
-      setMessage("一次性 Worker 安装命令已生成。命令只显示一次，请立即复制并妥善保存。");
+      setMessage("中转 VPS 草稿已保存为 pending_worker；未生成 Worker token，未生成安装命令，未执行远程操作。");
+      closeModal();
       await loadResources();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
+      setMessage(error instanceof Error ? error.message : "保存中转 VPS 草稿失败。");
     } finally {
       setSubmitting(false);
     }
@@ -461,21 +562,11 @@ export function TransitServersPanel() {
     setSubmitting(true);
     try {
       const csrfToken = await ensureCsrfToken();
+      const payload = transitResourcePayloadFromForm(draftForm, selectedResource.status);
       const result = await apiFetch<TransitResourceData>(`/api/transit-resources/${selectedResource.id}`, {
         method: "PATCH",
         headers: { "X-CSRF-Token": csrfToken },
-        body: JSON.stringify({
-          name: bootstrapForm.name,
-          entry_host: bootstrapForm.ip,
-          entry_port: selectedResource.entry_port,
-          resource_type: "server",
-          protocol_hint: "tcp",
-          has_ssh: false,
-          ssh_host: null,
-          ssh_port: null,
-          ssh_username: null,
-          status: selectedResource.status,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!result.success) {
         setMessage(`${result.error_code}: ${result.message}`);
@@ -557,10 +648,10 @@ export function TransitServersPanel() {
       <div className="status-row">
         <div>
           <h2>中转服务器</h2>
-          <p className="message">管理中转服务器及其 Worker 接入状态；资源记录不等于真实线路。</p>
+          <p className="message">管理中转 VPS 草稿、Worker 接入状态和后续 HAProxy TCP 准备项；资源记录不等于真实线路。</p>
         </div>
         <button type="button" onClick={openAdd}>
-          添加中转服务器
+          新增中转 VPS 草稿
         </button>
       </div>
 
@@ -574,10 +665,10 @@ export function TransitServersPanel() {
         </summary>
         <div className="route-safety-body">
           <ul className="route-safety-list">
-            <li>本页只保留 Worker 接入、心跳、状态检查和本地资源记录。</li>
+            <li>本页可保存 pending_worker 草稿资源，用于后续 Worker install approval。</li>
+            <li>新增草稿不会生成 Worker token，不会生成真实安装命令，不会连接远端。</li>
             <li>旧 SSH/RQ 读取、安装 gost、安装 socat 入口已经下线。</li>
-            <li>添加或重新生成安装命令不会自动安装 Worker；真实安装仍需用户手动在目标服务器执行。</li>
-            <li>不会创建中转链路、不会新增监听端口、不会修改防火墙或 cutover。</li>
+            <li>不会创建 Worker command、不会创建中转链路、不会新增监听端口、不会修改防火墙或 cutover。</li>
           </ul>
         </div>
       </details>
@@ -595,21 +686,19 @@ export function TransitServersPanel() {
         {!loading
           ? resources.map((resource) => {
               const commands = resource.worker_id ? workerCommandsByWorkerId[resource.worker_id] ?? [] : [];
-              const canRegenerate = resource.status === "pending_worker" && !resource.worker_online;
+              const pendingWorkerDraft = resource.status === "pending_worker" && !resource.worker_online;
               return (
                 <div className="server-table-group" key={resource.id}>
                   <div className="server-table-row">
                     <strong>{resource.name}</strong>
                     <span>{resource.entry_host ?? "-"}</span>
-                    <span>Worker 接入</span>
+                    <span>{pendingWorkerDraft ? "待安装 Worker" : resource.worker_online ? "Worker 在线" : "Worker 接入"}</span>
                     <span className={`pill ${statusClass(resource.display_status)}`}>
                       {displayStatusLabel(resource.display_status)}
                     </span>
                     <div className="server-actions">
-                      {canRegenerate ? (
-                        <button className="secondary" type="button" onClick={() => openInstallCommand(resource)}>
-                          重新生成安装命令
-                        </button>
+                      {pendingWorkerDraft ? (
+                        <span className="action-hint">下一步：Worker install approval</span>
                       ) : null}
                       <button className="secondary" type="button" onClick={() => openEdit(resource)}>
                         编辑
@@ -631,6 +720,14 @@ export function TransitServersPanel() {
                     Worker：{resource.worker_status ? displayStatusLabel(resource.worker_status) : "未注册"}；主机名：
                     {resource.worker_hostname || "暂无"}；网卡：{resource.worker_interface_name || "暂无"}；版本：
                     {resource.worker_version || "暂无"}；最后心跳：{formatTime(resource.worker_last_heartbeat_at)}
+                    {pendingWorkerDraft ? (
+                      <div className="transit-draft-next-steps">
+                        <span>草稿 / 等待安装 Worker</span>
+                        <span>要求版本：{requiredTransitWorkerVersion}</span>
+                        <span>首选转发：{protocolHintLabel(resource.protocol_hint)}</span>
+                        <span>HAProxy readiness：后续检查，当前未验证</span>
+                      </div>
+                    ) : null}
                     {commands[0] ? (
                       <div className="worker-command-status">
                         最近命令：{commands[0].command_type} / {displayStatusLabel(commands[0].status)}
@@ -672,85 +769,164 @@ export function TransitServersPanel() {
 
       {modalMode && modalMode !== "delete" ? (
         <div className="modal-backdrop" role="presentation">
-          <div className="modal-card" role="dialog" aria-modal="true" aria-label="中转服务器操作">
+          <div className="modal-card transit-resource-draft-modal" role="dialog" aria-modal="true" aria-label="中转服务器操作">
             <div className="modal-header">
-              <h3>{modalMode === "edit" ? "编辑中转服务器" : "添加中转服务器"}</h3>
+              <h3>{modalMode === "edit" ? "编辑中转服务器记录" : "新增中转 VPS 草稿"}</h3>
               <button className="ghost-button" type="button" onClick={closeModal}>
                 取消
               </button>
             </div>
-            {modalMode === "edit" ? (
-              <form className="form server-modal-form" onSubmit={(event) => void submitEdit(event)}>
-                <label>
-                  中转服务器名称
-                  <input value={bootstrapForm.name} onChange={(event) => setBootstrapForm({ ...bootstrapForm, name: event.target.value })} />
-                </label>
-                <label>
-                  中转服务器 IP
-                  <input value={bootstrapForm.ip} onChange={(event) => setBootstrapForm({ ...bootstrapForm, ip: event.target.value })} />
-                </label>
-                <p className="message wide-field">编辑只更新本地资源记录；不会执行远程命令。</p>
-                <div className="modal-actions wide-field">
-                  <button disabled={submitting} type="submit">
-                    保存
-                  </button>
-                  <button className="secondary" type="button" onClick={closeModal}>
-                    取消
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <form className="form server-modal-form worker-bootstrap-form" onSubmit={(event) => void submitWorkerBootstrap(event)}>
-                <div className="worker-bootstrap-intro wide-field">
-                  <strong>接入方式：Worker 安装命令</strong>
-                  <span>中转服务器使用 role = transit。当前不会执行远程安装，只生成一次性安装命令。</span>
-                </div>
-                <label>
-                  中转服务器名称
-                  <input value={bootstrapForm.name} onChange={(event) => setBootstrapForm({ ...bootstrapForm, name: event.target.value })} />
-                </label>
-                <label>
-                  中转服务器 IP
-                  <input value={bootstrapForm.ip} onChange={(event) => setBootstrapForm({ ...bootstrapForm, ip: event.target.value })} />
-                </label>
-                <label>
-                  过期时间（分钟）
-                  <input
-                    inputMode="numeric"
-                    value={bootstrapForm.expiresInMinutes}
-                    onChange={(event) => setBootstrapForm({ ...bootstrapForm, expiresInMinutes: event.target.value })}
-                  />
-                </label>
-                <div className="modal-actions wide-field">
-                  <button disabled={submitting} type="submit">
-                    生成安装命令
-                  </button>
-                  <button className="secondary" type="button" onClick={closeModal}>
-                    取消
-                  </button>
-                </div>
-                {workerTokenResult?.install_command ? (
-                  <div className="wide-field">
-                    <label>
-                      安装命令
-                      <textarea readOnly value={workerTokenResult.install_command} />
-                    </label>
-                    <button
-                      className="secondary"
-                      type="button"
-                      onClick={() => {
-                        void copyText(workerTokenResult.install_command)
-                          .then(() => setMessage("安装命令已复制。请勿写入聊天、Git、README、PR 或日志。"))
-                          .catch(() => setMessage("当前 HTTP 环境可能不支持自动复制，请手动复制上方安装命令。"));
-                      }}
-                    >
-                      复制命令
-                    </button>
-                    <p className="message">命令只显示一次，关闭后无法再次查看；请在目标服务器上先确认能访问主控地址。</p>
-                  </div>
-                ) : null}
-              </form>
-            )}
+            <form
+              className="form server-modal-form transit-resource-draft-form"
+              onSubmit={(event) => void (modalMode === "edit" ? submitEdit(event) : submitDraftResource(event))}
+            >
+              <div className="worker-bootstrap-intro wide-field">
+                <strong>{modalMode === "edit" ? "只更新本地资源记录" : "草稿资源 / 等待安装 Worker"}</strong>
+                <span>
+                  本阶段只保存中转 VPS 草稿信息，状态为 pending_worker。不会生成 Worker token、不会生成安装命令、不会 SSH、不会创建 Worker command 或 HAProxy route。
+                </span>
+              </div>
+              <label>
+                资源名称
+                <input
+                  placeholder="例如 hk-haproxy-vps-draft"
+                  value={draftForm.name}
+                  onChange={(event) => setDraftForm({ ...draftForm, name: event.target.value })}
+                />
+              </label>
+              <label>
+                云厂商 / provider
+                <input
+                  placeholder="例如 Bandwagon / Vultr / unknown"
+                  value={draftForm.provider}
+                  onChange={(event) => setDraftForm({ ...draftForm, provider: event.target.value })}
+                />
+              </label>
+              <label>
+                公网 IP / 域名
+                <input
+                  placeholder="可先留空，或填写后续准备接入的入口地址"
+                  value={draftForm.entryHost}
+                  onChange={(event) => setDraftForm({ ...draftForm, entryHost: event.target.value })}
+                />
+              </label>
+              <label>
+                入口地区
+                <input
+                  placeholder="例如 Hong Kong"
+                  value={draftForm.entryRegion}
+                  onChange={(event) => setDraftForm({ ...draftForm, entryRegion: event.target.value })}
+                />
+              </label>
+              <label>
+                出口地区
+                <input
+                  placeholder="例如 landing region / US"
+                  value={draftForm.exitRegion}
+                  onChange={(event) => setDraftForm({ ...draftForm, exitRegion: event.target.value })}
+                />
+              </label>
+              <label>
+                带宽 Mbps
+                <input
+                  inputMode="numeric"
+                  placeholder="可选"
+                  value={draftForm.bandwidthMbps}
+                  onChange={(event) => setDraftForm({ ...draftForm, bandwidthMbps: event.target.value })}
+                />
+              </label>
+              <label>
+                流量限制 GB
+                <input
+                  inputMode="decimal"
+                  placeholder="可选"
+                  value={draftForm.trafficLimitGb}
+                  onChange={(event) => setDraftForm({ ...draftForm, trafficLimitGb: event.target.value })}
+                />
+              </label>
+              <label>
+                计划网卡名
+                <input
+                  placeholder="例如 eth0 / ens3"
+                  value={draftForm.plannedInterface}
+                  onChange={(event) => setDraftForm({ ...draftForm, plannedInterface: event.target.value })}
+                />
+              </label>
+              <label>
+                协议提示
+                <select
+                  value={draftForm.protocolHint}
+                  onChange={(event) =>
+                    setDraftForm({ ...draftForm, protocolHint: event.target.value as TransitResourceDraftFormState["protocolHint"] })
+                  }
+                >
+                  <option value="haproxy_tcp">HAProxy TCP</option>
+                  <option value="socat">socat</option>
+                  <option value="unknown">待确认</option>
+                </select>
+              </label>
+              <label className="transit-draft-checkbox wide-field">
+                <input
+                  checked={draftForm.hasSsh}
+                  type="checkbox"
+                  onChange={(event) => setDraftForm({ ...draftForm, hasSsh: event.target.checked })}
+                />
+                <span>记录 SSH 管理元信息。只保存 host/port/username，不保存密码、私钥或 token。</span>
+              </label>
+              {draftForm.hasSsh ? (
+                <>
+                  <label>
+                    SSH host
+                    <input
+                      value={draftForm.sshHost}
+                      onChange={(event) => setDraftForm({ ...draftForm, sshHost: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    SSH port
+                    <input
+                      inputMode="numeric"
+                      value={draftForm.sshPort}
+                      onChange={(event) => setDraftForm({ ...draftForm, sshPort: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    SSH username
+                    <input
+                      value={draftForm.sshUsername}
+                      onChange={(event) => setDraftForm({ ...draftForm, sshUsername: event.target.value })}
+                    />
+                  </label>
+                </>
+              ) : null}
+              <label className="wide-field">
+                备注
+                <textarea
+                  placeholder="不要填写密码、私钥、Worker token、后台账号或其他敏感信息。"
+                  value={draftForm.notes}
+                  onChange={(event) => setDraftForm({ ...draftForm, notes: event.target.value })}
+                />
+              </label>
+              <div className="transit-draft-readiness wide-field">
+                <strong>后续 HAProxy TCP readiness</strong>
+                <span>Worker 版本要求：{requiredTransitWorkerVersion}</span>
+                <span>Worker binary checksum：{transitWorkerBinaryChecksum}</span>
+                <ul>
+                  <li>新 transit Worker online 后，才允许进入 HAProxy TCP route 创建审批。</li>
+                  <li>后续需要确认 HAProxy 已安装、计划监听端口未占用、到落地目标端口 TCP 可达。</li>
+                  <li>云安全组、云防火墙、服务器本机防火墙必须由用户自行放行监听 TCP 端口。</li>
+                  <li>本页面不会安装 HAProxy，不会修改防火墙，不会创建 route。</li>
+                </ul>
+              </div>
+              <div className="modal-actions wide-field">
+                <button disabled={submitting} type="submit">
+                  {modalMode === "edit" ? "保存本地记录" : "保存为待安装 Worker"}
+                </button>
+                <button className="secondary" type="button" onClick={closeModal}>
+                  取消
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}

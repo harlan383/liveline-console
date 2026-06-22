@@ -914,6 +914,19 @@ textarea {
   padding: 8px 10px;
 }
 
+.action-hint {
+  align-items: center;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.24);
+  border-radius: 999px;
+  color: #ffe0a3;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
 .server-advanced-actions {
   width: 100%;
 }
@@ -1309,6 +1322,25 @@ textarea {
   white-space: nowrap;
 }
 
+.transit-draft-next-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.transit-draft-next-steps span {
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  border-radius: 999px;
+  color: #ffe7b1;
+  font-size: 12px;
+  font-weight: 800;
+  max-width: 420px;
+  overflow-wrap: anywhere;
+  padding: 5px 8px;
+}
+
 .worker-preflight-summary {
   display: flex;
   flex-wrap: wrap;
@@ -1386,6 +1418,66 @@ textarea {
 
 .server-modal-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.transit-resource-draft-modal {
+  max-height: calc(100vh - 80px);
+  max-width: 900px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  width: min(900px, calc(100vw - 48px));
+}
+
+.transit-resource-draft-form textarea {
+  min-height: 88px;
+}
+
+.transit-draft-checkbox {
+  align-items: flex-start;
+  background: rgba(19, 31, 45, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.transit-draft-checkbox input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+
+.transit-draft-checkbox span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  min-width: 0;
+}
+
+.transit-draft-readiness {
+  background: rgba(7, 16, 34, 0.58);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.transit-draft-readiness strong {
+  color: var(--text);
+}
+
+.transit-draft-readiness span,
+.transit-draft-readiness li {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.transit-draft-readiness ul {
+  margin: 0;
+  padding-left: 18px;
 }
 
 .delete-confirm {
