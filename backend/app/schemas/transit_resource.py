@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 RESOURCE_TYPES = {"server", "iepl", "iplc", "other"}
 PROTOCOL_HINTS = {"tcp", "udp", "tcp_udp", "haproxy_tcp", "socat", "unknown"}
 RESOURCE_STATUSES = {"active", "disabled", "pending_worker", "worker_online", "worker_offline"}
+TRANSIT_WORKER_INSTALL_COMMAND_GENERATION_CONFIRMATION = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE"
 HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 SENSITIVE_NOTE_MARKERS = (
     "PRIVATE KEY",
@@ -207,3 +208,16 @@ class TransitResourceUpdate(BaseModel):
             self.ssh_port = None
             self.ssh_username = None
         return self
+
+
+class TransitWorkerInstallCommandGenerationRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=120)
+    expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
+
+    @field_validator("confirmation")
+    @classmethod
+    def validate_confirmation(cls, value: str) -> str:
+        cleaned = value.strip()
+        if cleaned != TRANSIT_WORKER_INSTALL_COMMAND_GENERATION_CONFIRMATION:
+            raise ValueError("confirmation 不匹配")
+        return cleaned

@@ -1604,6 +1604,16 @@ textarea {
   padding: 12px;
 }
 
+.worker-install-command-result {
+  background: rgba(4, 17, 29, 0.82);
+  border: 1px solid rgba(40, 229, 197, 0.24);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
 .dry-run-safety-list {
   display: grid;
   gap: 6px;

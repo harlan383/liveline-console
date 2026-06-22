@@ -550,6 +550,22 @@ export type TransitWorkerBootstrapRegenerateRequest = {
   expires_in_minutes?: number;
 };
 
+export type TransitWorkerInstallCommandGenerationRequest = {
+  confirmation: string;
+  expires_in_minutes?: number;
+};
+
+export type TransitWorkerInstallCommandGenerationResult = {
+  resource: TransitResourceData;
+  token: WorkerTokenCreateResult;
+  install_command: string;
+  expires_at: string;
+  controller_url: string;
+  role: "transit";
+  token_expires_in_minutes: number;
+  safety_notice: string[];
+};
+
 export type WorkerMetadataSummary = {
   received_at?: string | null;
   uptime_seconds?: number | null;
@@ -723,6 +739,18 @@ export async function regenerateTransitWorkerBootstrap(
   csrfToken: string,
 ): Promise<ApiResponse<TransitWorkerBootstrapResult>> {
   return apiFetch<TransitWorkerBootstrapResult>(`/api/transit-resources/${resourceId}/worker-bootstrap/regenerate`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function generateTransitWorkerInstallCommand(
+  resourceId: string,
+  payload: TransitWorkerInstallCommandGenerationRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitWorkerInstallCommandGenerationResult>> {
+  return apiFetch<TransitWorkerInstallCommandGenerationResult>(`/api/transit-resources/${resourceId}/worker-install-command`, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
