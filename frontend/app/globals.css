@@ -1422,6 +1422,27 @@ textarea {
   padding: 12px;
 }
 
+.delete-safety-grid {
+  background: rgba(12, 20, 30, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.delete-safety-grid span {
+  color: var(--muted);
+  min-width: 0;
+}
+
+.delete-safety-grid strong {
+  color: var(--text);
+  font-weight: 800;
+  text-align: right;
+}
+
 .read-form {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

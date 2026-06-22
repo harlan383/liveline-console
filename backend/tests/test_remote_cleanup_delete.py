@@ -72,6 +72,12 @@ def worker(role="landing", server_id="server-1"):
     )
 
 
+def online_worker(role="landing", server_id="server-1"):
+    item = worker(role, server_id)
+    item.last_heartbeat_at = cleanup._now()
+    return item
+
+
 def node(node_id="node-1", vps_id="server-1"):
     return Node(
         id=node_id,
@@ -117,6 +123,8 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
             RemoteCleanupDeleteRequest(confirm="DELETE")
         payload = RemoteCleanupDeleteRequest(confirm="CONFIRM_REMOTE_DELETE")
         self.assertEqual(payload.confirm, "CONFIRM_REMOTE_DELETE")
+        offline_payload = RemoteCleanupDeleteRequest(confirm="CONFIRM_OFFLINE_LOCAL_REMOVE")
+        self.assertEqual(offline_payload.confirm, "CONFIRM_OFFLINE_LOCAL_REMOVE")
 
     def test_create_landing_node_cleanup_command_without_share_link_payload(self):
         target_worker = worker("landing", "server-1")
@@ -176,6 +184,104 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
             with self.assertRaises(cleanup.RemoteCleanupError) as raised:
                 cleanup.create_landing_node_cleanup_command(db, node())
         self.assertEqual(raised.exception.code, "WORKER_OFFLINE")
+
+    def test_remote_cleanup_unavailable_offer_includes_offline_confirmation(self):
+        exc = cleanup.RemoteCleanupError("WORKER_OFFLINE", "offline")
+        offer = cleanup.remote_cleanup_unavailable_offer(exc)
+        self.assertIsNotNone(offer)
+        self.assertTrue(offer["offline_local_remove_available"])
+        self.assertEqual(offer["required_confirm_text"], "CONFIRM_OFFLINE_LOCAL_REMOVE")
+
+    def test_offline_local_remove_node_soft_deletes_without_share_link_mutation_or_command(self):
+        existing = node()
+        original_share_link = existing.share_link
+        related_route = route()
+        db = FakeDb(scalars=[[worker("landing", "server-1")], [related_route]])
+
+        result = cleanup.offline_local_remove_node(db, existing)
+
+        self.assertEqual(result["delete_mode"], "offline_local_remove")
+        self.assertFalse(result["worker_command_created"])
+        self.assertFalse(result["remote_cleanup_executed"])
+        self.assertEqual(existing.status, "deleted")
+        self.assertEqual(existing.last_sync_status, "offline_local_remove")
+        self.assertEqual(existing.share_link, original_share_link)
+        self.assertEqual(related_route.status, "deleted")
+        self.assertFalse(any(isinstance(item, WorkerCommand) for item in db.added))
+
+    def test_offline_local_remove_node_rejects_online_worker(self):
+        existing = node()
+        db = FakeDb(scalars=[[online_worker("landing", "server-1")]])
+
+        with self.assertRaises(cleanup.RemoteCleanupError) as raised:
+            cleanup.offline_local_remove_node(db, existing)
+
+        self.assertEqual(raised.exception.code, "RESOURCE_HAS_ONLINE_WORKER_USE_NORMAL_DELETE")
+        self.assertEqual(existing.status, "active")
+
+    def test_offline_local_remove_landing_server_soft_deletes_nodes_routes_and_worker(self):
+        server = VpsServer(id="server-1", ip="64.90.13.19", status="active")
+        existing_node = node()
+        related_route = route()
+        stale_worker = worker("landing", "server-1")
+        token = WorkerToken(
+            id="token-1",
+            role="landing",
+            server_id="server-1",
+            status="active",
+            token_hash="hash",
+            expires_at=cleanup._now(),
+        )
+        db = FakeDb(scalars=[[stale_worker], [existing_node], [related_route], [stale_worker], [token]])
+
+        result = cleanup.offline_local_remove_landing_server(db, server)
+
+        self.assertEqual(result["nodes_marked_deleted"], 1)
+        self.assertEqual(result["routes_marked_deleted"], 1)
+        self.assertEqual(result["workers_marked_deleted"], 1)
+        self.assertEqual(server.status, "deleted")
+        self.assertEqual(existing_node.status, "deleted")
+        self.assertEqual(related_route.status, "deleted")
+        self.assertEqual(stale_worker.status, "deleted")
+        self.assertEqual(token.status, "expired")
+        self.assertFalse(any(isinstance(item, WorkerCommand) for item in db.added))
+
+    def test_offline_local_remove_transit_route_soft_deletes_without_share_link_write(self):
+        existing_route = route()
+        self.assertIsNone(existing_route.share_link)
+        db = FakeDb(scalars=[[worker("transit", "resource-1")]])
+
+        result = cleanup.offline_local_remove_transit_route(db, existing_route)
+
+        self.assertEqual(result["delete_mode"], "offline_local_remove")
+        self.assertTrue(result["route_marked_deleted"])
+        self.assertEqual(existing_route.status, "deleted")
+        self.assertIsNone(existing_route.share_link)
+        self.assertFalse(any(isinstance(item, WorkerCommand) for item in db.added))
+
+    def test_offline_local_remove_transit_resource_soft_deletes_routes_and_worker(self):
+        resource = TransitResource(id="resource-1", name="hk", resource_type="server", status="active")
+        existing_route = route()
+        stale_worker = worker("transit", "resource-1")
+        token = WorkerToken(
+            id="token-1",
+            role="transit",
+            server_id="resource-1",
+            status="active",
+            token_hash="hash",
+            expires_at=cleanup._now(),
+        )
+        db = FakeDb(scalars=[[stale_worker], [existing_route], [stale_worker], [token]])
+
+        result = cleanup.offline_local_remove_transit_resource(db, resource)
+
+        self.assertEqual(result["routes_marked_deleted"], 1)
+        self.assertEqual(result["workers_marked_deleted"], 1)
+        self.assertEqual(resource.status, "deleted")
+        self.assertIsNotNone(resource.deleted_at)
+        self.assertEqual(existing_route.status, "deleted")
+        self.assertEqual(stale_worker.status, "deleted")
+        self.assertFalse(any(isinstance(item, WorkerCommand) for item in db.added))
 
     def test_transit_route_cleanup_rejects_non_liveline_service_name(self):
         target_worker = worker("transit", "resource-1")

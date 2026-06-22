@@ -14,15 +14,18 @@ import {
   getWorkerCommand,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
+  OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT,
   regenerateTransitWorkerBootstrap,
   remoteCleanupDeleteTransitResource,
   remoteCleanupDeleteTransitRoute,
+  REMOTE_CLEANUP_CONFIRM_TEXT,
   requestReadonlyPreflightPlan,
   type CsrfResult,
   type NodeData,
   type NodeListResult,
   type ReadonlyPreflightPlanRequest,
   type ReadonlyPreflightPlanResponse,
+  type RemoteCleanupUnavailableData,
   type TransitRouteCandidateExportResult,
   type TransitRouteCandidateSummary,
   type TransitReadonlyPreflightCommandRequest,
@@ -84,10 +87,26 @@ type TransitRouteWorkerCreatePlanResult = {
   safety_boundary: string[];
 };
 
+type DeleteFlowMode = "remote_cleanup" | "offline_local_remove";
+
+function isOfflineLocalRemoveOffer(data: unknown): data is RemoteCleanupUnavailableData {
+  return Boolean(
+    data &&
+      typeof data === "object" &&
+      "offline_local_remove_available" in data &&
+      (data as RemoteCleanupUnavailableData).offline_local_remove_available,
+  );
+}
+
+function requiredDeleteConfirmText(mode: DeleteFlowMode) {
+  return mode === "offline_local_remove" ? OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT : REMOTE_CLEANUP_CONFIRM_TEXT;
+}
+
 function SafeDeleteModal({
   title,
   description,
   targetLabel,
+  mode,
   confirmText,
   submitting,
   onCancel,
@@ -97,36 +116,57 @@ function SafeDeleteModal({
   title: string;
   description: ReactNode;
   targetLabel: string;
+  mode: DeleteFlowMode;
   confirmText: string;
   submitting: boolean;
   onCancel: () => void;
   onConfirmTextChange: (value: string) => void;
   onConfirm: () => void;
 }) {
+  const requiredConfirmText = requiredDeleteConfirmText(mode);
+  const isOfflineLocalRemove = mode === "offline_local_remove";
   return (
     <div className="modal-backdrop" role="presentation">
       <div className="modal-card safe-delete-modal" role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-header">
-          <h3>{title}</h3>
+          <h3>{isOfflineLocalRemove ? "离线本地移除确认" : title}</h3>
           <button className="ghost-button" type="button" onClick={onCancel}>
             取消
           </button>
         </div>
         <div className="failure-box safe-delete-warning">
-          <strong>真实远程清理</strong>
-          <span>{description}</span>
+          <strong>{isOfflineLocalRemove ? "仅本地移除记录" : "真实远程清理"}</strong>
+          {isOfflineLocalRemove ? (
+            <>
+              <span>当前资源对应的 Worker 离线，系统无法远程清理该服务器上的服务。</span>
+              <span>如果该资源已到期、无法登录、已释放，或你确认不再使用，可以只从 LiveLine Console 本地移除记录。</span>
+              <span>此操作不会连接远程服务器，不会停止远程服务，不会修改防火墙，不会 cutover。</span>
+            </>
+          ) : (
+            <span>{description}</span>
+          )}
         </div>
         <div className="server-delete-target">{targetLabel}</div>
+        <div className="delete-safety-grid">
+          <span>远程清理是否会执行</span>
+          <strong>{isOfflineLocalRemove ? "否" : "是"}</strong>
+          <span>是否会创建 Worker command</span>
+          <strong>{isOfflineLocalRemove ? "否" : "是"}</strong>
+          <span>是否会 cutover</span>
+          <strong>否</strong>
+          <span>是否会修改 share_link</span>
+          <strong>否</strong>
+        </div>
         <label className="safe-delete-input">
-          输入 CONFIRM_REMOTE_DELETE 后才能创建远程清理任务
-          <input value={confirmText} onChange={(event) => onConfirmTextChange(event.target.value)} placeholder="CONFIRM_REMOTE_DELETE" />
+          输入 {requiredConfirmText} 后才能{isOfflineLocalRemove ? "本地移除记录" : "创建远程清理任务"}
+          <input value={confirmText} onChange={(event) => onConfirmTextChange(event.target.value)} placeholder={requiredConfirmText} />
         </label>
         <div className="modal-actions">
           <button className="secondary" type="button" onClick={onCancel}>
             取消
           </button>
-          <button className="danger" disabled={submitting || confirmText !== "CONFIRM_REMOTE_DELETE"} type="button" onClick={onConfirm}>
-            确认远程清理并删除
+          <button className="danger" disabled={submitting || confirmText !== requiredConfirmText} type="button" onClick={onConfirm}>
+            {isOfflineLocalRemove ? "确认本地移除" : "确认远程清理并删除"}
           </button>
         </div>
       </div>
@@ -277,6 +317,7 @@ export function TransitServersPanel() {
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -314,6 +355,7 @@ export function TransitServersPanel() {
     setBootstrapForm(emptyBootstrapForm);
     setWorkerTokenResult(null);
     setDeleteConfirmText("");
+    setDeleteMode("remote_cleanup");
   }
 
   function openAdd() {
@@ -347,6 +389,7 @@ export function TransitServersPanel() {
   function openDeleteResource(resource: TransitResourceData) {
     setSelectedResource(resource);
     setDeleteConfirmText("");
+    setDeleteMode(resource.worker_online ? "remote_cleanup" : "offline_local_remove");
     setModalMode("delete");
   }
 
@@ -447,19 +490,34 @@ export function TransitServersPanel() {
   }
 
   async function submitDeleteResource() {
-    if (!selectedResource || deleteConfirmText !== "CONFIRM_REMOTE_DELETE") {
+    const requiredConfirmText = requiredDeleteConfirmText(deleteMode);
+    if (!selectedResource || deleteConfirmText !== requiredConfirmText) {
       return;
     }
     setSubmitting(true);
-    setMessage("正在创建中转服务器远程清理任务；清理成功后才会软删除系统记录。");
+    setMessage(
+      deleteMode === "offline_local_remove"
+        ? "正在本地移除中转服务器记录；不会创建 Worker command 或执行远程清理。"
+        : "正在创建中转服务器远程清理任务；清理成功后才会软删除系统记录。",
+    );
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await remoteCleanupDeleteTransitResource(selectedResource.id, csrfToken);
+      const result = await remoteCleanupDeleteTransitResource(selectedResource.id, csrfToken, requiredConfirmText);
       if (!result.success) {
+        if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
+          setDeleteMode("offline_local_remove");
+          setDeleteConfirmText("");
+          setMessage(result.message);
+          return;
+        }
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setMessage(`清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`);
+      setMessage(
+        result.data.delete_mode === "offline_local_remove"
+          ? "已本地移除记录。由于 Worker 离线，未执行远程清理。"
+          : `清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`,
+      );
       closeModal();
       await loadResources();
     } catch (error) {
@@ -572,6 +630,7 @@ export function TransitServersPanel() {
         <SafeDeleteModal
           title="远程清理并删除中转服务器"
           targetLabel={`${selectedResource.name} / ${selectedResource.entry_host ?? "未填写 IP"}`}
+          mode={deleteMode}
           confirmText={deleteConfirmText}
           submitting={submitting}
           onCancel={closeModal}
@@ -702,6 +761,7 @@ export function TransitRoutesPanel() {
   const [candidateExportRouteId, setCandidateExportRouteId] = useState("");
   const [deleteRouteId, setDeleteRouteId] = useState("");
   const [deleteRouteConfirmText, setDeleteRouteConfirmText] = useState("");
+  const [deleteRouteMode, setDeleteRouteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [advancedTransitOpsOpen, setAdvancedTransitOpsOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createForm, setCreateForm] = useState<TransitRouteCreateFormState>(emptyRouteCreateForm);
@@ -1114,28 +1174,45 @@ export function TransitRoutesPanel() {
   function openDeleteRoute(routeId: string) {
     setDeleteRouteId(routeId);
     setDeleteRouteConfirmText("");
+    setDeleteRouteMode("remote_cleanup");
     setMessage("删除中转链路只会删除系统记录；不会停止 socat 或关闭端口。");
   }
 
   function closeDeleteRouteModal() {
     setDeleteRouteId("");
     setDeleteRouteConfirmText("");
+    setDeleteRouteMode("remote_cleanup");
   }
 
   async function submitDeleteRoute() {
-    if (!deleteRoute || deleteRouteConfirmText !== "CONFIRM_REMOTE_DELETE") {
+    const requiredConfirmText = requiredDeleteConfirmText(deleteRouteMode);
+    if (!deleteRoute || deleteRouteConfirmText !== requiredConfirmText) {
       return;
     }
     setCandidateLoading(true);
-    setMessage("正在创建中转链路远程清理任务；清理成功后才会软删除系统记录。");
+    setMessage(
+      deleteRouteMode === "offline_local_remove"
+        ? "正在本地移除中转链路记录；不会创建 Worker command 或执行远程清理。"
+        : "正在创建中转链路远程清理任务；清理成功后才会软删除系统记录。",
+    );
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await remoteCleanupDeleteTransitRoute(deleteRoute.id, csrfToken);
+      const result = await remoteCleanupDeleteTransitRoute(deleteRoute.id, csrfToken, requiredConfirmText);
       if (!result.success) {
+        if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
+          setDeleteRouteMode("offline_local_remove");
+          setDeleteRouteConfirmText("");
+          setMessage(result.message);
+          return;
+        }
         setMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      setMessage(`清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`);
+      setMessage(
+        result.data.delete_mode === "offline_local_remove"
+          ? "已本地移除记录。由于 Worker 离线，未执行远程清理。"
+          : `清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`,
+      );
       closeDeleteRouteModal();
       setCandidateSummary(null);
       setCandidateExport(null);
@@ -1649,6 +1726,7 @@ export function TransitRoutesPanel() {
         <SafeDeleteModal
           title="远程清理并删除中转链路"
           targetLabel={`${deleteRoute.name} / ${routeEntry(deleteRoute)} -> ${deleteRoute.target_host}:${deleteRoute.target_port}`}
+          mode={deleteRouteMode}
           confirmText={deleteRouteConfirmText}
           submitting={candidateLoading}
           onCancel={closeDeleteRouteModal}

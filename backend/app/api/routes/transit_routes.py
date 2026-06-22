@@ -12,7 +12,7 @@ from app.models.transit_resource import TransitResource
 from app.models.transit_route import TransitRoute
 from app.models.worker_command import WorkerCommand
 from app.schemas.common import error_response, success_response
-from app.schemas.remote_cleanup import RemoteCleanupDeleteRequest
+from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.schemas.transit_route import (
     APPROVED_LANDING_NODE_ID,
     APPROVED_LANDING_TARGET_HOST,
@@ -39,7 +39,12 @@ from app.schemas.transit_route import (
 from app.services.auth_service import record_audit
 from app.services.redaction import mask_share_link
 from app.services.worker_commands import create_worker_command, serialize_worker_command
-from app.services.remote_cleanup_delete import RemoteCleanupError, create_transit_route_cleanup_command
+from app.services.remote_cleanup_delete import (
+    RemoteCleanupError,
+    create_transit_route_cleanup_command,
+    offline_local_remove_transit_route,
+    remote_cleanup_unavailable_offer,
+)
 from app.services.worker_targeting import (
     WorkerTargetError,
     minimum_worker_version_for_command,
@@ -684,6 +689,24 @@ def remote_cleanup_delete_transit_route(
     if not route:
         return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
 
+    if payload.confirm == OFFLINE_LOCAL_REMOVE_CONFIRMATION:
+        try:
+            result = offline_local_remove_transit_route(db, route)
+            record_audit(
+                db,
+                admin_id=session.admin_id,
+                action="offline_local_remove_transit_route",
+                result="success",
+                request=request,
+                resource_type="transit_route",
+                resource_id=route.id,
+            )
+            db.commit()
+        except RemoteCleanupError as exc:
+            db.rollback()
+            return error_response(exc.status_code, exc.code, exc.message)
+        return success_response(result, result["message"])
+
     try:
         command, worker = create_transit_route_cleanup_command(db, route)
         record_audit(
@@ -699,6 +722,13 @@ def remote_cleanup_delete_transit_route(
         db.refresh(command)
     except RemoteCleanupError as exc:
         db.rollback()
+        if offer := remote_cleanup_unavailable_offer(exc):
+            return error_response(
+                400,
+                "REMOTE_CLEANUP_UNAVAILABLE",
+                "Worker 离线，无法远程清理。可使用离线本地移除确认。",
+                offer,
+            )
         return error_response(exc.status_code, exc.code, exc.message)
 
     return success_response(

@@ -12,7 +12,7 @@ from app.models.transit_resource import TransitResource
 from app.models.transit_route import TransitRoute
 from app.models.worker import Worker, WorkerToken
 from app.schemas.common import error_response, success_response
-from app.schemas.remote_cleanup import RemoteCleanupDeleteRequest
+from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.schemas.transit_resource import (
     PROTOCOL_HINTS,
     RESOURCE_STATUSES,
@@ -21,7 +21,12 @@ from app.schemas.transit_resource import (
     TransitResourceUpdate,
 )
 from app.services.auth_service import record_audit
-from app.services.remote_cleanup_delete import RemoteCleanupError, create_transit_resource_cleanup_command
+from app.services.remote_cleanup_delete import (
+    RemoteCleanupError,
+    create_transit_resource_cleanup_command,
+    offline_local_remove_transit_resource,
+    remote_cleanup_unavailable_offer,
+)
 from app.services.worker_binding import (
     WORKER_PENDING_STATUS,
     WorkerPublicUrlError,
@@ -546,6 +551,24 @@ def remote_cleanup_delete_transit_resource(
     if not resource:
         return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
 
+    if payload.confirm == OFFLINE_LOCAL_REMOVE_CONFIRMATION:
+        try:
+            result = offline_local_remove_transit_resource(db, resource)
+            record_audit(
+                db,
+                admin_id=session.admin_id,
+                action="offline_local_remove_transit_resource",
+                result="success",
+                request=request,
+                resource_type="transit_resource",
+                resource_id=resource.id,
+            )
+            db.commit()
+        except RemoteCleanupError as exc:
+            db.rollback()
+            return error_response(exc.status_code, exc.code, exc.message)
+        return success_response(result, result["message"])
+
     try:
         command, worker = create_transit_resource_cleanup_command(db, resource)
         record_audit(
@@ -561,6 +584,13 @@ def remote_cleanup_delete_transit_resource(
         db.refresh(command)
     except RemoteCleanupError as exc:
         db.rollback()
+        if offer := remote_cleanup_unavailable_offer(exc):
+            return error_response(
+                400,
+                "REMOTE_CLEANUP_UNAVAILABLE",
+                "Worker 离线，无法远程清理。可使用离线本地移除确认。",
+                offer,
+            )
         return error_response(exc.status_code, exc.code, exc.message)
 
     return success_response(
