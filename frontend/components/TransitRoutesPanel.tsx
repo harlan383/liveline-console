@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import QRCode from "react-qr-code";
 
 import { TransitReadonlyPreflightSimplePanel } from "@/components/TransitReadonlyPreflightSimplePanel";
@@ -476,6 +476,74 @@ function transitWorkerCommandGenerationApprovalChecklist(resource: TransitResour
   ].join("\n");
 }
 
+function transitWorkerInstallDryRunRows(resource: TransitResourceData) {
+  return [
+    ["mode", "dry_run"],
+    ["resource_id", resource.id],
+    ["resource_name", resource.name],
+    ["resource_status", resource.status],
+    ["role", "transit"],
+    ["controller_url", transitWorkerPublicControllerUrl],
+    ["target_worker_version", requiredTransitWorkerVersion],
+    ["worker_binary_checksum", transitWorkerBinaryChecksum],
+    ["token_status", "not_generated"],
+    ["install_command_status", "placeholder_only"],
+    ["remote_execution", "disabled"],
+    ["worker_command_created", "false"],
+  ] as const;
+}
+
+function transitWorkerInstallDryRunChecks(resource: TransitResourceData, typedConfirmed: boolean) {
+  const controllerUrlIsPublic =
+    /^https?:\/\//.test(transitWorkerPublicControllerUrl) &&
+    !/localhost|127\.0\.0\.1/.test(transitWorkerPublicControllerUrl);
+  return [
+    ["typed confirmation", typedConfirmed ? "通过" : "未通过", typedConfirmed],
+    [
+      "resource status 是否 pending_worker",
+      resource.status === "pending_worker" ? "通过" : `未通过：${resource.status}`,
+      resource.status === "pending_worker",
+    ],
+    ["entry_host 是否存在", resource.entry_host ? "通过" : "待补充", Boolean(resource.entry_host)],
+    [
+      "SSH metadata 是否完整或待补充",
+      resource.has_ssh ? `完整或待确认：${sshSummaryForResource(resource)}` : "待补充或后续确认",
+      true,
+    ],
+    ["controller_url 是否公网 URL", controllerUrlIsPublic ? "通过" : "未通过", controllerUrlIsPublic],
+    [
+      "placeholder token 是否仍为 <generated-in-later-stage>",
+      transitWorkerPlaceholderToken === "<generated-in-later-stage>" ? "通过" : "未通过",
+      transitWorkerPlaceholderToken === "<generated-in-later-stage>",
+    ],
+    ["是否禁止 localhost / 127.0.0.1", controllerUrlIsPublic ? "通过" : "未通过", controllerUrlIsPublic],
+    ["是否禁止真实 token 输出", "通过：real token output forbidden", true],
+  ] as const;
+}
+
+function transitWorkerInstallDryRunResultText(resource: TransitResourceData, typedConfirmed: boolean) {
+  const rows = transitWorkerInstallDryRunRows(resource).map(([label, value]) => `${label}: ${value}`);
+  const checks = transitWorkerInstallDryRunChecks(resource, typedConfirmed).map(([label, value]) => `${label}: ${value}`);
+  return [
+    "Stage 3.3.132 Worker install command generation dry-run",
+    "",
+    ...rows,
+    "",
+    "dry-run checks:",
+    ...checks,
+    "",
+    "placeholder command template only:",
+    transitWorkerInstallPlaceholderCommand(),
+    "",
+    "Safety:",
+    "- no Worker token generated",
+    "- no real install command generated",
+    "- no Worker install performed",
+    "- no Worker command created",
+    "- no SSH or remote command executed",
+  ].join("\n");
+}
+
 function transitResourcePayloadFromForm(
   form: TransitResourceDraftFormState,
   status = "pending_worker",
@@ -587,6 +655,8 @@ export function TransitServersPanel() {
   const [approvalPreviewCopied, setApprovalPreviewCopied] = useState(false);
   const [commandApprovalConfirmText, setCommandApprovalConfirmText] = useState("");
   const [commandApprovalCopied, setCommandApprovalCopied] = useState(false);
+  const [commandDryRunCopied, setCommandDryRunCopied] = useState(false);
+  const [placeholderCommandCopied, setPlaceholderCommandCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -631,6 +701,8 @@ export function TransitServersPanel() {
     setApprovalPreviewCopied(false);
     setCommandApprovalConfirmText("");
     setCommandApprovalCopied(false);
+    setCommandDryRunCopied(false);
+    setPlaceholderCommandCopied(false);
   }
 
   function openAdd() {
@@ -657,6 +729,8 @@ export function TransitServersPanel() {
     setApprovalPreviewCopied(false);
     setCommandApprovalConfirmText("");
     setCommandApprovalCopied(false);
+    setCommandDryRunCopied(false);
+    setPlaceholderCommandCopied(false);
   }
 
   async function copyWorkerInstallApprovalChecklist(resource: TransitResourceData) {
@@ -678,6 +752,28 @@ export function TransitServersPanel() {
     } catch (error) {
       setCommandApprovalCopied(false);
       setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制生成命令审批包失败。");
+    }
+  }
+
+  async function copyWorkerInstallDryRunResult(resource: TransitResourceData) {
+    try {
+      await copyText(transitWorkerInstallDryRunResultText(resource, commandApprovalConfirmed));
+      setCommandDryRunCopied(true);
+      setMessage("Worker install command dry-run 结果已复制；内容只包含占位 token 和检查结果。");
+    } catch (error) {
+      setCommandDryRunCopied(false);
+      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制 dry-run 结果失败。");
+    }
+  }
+
+  async function copyWorkerInstallPlaceholderCommand() {
+    try {
+      await copyText(transitWorkerInstallPlaceholderCommand());
+      setPlaceholderCommandCopied(true);
+      setMessage("占位命令模板已复制；仍不是可执行真实安装命令。");
+    } catch (error) {
+      setPlaceholderCommandCopied(false);
+      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制占位命令模板失败。");
     }
   }
 
@@ -1018,6 +1114,8 @@ export function TransitServersPanel() {
                   onChange={(event) => {
                     setCommandApprovalConfirmText(event.target.value);
                     setCommandApprovalCopied(false);
+                    setCommandDryRunCopied(false);
+                    setPlaceholderCommandCopied(false);
                   }}
                   placeholder={transitWorkerInstallCommandApprovalConfirmText}
                 />
@@ -1035,6 +1133,51 @@ export function TransitServersPanel() {
                 复制生成命令审批包
               </button>
               {commandApprovalCopied ? <p className="approval-copy-status">生成命令审批包已复制，只包含占位 token。</p> : null}
+              {commandApprovalConfirmed ? (
+                <div className="worker-install-dry-run" aria-label="生成命令 dry-run 结果">
+                  <strong>生成命令 dry-run 结果</strong>
+                  <ul className="dry-run-safety-list">
+                    <li>这是 dry-run，不会生成 Worker token。</li>
+                    <li>这是 dry-run，不会生成真实 install command。</li>
+                    <li>这是 dry-run，不会安装 Worker。</li>
+                    <li>这是 dry-run，不会创建 Worker command。</li>
+                    <li>这是 dry-run，不会 SSH / 远程执行。</li>
+                  </ul>
+                  <div className="worker-install-dry-run-grid">
+                    {transitWorkerInstallDryRunRows(approvalPreviewResource).map(([label, value]) => (
+                      <Fragment key={label}>
+                        <span>{label}</span>
+                        <strong>{value}</strong>
+                      </Fragment>
+                    ))}
+                  </div>
+                  <div className="worker-install-dry-run-checks">
+                    {transitWorkerInstallDryRunChecks(approvalPreviewResource, commandApprovalConfirmed).map(([label, value, passed]) => (
+                      <Fragment key={label}>
+                        <span>{label}</span>
+                        <strong className={passed ? "approval-state-ok" : "approval-state-warn"}>{value}</strong>
+                      </Fragment>
+                    ))}
+                  </div>
+                  <div className="transit-worker-approval-section dry-run-command-template">
+                    <strong>占位命令模板</strong>
+                    <span>
+                      这不是可执行真实安装命令。<code>{transitWorkerPlaceholderToken}</code> 仍是占位符。
+                    </span>
+                    <pre className="worker-install-placeholder-command">{transitWorkerInstallPlaceholderCommand()}</pre>
+                  </div>
+                  <div className="dry-run-actions">
+                    <button className="secondary" type="button" onClick={() => void copyWorkerInstallDryRunResult(approvalPreviewResource)}>
+                      复制 dry-run 结果
+                    </button>
+                    <button className="secondary" type="button" onClick={() => void copyWorkerInstallPlaceholderCommand()}>
+                      复制占位命令模板
+                    </button>
+                  </div>
+                  {commandDryRunCopied ? <p className="approval-copy-status">dry-run 结果已复制；不包含真实 token。</p> : null}
+                  {placeholderCommandCopied ? <p className="approval-copy-status">占位命令模板已复制；仍不可直接执行。</p> : null}
+                </div>
+              ) : null}
             </div>
             <div className="transit-worker-approval-section">
               <strong>只读确认项</strong>
