@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 REMOTE_CLEANUP_CONFIRMATION = "CONFIRM_REMOTE_DELETE"
+OFFLINE_LOCAL_REMOVE_CONFIRMATION = "CONFIRM_OFFLINE_LOCAL_REMOVE"
 
 
 class RemoteCleanupDeleteRequest(BaseModel):
@@ -11,6 +12,6 @@ class RemoteCleanupDeleteRequest(BaseModel):
     @classmethod
     def require_remote_cleanup_confirmation(cls, value: str) -> str:
         cleaned = value.strip()
-        if cleaned != REMOTE_CLEANUP_CONFIRMATION:
-            raise ValueError("confirm must be CONFIRM_REMOTE_DELETE")
+        if cleaned not in {REMOTE_CLEANUP_CONFIRMATION, OFFLINE_LOCAL_REMOVE_CONFIRMATION}:
+            raise ValueError("confirm must be CONFIRM_REMOTE_DELETE or CONFIRM_OFFLINE_LOCAL_REMOVE")
         return cleaned

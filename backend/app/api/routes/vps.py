@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.vps_server import VpsServer
 from app.schemas.common import error_response, success_response
 from app.schemas.landing_node_plan import LandingNodeCreateRequest, LandingNodePlanRequest
-from app.schemas.remote_cleanup import RemoteCleanupDeleteRequest
+from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
 from app.services.landing_node_create import (
     APPROVED_FORMAL_LISTEN_PORT,
@@ -29,7 +29,12 @@ from app.services.worker_binding import (
     worker_summary_fields,
 )
 from app.services.worker_commands import serialize_worker_command
-from app.services.remote_cleanup_delete import RemoteCleanupError, create_landing_server_cleanup_command
+from app.services.remote_cleanup_delete import (
+    RemoteCleanupError,
+    create_landing_server_cleanup_command,
+    offline_local_remove_landing_server,
+    remote_cleanup_unavailable_offer,
+)
 
 router = APIRouter()
 
@@ -558,6 +563,24 @@ def remote_cleanup_delete_vps(
     if not vps or vps.status == "deleted":
         return error_response(404, "VPS_NOT_FOUND", "服务器记录不存在。")
 
+    if payload.confirm == OFFLINE_LOCAL_REMOVE_CONFIRMATION:
+        try:
+            result = offline_local_remove_landing_server(db, vps)
+            record_audit(
+                db,
+                admin_id=session.admin_id,
+                action="offline_local_remove_landing_server",
+                result="success",
+                request=request,
+                resource_type="vps",
+                resource_id=vps.id,
+            )
+            db.commit()
+        except RemoteCleanupError as exc:
+            db.rollback()
+            return error_response(exc.status_code, exc.code, exc.message)
+        return success_response(result, result["message"])
+
     try:
         command, worker = create_landing_server_cleanup_command(db, vps)
         record_audit(
@@ -573,6 +596,13 @@ def remote_cleanup_delete_vps(
         db.refresh(command)
     except RemoteCleanupError as exc:
         db.rollback()
+        if offer := remote_cleanup_unavailable_offer(exc):
+            return error_response(
+                400,
+                "REMOTE_CLEANUP_UNAVAILABLE",
+                "Worker 离线，无法远程清理。可使用离线本地移除确认。",
+                offer,
+            )
         return error_response(exc.status_code, exc.code, exc.message)
 
     return success_response(

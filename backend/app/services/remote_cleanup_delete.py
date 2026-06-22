@@ -19,6 +19,8 @@ from app.services.landing_node_create import (
 )
 from app.services.worker_commands import create_worker_command, normalize_worker_command_result
 from app.services.worker_targeting import WorkerTargetError, resolve_command_target_worker
+from app.services.worker_targeting import worker_supports_command_channel
+from app.services.worker_binding import worker_runtime_status
 
 CLEANUP_LANDING_NODE_COMMAND = "cleanup_landing_node"
 CLEANUP_LANDING_SERVER_COMMAND = "cleanup_landing_server"
@@ -34,6 +36,14 @@ REMOTE_CLEANUP_RUNNING_STATUSES = ("pending", "claimed", "running")
 
 REMOTE_CLEANUP_STAGE = "Stage 3.3.97-protected-remote-cleanup-delete-flow"
 REMOTE_CLEANUP_CONFIRMATION = "CONFIRM_REMOTE_DELETE"
+OFFLINE_LOCAL_REMOVE_CONFIRMATION = "CONFIRM_OFFLINE_LOCAL_REMOVE"
+OFFLINE_LOCAL_REMOVE_STAGE = "Stage 3.3.119-unified-delete-offline-local-remove"
+REMOTE_CLEANUP_UNAVAILABLE_CODES = {
+    "WORKER_NOT_BOUND",
+    "WORKER_OFFLINE",
+    "WORKER_COMMAND_UNSUPPORTED",
+    "REQUESTED_WORKER_NOT_AVAILABLE",
+}
 DEFAULT_WORKER_SERVICE_NAME = "liveline-worker.service"
 DEFAULT_WORKER_SERVICE_PATH = "/etc/systemd/system/liveline-worker.service"
 DEFAULT_WORKER_BINARY_PATH = "/usr/local/bin/liveline-worker"
@@ -48,6 +58,17 @@ REMOTE_CLEANUP_BOUNDARY = [
     "no full client link export",
     "no cutover",
     "system records are soft-deleted only after Worker success",
+]
+OFFLINE_LOCAL_REMOVE_BOUNDARY = [
+    "offline local soft-remove only",
+    "no SSH or remote command",
+    "no WorkerCommand created",
+    "no remote service stop/delete/restart",
+    "no firewall/security group mutation",
+    "no nodes.share_link read or modification",
+    "no transit_routes.share_link write",
+    "no cutover",
+    "no physical database delete",
 ]
 
 
@@ -77,9 +98,93 @@ def _active_remote_cleanup_exists(db: Session, *, server_id: str | None) -> bool
             .where(WorkerCommand.command_type.in_(REMOTE_CLEANUP_COMMAND_TYPES))
             .where(WorkerCommand.status.in_(REMOTE_CLEANUP_RUNNING_STATUSES))
             .limit(1)
-        )
+    )
         is not None
     )
+
+
+def remote_cleanup_unavailable_offer(exc: RemoteCleanupError) -> dict[str, Any] | None:
+    if exc.code not in REMOTE_CLEANUP_UNAVAILABLE_CODES:
+        return None
+    return {
+        "offline_local_remove_available": True,
+        "required_confirm_text": OFFLINE_LOCAL_REMOVE_CONFIRMATION,
+        "remote_cleanup_error_code": exc.code,
+        "remote_cleanup_error_message": exc.message,
+    }
+
+
+def _cleanup_capable_online_worker_exists(
+    db: Session,
+    *,
+    role: str,
+    server_id: str,
+    command_type: str,
+) -> bool:
+    workers = db.scalars(
+        select(Worker)
+        .where(Worker.server_id == server_id)
+        .where(Worker.role == role)
+    ).all()
+    return any(
+        worker.status == "online"
+        and worker_runtime_status(worker) == "online"
+        and worker_supports_command_channel(worker, command_type)
+        for worker in workers
+    )
+
+
+def _assert_offline_local_remove_allowed(
+    db: Session,
+    *,
+    role: str,
+    server_id: str,
+    command_type: str,
+) -> None:
+    if _cleanup_capable_online_worker_exists(
+        db,
+        role=role,
+        server_id=server_id,
+        command_type=command_type,
+    ):
+        raise RemoteCleanupError(
+            "RESOURCE_HAS_ONLINE_WORKER_USE_NORMAL_DELETE",
+            "该资源仍有在线 Worker，请使用正常远程清理删除。",
+            409,
+        )
+
+
+def _offline_local_remove_result(
+    *,
+    target_type: str,
+    target_id: str,
+    resource_marked_deleted: bool = False,
+    node_marked_deleted: bool = False,
+    route_marked_deleted: bool = False,
+    nodes_marked_deleted: int = 0,
+    routes_marked_deleted: int = 0,
+    workers_marked_deleted: int = 0,
+) -> dict[str, Any]:
+    return {
+        "id": target_id,
+        "target_type": target_type,
+        "deleted": True,
+        "delete_mode": "offline_local_remove",
+        "stage": OFFLINE_LOCAL_REMOVE_STAGE,
+        "remote_cleanup_executed": False,
+        "remote_action_performed": False,
+        "worker_command_created": False,
+        "cutover_occurred": False,
+        "share_link_mutated": False,
+        "resource_marked_deleted": resource_marked_deleted,
+        "node_marked_deleted": node_marked_deleted,
+        "route_marked_deleted": route_marked_deleted,
+        "nodes_marked_deleted": nodes_marked_deleted,
+        "routes_marked_deleted": routes_marked_deleted,
+        "workers_marked_deleted": workers_marked_deleted,
+        "safety_boundary": OFFLINE_LOCAL_REMOVE_BOUNDARY,
+        "message": "已本地移除记录。由于 Worker 离线，未执行远程清理。",
+    }
 
 
 def _node_xray_cleanup_plan(node: Node) -> dict[str, Any]:
@@ -297,11 +402,11 @@ def create_transit_resource_cleanup_command(db: Session, resource: TransitResour
     return command, worker
 
 
-def _mark_node_deleted(node: Node) -> None:
+def _mark_node_deleted(node: Node, *, last_sync_status: str = "remote_cleanup_completed") -> None:
     node.status = "deleted"
     node.service_status = "unknown"
     node.connectivity_status = "unknown"
-    node.last_sync_status = "remote_cleanup_completed"
+    node.last_sync_status = last_sync_status
     node.deleted_at = node.deleted_at or _now()
 
 
@@ -327,6 +432,139 @@ def _mark_worker_deleted(db: Session, worker: Worker) -> None:
     for token in tokens:
         token.status = "expired"
         db.add(token)
+
+
+def _mark_workers_for_server_deleted(db: Session, *, role: str, server_id: str) -> int:
+    workers = db.scalars(
+        select(Worker)
+        .where(Worker.server_id == server_id)
+        .where(Worker.role == role)
+    ).all()
+    for worker in workers:
+        _mark_worker_deleted(db, worker)
+    return len(workers)
+
+
+def offline_local_remove_node(db: Session, node: Node) -> dict[str, Any]:
+    if node.deleted_at is not None:
+        raise RemoteCleanupError("NODE_NOT_FOUND", "节点不存在。", 404)
+    _assert_offline_local_remove_allowed(
+        db,
+        role="landing",
+        server_id=node.vps_id,
+        command_type=CLEANUP_LANDING_NODE_COMMAND,
+    )
+    _mark_node_deleted(node, last_sync_status="offline_local_remove")
+    db.add(node)
+    routes = db.scalars(
+        select(TransitRoute)
+        .where(TransitRoute.node_id == node.id)
+        .where(TransitRoute.deleted_at.is_(None))
+    ).all()
+    for route in routes:
+        _mark_route_deleted(route)
+        db.add(route)
+    return _offline_local_remove_result(
+        target_type="node",
+        target_id=node.id,
+        node_marked_deleted=True,
+        routes_marked_deleted=len(routes),
+    )
+
+
+def offline_local_remove_landing_server(db: Session, vps: VpsServer) -> dict[str, Any]:
+    if vps.status == "deleted":
+        raise RemoteCleanupError("VPS_NOT_FOUND", "落地服务器记录不存在。", 404)
+    _assert_offline_local_remove_allowed(
+        db,
+        role="landing",
+        server_id=vps.id,
+        command_type=CLEANUP_LANDING_SERVER_COMMAND,
+    )
+    nodes = db.scalars(
+        select(Node)
+        .where(Node.vps_id == vps.id)
+        .where(Node.deleted_at.is_(None))
+    ).all()
+    deleted_node_ids = [node.id for node in nodes]
+    routes_query = select(TransitRoute).where(TransitRoute.deleted_at.is_(None))
+    if deleted_node_ids:
+        routes_query = routes_query.where(TransitRoute.node_id.in_(deleted_node_ids))
+    else:
+        routes_query = routes_query.where(TransitRoute.landing_vps_id == vps.id)
+    routes = db.scalars(routes_query).all()
+    for node in nodes:
+        _mark_node_deleted(node, last_sync_status="offline_local_remove")
+        db.add(node)
+    for route in routes:
+        _mark_route_deleted(route)
+        db.add(route)
+    workers_marked_deleted = _mark_workers_for_server_deleted(db, role="landing", server_id=vps.id)
+    vps.status = "deleted"
+    vps.last_ssh_status = "unchecked"
+    vps.last_ssh_error = None
+    db.add(vps)
+    return _offline_local_remove_result(
+        target_type="vps",
+        target_id=vps.id,
+        resource_marked_deleted=True,
+        nodes_marked_deleted=len(nodes),
+        routes_marked_deleted=len(routes),
+        workers_marked_deleted=workers_marked_deleted,
+    )
+
+
+def offline_local_remove_transit_route(db: Session, route: TransitRoute) -> dict[str, Any]:
+    if route.deleted_at is not None:
+        raise RemoteCleanupError("TRANSIT_ROUTE_NOT_FOUND", "中转链路不存在。", 404)
+    if route.share_link:
+        raise RemoteCleanupError("TRANSIT_ROUTE_CUTOVER_BLOCKED", "该中转链路处于 cutover 状态，本阶段不允许删除。", 409)
+    _assert_offline_local_remove_allowed(
+        db,
+        role="transit",
+        server_id=route.transit_resource_id,
+        command_type=CLEANUP_TRANSIT_ROUTE_COMMAND,
+    )
+    _mark_route_deleted(route)
+    db.add(route)
+    return _offline_local_remove_result(
+        target_type="transit_route",
+        target_id=route.id,
+        route_marked_deleted=True,
+        routes_marked_deleted=1,
+    )
+
+
+def offline_local_remove_transit_resource(db: Session, resource: TransitResource) -> dict[str, Any]:
+    if resource.deleted_at is not None:
+        raise RemoteCleanupError("TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。", 404)
+    if resource.resource_type != "server":
+        raise RemoteCleanupError("TRANSIT_RESOURCE_NOT_SERVER", "只允许 server 类型中转资源执行删除。")
+    _assert_offline_local_remove_allowed(
+        db,
+        role="transit",
+        server_id=resource.id,
+        command_type=CLEANUP_TRANSIT_RESOURCE_COMMAND,
+    )
+    routes = db.scalars(
+        select(TransitRoute)
+        .where(TransitRoute.transit_resource_id == resource.id)
+        .where(TransitRoute.deleted_at.is_(None))
+    ).all()
+    for route in routes:
+        _mark_route_deleted(route)
+        db.add(route)
+    workers_marked_deleted = _mark_workers_for_server_deleted(db, role="transit", server_id=resource.id)
+    resource.status = "deleted"
+    resource.deleted_at = resource.deleted_at or _now()
+    db.add(resource)
+    return _offline_local_remove_result(
+        target_type="transit_resource",
+        target_id=resource.id,
+        resource_marked_deleted=True,
+        routes_marked_deleted=len(routes),
+        workers_marked_deleted=workers_marked_deleted,
+    )
 
 
 def _assert_cleanup_success(command: WorkerCommand, result: dict[str, Any] | None) -> dict[str, Any]:

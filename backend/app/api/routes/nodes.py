@@ -9,10 +9,15 @@ from app.api.deps import auth_error, csrf_error, csrf_valid, require_admin_sessi
 from app.db.session import get_db
 from app.models.node import Node
 from app.schemas.common import error_response, success_response
-from app.schemas.remote_cleanup import RemoteCleanupDeleteRequest
+from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
 from app.services.redaction import mask_identifier, mask_share_link
-from app.services.remote_cleanup_delete import RemoteCleanupError, create_landing_node_cleanup_command
+from app.services.remote_cleanup_delete import (
+    RemoteCleanupError,
+    create_landing_node_cleanup_command,
+    offline_local_remove_node,
+    remote_cleanup_unavailable_offer,
+)
 from app.services.worker_commands import serialize_worker_command
 
 router = APIRouter()
@@ -161,6 +166,24 @@ def remote_cleanup_delete_node(
     if not node or node.deleted_at is not None:
         return error_response(404, "NODE_NOT_FOUND", "节点不存在。")
 
+    if payload.confirm == OFFLINE_LOCAL_REMOVE_CONFIRMATION:
+        try:
+            result = offline_local_remove_node(db, node)
+            record_audit(
+                db,
+                admin_id=session.admin_id,
+                action="offline_local_remove_node",
+                result="success",
+                request=request,
+                resource_type="node",
+                resource_id=node.id,
+            )
+            db.commit()
+        except RemoteCleanupError as exc:
+            db.rollback()
+            return error_response(exc.status_code, exc.code, exc.message)
+        return success_response(result, result["message"])
+
     try:
         command, worker = create_landing_node_cleanup_command(db, node)
         record_audit(
@@ -176,6 +199,13 @@ def remote_cleanup_delete_node(
         db.refresh(command)
     except RemoteCleanupError as exc:
         db.rollback()
+        if offer := remote_cleanup_unavailable_offer(exc):
+            return error_response(
+                400,
+                "REMOTE_CLEANUP_UNAVAILABLE",
+                "Worker 离线，无法远程清理。可使用离线本地移除确认。",
+                offer,
+            )
         return error_response(exc.status_code, exc.code, exc.message)
 
     return success_response(
