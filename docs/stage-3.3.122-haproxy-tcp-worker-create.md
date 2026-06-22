@@ -49,6 +49,35 @@ No full VLESS/V2Ray link in docs, PR, logs, or chat.
 No arbitrary shell/systemd/config payload from API.
 ```
 
+## Current code progress
+
+This stage has added the Worker-side HAProxy helper file:
+
+```text
+worker/cmd/liveline-worker/transit_haproxy.go
+```
+
+The helper currently provides:
+
+```text
+haproxy_tcp method normalization
+LiveLine-owned HAProxy service/config naming
+HAProxy binary detection
+fixed HAProxy TCP config generation
+fixed service generation
+pre-write path availability checks
+root/service manager checks
+planned listen-port collision checks
+transit-to-landing TCP reachability check
+HAProxy config validation command
+service enable/start flow
+post-start active/listen verification
+redacted diagnostics
+safe rollback for only LiveLine-owned HAProxy artifacts
+```
+
+The helper is intentionally not wired into the existing transit create real execution branch yet. This keeps the current production socat path untouched while the helper is reviewed.
+
 ## Target Worker version
 
 ```text
@@ -62,63 +91,6 @@ For `forwarding_method=haproxy_tcp`, Worker should create only LiveLine-owned fi
 ```text
 /etc/haproxy/liveline/routes/liveline-haproxy-<listen_port>.cfg
 /etc/systemd/system/liveline-haproxy-<listen_port>.service
-```
-
-Service naming rule:
-
-```text
-liveline-haproxy-<listen_port>.service
-```
-
-Config naming rule:
-
-```text
-liveline-haproxy-<listen_port>.cfg
-```
-
-## HAProxy config template
-
-```text
-global
-    log /dev/log local0
-    maxconn 4096
-
-defaults
-    mode tcp
-    log global
-    option tcplog
-    timeout connect 5s
-    timeout client 6h
-    timeout server 6h
-
-frontend liveline_transit_<listen_port>
-    bind 0.0.0.0:<listen_port>
-    default_backend liveline_landing_<listen_port>
-
-backend liveline_landing_<listen_port>
-    mode tcp
-    option tcp-check
-    server landing <target_host>:<target_port> check
-```
-
-## systemd service template
-
-```text
-[Unit]
-Description=LiveLine HAProxy TCP transit route <listen_port>
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=<haproxy_binary> -f <config_path> -db
-ExecReload=/bin/kill -USR2 $MAINPID
-Restart=always
-RestartSec=5
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
 ```
 
 ## Worker validations before write/start
@@ -135,27 +107,11 @@ landing_target_host is safe
 landing_target_port is valid
 route_name is safe
 haproxy binary exists
-systemctl exists
+service manager exists
 config path does not already exist
 service path does not already exist
 listen port is not already listening
 transit can TCP-connect to the landing target
-```
-
-## Worker verification after start
-
-After `systemctl enable --now liveline-haproxy-<port>.service`, Worker must verify:
-
-```text
-systemctl is-active == active
-listen port is listening
-transit can TCP-connect to landing target
-```
-
-Optional but recommended:
-
-```text
-haproxy -c -f <config_path>
 ```
 
 ## Rollback rules
@@ -167,8 +123,8 @@ stop service if started
 disable service if enabled
 remove service file if written
 remove config file if written
-systemctl daemon-reload
-systemctl reset-failed
+reload service manager
+reset failed state
 verify listen port is no longer listening
 ```
 
@@ -198,4 +154,4 @@ Do not modify firewalls automatically unless the user explicitly approves.
 
 ## Stage status
 
-This stage is entered and ready for code implementation. Remote deploy, Worker binary replacement, and real HAProxy route creation are not part of this entry commit.
+The HAProxy helper exists but is not yet connected to the main Worker create execution branch. Remote deploy, Worker binary replacement, and real HAProxy route creation are not part of the current commits.
