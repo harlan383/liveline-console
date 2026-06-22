@@ -288,12 +288,15 @@ export type ReadonlyPreflightPlanResponse = {
   redacted_summary: string;
 };
 
+export type TransitForwardingMethod = "socat" | "gost" | "haproxy_tcp";
+export type TransitCreateForwardingMethod = "socat" | "haproxy_tcp";
+
 export type TransitReadonlyPreflightCommandRequest = {
   transit_resource_id: string;
   landing_node_id: string;
   planned_listen_port: number;
   landing_target_port: number;
-  forwarding_method: "socat" | "gost";
+  forwarding_method: TransitForwardingMethod;
   purpose: string | null;
   readonly: true;
 };
@@ -312,7 +315,7 @@ export type TransitRouteWorkerCreateExecuteRequest = {
   planned_listen_port: number;
   landing_target_host: string;
   landing_target_port: number;
-  forwarding_method: "socat";
+  forwarding_method: TransitCreateForwardingMethod;
   purpose: string | null;
   route_name: string;
   approval_stage: string;
