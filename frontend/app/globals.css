@@ -1480,6 +1480,81 @@ textarea {
   padding-left: 18px;
 }
 
+.transit-worker-approval-modal {
+  max-height: calc(100vh - 80px);
+  max-width: 920px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  width: min(920px, calc(100vw - 48px));
+}
+
+.transit-worker-approval-grid {
+  background: rgba(7, 16, 34, 0.58);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: 168px minmax(0, 1fr);
+  padding: 12px;
+}
+
+.transit-worker-approval-grid span,
+.transit-worker-approval-section span,
+.transit-worker-approval-section li {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.transit-worker-approval-grid strong,
+.transit-worker-approval-section strong {
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.transit-worker-approval-section {
+  background: rgba(19, 31, 45, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.transit-worker-approval-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.worker-install-placeholder-command {
+  background: #071018;
+  border: 1px solid rgba(40, 229, 197, 0.2);
+  border-radius: 8px;
+  color: #d7fff8;
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.approval-copy-status {
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 800;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .transit-worker-approval-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .delete-confirm {
   display: grid;
   gap: 14px;
