@@ -189,6 +189,7 @@ const transitWorkerBinaryChecksum = "cf7990f3ba0f85348fa714edb69a94d36b8752323fe
 const transitWorkerPublicControllerUrl = "http://my-con.golirong.xyz:8200";
 const transitWorkerPlaceholderToken = "<generated-in-later-stage>";
 const transitWorkerInstallCommandApprovalConfirmText = "CONFIRM_GENERATE_WORKER_INSTALL_COMMAND_LATER";
+const transitWorkerRealCommandApprovalConfirmText = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE";
 
 const emptyTransitResourceDraftForm: TransitResourceDraftFormState = {
   name: "",
@@ -544,6 +545,90 @@ function transitWorkerInstallDryRunResultText(resource: TransitResourceData, typ
   ].join("\n");
 }
 
+function transitWorkerRealCommandApprovalRows(resource: TransitResourceData) {
+  return [
+    ["当前资源名称", resource.name],
+    ["当前资源状态", resource.status],
+    ["entry_host", resource.entry_host ?? "待确认"],
+    ["SSH host / port / username", sshSummaryForResource(resource)],
+    ["入口地区 / 出口地区", `${resource.entry_region ?? "待确认"} / ${resource.exit_region ?? "待确认"}`],
+    ["计划网卡", plannedInterfaceForResource(resource)],
+    ["协议意图", protocolIntentForResource(resource)],
+    ["公网主控 URL", transitWorkerPublicControllerUrl],
+    ["目标 Worker 版本", requiredTransitWorkerVersion],
+    ["Worker binary checksum", transitWorkerBinaryChecksum],
+    ["真实 token 生成", "仍未执行"],
+    ["真实 install command 生成", "仍未执行"],
+    ["远程安装", "仍未执行"],
+  ] as const;
+}
+
+function transitWorkerRealCommandReadinessChecks(resource: TransitResourceData) {
+  const controllerUrlIsPublic =
+    /^https?:\/\//.test(transitWorkerPublicControllerUrl) &&
+    !/localhost|127\.0\.0\.1/.test(transitWorkerPublicControllerUrl);
+  return [
+    ["测试 VPS 已真实存在", "需人工确认"],
+    ["测试 VPS 公网 IP / 域名已确认", resource.entry_host ? `已填写：${resource.entry_host}` : "待确认"],
+    ["SSH host / port / username 已确认", resource.has_ssh ? sshSummaryForResource(resource) : "待补充或后续确认"],
+    ["root 或 sudo 权限已确认", "需人工确认"],
+    ["systemd 已确认", "需人工确认"],
+    ["curl 已确认", "需人工确认"],
+    ["测试 VPS 能访问公网主控", "需人工确认"],
+    ["安装命令必须使用公网主控 URL", controllerUrlIsPublic ? "通过" : "未通过"],
+    ["禁止 localhost / 127.0.0.1", controllerUrlIsPublic ? "通过" : "未通过"],
+    ["真实 token 不得写入 README / docs / PR / chat / logs / notes", "必须遵守"],
+    ["真实安装仍必须在后续独立阶段执行", "必须遵守"],
+  ] as const;
+}
+
+function transitWorkerRealCommandApprovalPackage(resource: TransitResourceData, typedConfirmed: boolean) {
+  return [
+    "Stage 3.3.133 Real Worker install command generation approval",
+    "",
+    "Resource:",
+    `Name: ${resource.name}`,
+    `Status: ${resource.status}`,
+    `Entry host: ${resource.entry_host ?? "待确认"}`,
+    `SSH: ${sshSummaryForResource(resource)}`,
+    `Entry region: ${resource.entry_region ?? "待确认"}`,
+    `Exit region: ${resource.exit_region ?? "待确认"}`,
+    `Planned interface: ${plannedInterfaceForResource(resource)}`,
+    `Protocol intent: ${protocolIntentForResource(resource)}`,
+    `Required Worker version: ${requiredTransitWorkerVersion}`,
+    `Worker binary checksum: ${transitWorkerBinaryChecksum}`,
+    `Public controller URL: ${transitWorkerPublicControllerUrl}`,
+    "",
+    "Real VPS readiness:",
+    "- Test VPS exists.",
+    "- SSH host / port / username confirmed.",
+    "- root/sudo confirmed.",
+    "- systemd confirmed.",
+    "- curl confirmed.",
+    "- VPS can access public controller.",
+    "- command must use public controller URL.",
+    "- no localhost / 127.0.0.1.",
+    "- token must not be stored in docs, README, PR, logs, chat, or notes.",
+    "",
+    "Typed confirmation required:",
+    transitWorkerRealCommandApprovalConfirmText,
+    "",
+    `Typed confirmation status: ${typedConfirmed ? "passed" : "not_passed"}`,
+    "",
+    "Token status:",
+    "not_generated",
+    "",
+    "Install command status:",
+    "not_generated",
+    "",
+    "Remote execution:",
+    "disabled",
+    "",
+    "Next stage required:",
+    "Generate one-time Worker token / install command only after explicit approval.",
+  ].join("\n");
+}
+
 function transitResourcePayloadFromForm(
   form: TransitResourceDraftFormState,
   status = "pending_worker",
@@ -657,6 +742,8 @@ export function TransitServersPanel() {
   const [commandApprovalCopied, setCommandApprovalCopied] = useState(false);
   const [commandDryRunCopied, setCommandDryRunCopied] = useState(false);
   const [placeholderCommandCopied, setPlaceholderCommandCopied] = useState(false);
+  const [realCommandApprovalConfirmText, setRealCommandApprovalConfirmText] = useState("");
+  const [realCommandApprovalCopied, setRealCommandApprovalCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -703,6 +790,8 @@ export function TransitServersPanel() {
     setCommandApprovalCopied(false);
     setCommandDryRunCopied(false);
     setPlaceholderCommandCopied(false);
+    setRealCommandApprovalConfirmText("");
+    setRealCommandApprovalCopied(false);
   }
 
   function openAdd() {
@@ -731,6 +820,8 @@ export function TransitServersPanel() {
     setCommandApprovalCopied(false);
     setCommandDryRunCopied(false);
     setPlaceholderCommandCopied(false);
+    setRealCommandApprovalConfirmText("");
+    setRealCommandApprovalCopied(false);
   }
 
   async function copyWorkerInstallApprovalChecklist(resource: TransitResourceData) {
@@ -774,6 +865,18 @@ export function TransitServersPanel() {
     } catch (error) {
       setPlaceholderCommandCopied(false);
       setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制占位命令模板失败。");
+    }
+  }
+
+  async function copyWorkerRealCommandApprovalPackage(resource: TransitResourceData) {
+    const typedConfirmed = realCommandApprovalConfirmText === transitWorkerRealCommandApprovalConfirmText;
+    try {
+      await copyText(transitWorkerRealCommandApprovalPackage(resource, typedConfirmed));
+      setRealCommandApprovalCopied(true);
+      setMessage("真实生成命令最终审批包已复制；内容不包含真实 token 或真实安装命令。");
+    } catch (error) {
+      setRealCommandApprovalCopied(false);
+      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制真实生成命令最终审批包失败。");
     }
   }
 
@@ -897,6 +1000,7 @@ export function TransitServersPanel() {
   }
 
   const commandApprovalConfirmed = commandApprovalConfirmText === transitWorkerInstallCommandApprovalConfirmText;
+  const realCommandApprovalConfirmed = realCommandApprovalConfirmText === transitWorkerRealCommandApprovalConfirmText;
 
   return (
     <section className="panel wide">
@@ -1116,6 +1220,8 @@ export function TransitServersPanel() {
                     setCommandApprovalCopied(false);
                     setCommandDryRunCopied(false);
                     setPlaceholderCommandCopied(false);
+                    setRealCommandApprovalConfirmText("");
+                    setRealCommandApprovalCopied(false);
                   }}
                   placeholder={transitWorkerInstallCommandApprovalConfirmText}
                 />
@@ -1176,6 +1282,61 @@ export function TransitServersPanel() {
                   </div>
                   {commandDryRunCopied ? <p className="approval-copy-status">dry-run 结果已复制；不包含真实 token。</p> : null}
                   {placeholderCommandCopied ? <p className="approval-copy-status">占位命令模板已复制；仍不可直接执行。</p> : null}
+                </div>
+              ) : null}
+              {commandApprovalConfirmed && approvalPreviewResource.status === "pending_worker" ? (
+                <div className="worker-install-real-approval" aria-label="真实生成命令最终审批">
+                  <strong>真实生成命令最终审批</strong>
+                  <span>
+                    这里仅确认下一阶段生成一次性 Worker token / install command 前的真实 VPS 条件。本阶段输入确认后仍不会生成
+                    token，不会生成真实 install command，不会创建 Worker command，也不会 SSH 或远程执行。
+                  </span>
+                  <div className="worker-install-real-approval-grid">
+                    {transitWorkerRealCommandApprovalRows(approvalPreviewResource).map(([label, value]) => (
+                      <Fragment key={label}>
+                        <span>{label}</span>
+                        <strong>{value}</strong>
+                      </Fragment>
+                    ))}
+                  </div>
+                  <div className="worker-install-real-approval-checks">
+                    {transitWorkerRealCommandReadinessChecks(approvalPreviewResource).map(([label, value]) => (
+                      <Fragment key={label}>
+                        <span>{label}</span>
+                        <strong>{value}</strong>
+                      </Fragment>
+                    ))}
+                  </div>
+                  <label className="command-approval-confirm">
+                    <span>最终 typed confirmation。本阶段输入后只表示满足进入下一阶段的审批条件。</span>
+                    <input
+                      value={realCommandApprovalConfirmText}
+                      onChange={(event) => {
+                        setRealCommandApprovalConfirmText(event.target.value);
+                        setRealCommandApprovalCopied(false);
+                      }}
+                      placeholder={transitWorkerRealCommandApprovalConfirmText}
+                    />
+                  </label>
+                  <div className={`approval-gate-status ${realCommandApprovalConfirmed ? "ok" : "warn"}`}>
+                    {realCommandApprovalConfirmed
+                      ? "最终审批门已通过。下一阶段才允许在明确授权下生成一次性 Worker token / install command。"
+                      : "尚未确认进入真实命令生成阶段。"}
+                  </div>
+                  <ul className="dry-run-safety-list">
+                    <li>本阶段不会生成 Worker token。</li>
+                    <li>本阶段不会生成真实 install command。</li>
+                    <li>本阶段不会安装 Worker。</li>
+                    <li>本阶段不会 SSH 或远程执行。</li>
+                  </ul>
+                  <div className="dry-run-actions">
+                    <button className="secondary" type="button" onClick={() => void copyWorkerRealCommandApprovalPackage(approvalPreviewResource)}>
+                      复制真实生成命令最终审批包
+                    </button>
+                  </div>
+                  {realCommandApprovalCopied ? (
+                    <p className="approval-copy-status">真实生成命令最终审批包已复制；不包含真实 token 或真实安装命令。</p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
