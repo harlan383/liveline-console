@@ -186,6 +186,8 @@ function SafeDeleteModal({
 
 const requiredTransitWorkerVersion = "0.1.24-stage-3.3.122";
 const transitWorkerBinaryChecksum = "cf7990f3ba0f85348fa714edb69a94d36b8752323fe9c843fa676cf50f38fcce";
+const transitWorkerPublicControllerUrl = "http://my-con.golirong.xyz:8200";
+const transitWorkerPlaceholderToken = "<generated-in-later-stage>";
 
 const emptyTransitResourceDraftForm: TransitResourceDraftFormState = {
   name: "",
@@ -359,6 +361,84 @@ function buildTransitResourceDraftNotes(form: TransitResourceDraftFormState) {
   return lines.join("\n");
 }
 
+function noteValue(resource: TransitResourceData, label: string) {
+  const notes = resource.notes ?? "";
+  const prefix = `${label}:`;
+  const line = notes
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find((value) => value.toLowerCase().startsWith(prefix.toLowerCase()));
+  if (!line) {
+    return null;
+  }
+  const value = line.slice(prefix.length).trim();
+  return value || null;
+}
+
+function plannedInterfaceForResource(resource: TransitResourceData) {
+  return resource.worker_interface_name ?? noteValue(resource, "Planned interface") ?? "待确认";
+}
+
+function protocolIntentForResource(resource: TransitResourceData) {
+  const fromNotes = noteValue(resource, "Preferred forwarding");
+  return protocolHintLabel(fromNotes ?? resource.protocol_hint);
+}
+
+function sshSummaryForResource(resource: TransitResourceData) {
+  if (!resource.has_ssh) {
+    return "未记录 SSH 管理元信息";
+  }
+  const host = resource.ssh_host ?? "待确认";
+  const port = resource.ssh_port ?? 22;
+  const username = resource.ssh_username ?? "root";
+  return `${username}@${host}:${port}`;
+}
+
+function transitWorkerInstallPlaceholderCommand() {
+  return [
+    `curl -fsSL ${transitWorkerPublicControllerUrl}/worker/install.sh | \\`,
+    "  sudo bash -s -- \\",
+    `  --controller-url ${transitWorkerPublicControllerUrl} \\`,
+    `  --worker-token ${transitWorkerPlaceholderToken} \\`,
+    "  --role transit",
+  ].join("\n");
+}
+
+function transitWorkerApprovalChecklist(resource: TransitResourceData) {
+  return [
+    "Stage 3.3.130 Worker install approval preview",
+    "",
+    `Resource: ${resource.name}`,
+    `Status: ${resource.status}`,
+    `Entry host: ${resource.entry_host ?? "待确认"}`,
+    `SSH: ${sshSummaryForResource(resource)}`,
+    `Entry region: ${resource.entry_region ?? "待确认"}`,
+    `Exit region: ${resource.exit_region ?? "待确认"}`,
+    `Planned interface: ${plannedInterfaceForResource(resource)}`,
+    `Protocol intent: ${protocolIntentForResource(resource)}`,
+    `Required Worker version: ${requiredTransitWorkerVersion}`,
+    `Worker binary checksum: ${transitWorkerBinaryChecksum}`,
+    `Public controller URL: ${transitWorkerPublicControllerUrl}`,
+    "",
+    "Placeholder command only, not executable in this stage:",
+    transitWorkerInstallPlaceholderCommand(),
+    "",
+    "Go / No-Go checks:",
+    "- Public controller backend health returns 200.",
+    "- Worker binary local/public checksum match.",
+    "- New VPS can access the public controller URL.",
+    "- New VPS has root or sudo, systemd, and curl.",
+    "- Command must use the public controller URL, not localhost or 127.0.0.1.",
+    "- Do not put SSH private keys, passwords, Worker tokens, or secrets in notes, README, PR, or chat.",
+    "",
+    "Stage 3.3.130 confirmations:",
+    "- No Worker token generated.",
+    "- No real install command generated.",
+    "- No Worker installed.",
+    "- Real installation requires a later independent approval stage.",
+  ].join("\n");
+}
+
 function transitResourcePayloadFromForm(
   form: TransitResourceDraftFormState,
   status = "pending_worker",
@@ -466,6 +546,8 @@ export function TransitServersPanel() {
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
+  const [approvalPreviewResource, setApprovalPreviewResource] = useState<TransitResourceData | null>(null);
+  const [approvalPreviewCopied, setApprovalPreviewCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -505,6 +587,11 @@ export function TransitServersPanel() {
     setDeleteMode("remote_cleanup");
   }
 
+  function closeApprovalPreview() {
+    setApprovalPreviewResource(null);
+    setApprovalPreviewCopied(false);
+  }
+
   function openAdd() {
     setSelectedResource(null);
     setDraftForm(emptyTransitResourceDraftForm);
@@ -522,6 +609,22 @@ export function TransitServersPanel() {
     setDeleteConfirmText("");
     setDeleteMode(resource.worker_online ? "remote_cleanup" : "offline_local_remove");
     setModalMode("delete");
+  }
+
+  function openWorkerInstallApprovalPreview(resource: TransitResourceData) {
+    setApprovalPreviewResource(resource);
+    setApprovalPreviewCopied(false);
+  }
+
+  async function copyWorkerInstallApprovalChecklist(resource: TransitResourceData) {
+    try {
+      await copyText(transitWorkerApprovalChecklist(resource));
+      setApprovalPreviewCopied(true);
+      setMessage("Worker 安装审批清单已复制；内容不包含真实 token 或密钥。");
+    } catch (error) {
+      setApprovalPreviewCopied(false);
+      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制审批清单失败。");
+    }
   }
 
   async function submitDraftResource(event: FormEvent<HTMLFormElement>) {
@@ -698,7 +801,9 @@ export function TransitServersPanel() {
                     </span>
                     <div className="server-actions">
                       {pendingWorkerDraft ? (
-                        <span className="action-hint">下一步：Worker install approval</span>
+                        <button className="secondary" type="button" onClick={() => openWorkerInstallApprovalPreview(resource)}>
+                          查看 Worker 安装审批预览
+                        </button>
                       ) : null}
                       <button className="secondary" type="button" onClick={() => openEdit(resource)}>
                         编辑
@@ -765,6 +870,88 @@ export function TransitServersPanel() {
             </>
           }
         />
+      ) : null}
+
+      {approvalPreviewResource ? (
+        <div className="modal-backdrop" role="presentation">
+          <div
+            className="modal-card transit-worker-approval-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Worker 安装审批预览"
+          >
+            <div className="modal-header">
+              <h3>Worker 安装审批预览</h3>
+              <button className="ghost-button" type="button" onClick={closeApprovalPreview}>
+                关闭预览
+              </button>
+            </div>
+            <div className="worker-bootstrap-intro">
+              <strong>只读审批包 / 不可执行</strong>
+              <span>
+                本阶段只展示 pending_worker 草稿资源的安装前审批信息。不会生成 Worker token，不会生成真实 install command，不会安装 Worker，也不会创建 Worker command。
+              </span>
+            </div>
+            <div className="transit-worker-approval-grid">
+              <span>资源名称</span>
+              <strong>{approvalPreviewResource.name}</strong>
+              <span>资源状态</span>
+              <strong>{approvalPreviewResource.status}</strong>
+              <span>入口地址</span>
+              <strong>{approvalPreviewResource.entry_host ?? "待确认"}</strong>
+              <span>SSH 元信息</span>
+              <strong>{sshSummaryForResource(approvalPreviewResource)}</strong>
+              <span>入口地区</span>
+              <strong>{approvalPreviewResource.entry_region ?? "待确认"}</strong>
+              <span>出口地区</span>
+              <strong>{approvalPreviewResource.exit_region ?? "待确认"}</strong>
+              <span>计划网卡</span>
+              <strong>{plannedInterfaceForResource(approvalPreviewResource)}</strong>
+              <span>协议意图</span>
+              <strong>{protocolIntentForResource(approvalPreviewResource)}</strong>
+              <span>目标 Worker 版本</span>
+              <strong>{requiredTransitWorkerVersion}</strong>
+              <span>Worker binary checksum</span>
+              <strong>{transitWorkerBinaryChecksum}</strong>
+              <span>公网主控 URL</span>
+              <strong>{transitWorkerPublicControllerUrl}</strong>
+            </div>
+            <div className="transit-worker-approval-section">
+              <strong>占位安装命令模板</strong>
+              <span>这不是本阶段可执行命令；`worker-token` 是后续独立阶段生成的占位符。</span>
+              <pre className="worker-install-placeholder-command">{transitWorkerInstallPlaceholderCommand()}</pre>
+            </div>
+            <div className="transit-worker-approval-section">
+              <strong>Go / No-Go 检查</strong>
+              <ul>
+                <li>公网主控 backend health 返回 200。</li>
+                <li>Worker binary 本地 / 公网文件 checksum 一致。</li>
+                <li>新 VPS 可以访问公网主控 URL。</li>
+                <li>新 VPS 具备 root 或 sudo、systemd、curl。</li>
+                <li>安装命令必须使用公网主控 URL，不能使用 localhost 或 127.0.0.1。</li>
+                <li>不要把 SSH 私钥、密码、Worker token 或 secret 写入 notes、README、PR 或聊天。</li>
+              </ul>
+            </div>
+            <div className="transit-worker-approval-section">
+              <strong>只读确认项</strong>
+              <ul>
+                <li>我确认本阶段不生成 Worker token。</li>
+                <li>我确认本阶段不生成真实 install command。</li>
+                <li>我确认本阶段不安装 Worker。</li>
+                <li>真实安装必须在后续独立审批阶段执行。</li>
+              </ul>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={closeApprovalPreview}>
+                关闭预览
+              </button>
+              <button type="button" onClick={() => void copyWorkerInstallApprovalChecklist(approvalPreviewResource)}>
+                复制审批清单
+              </button>
+            </div>
+            {approvalPreviewCopied ? <p className="approval-copy-status">审批清单已复制，不包含真实 token 或密钥。</p> : null}
+          </div>
+        </div>
       ) : null}
 
       {modalMode && modalMode !== "delete" ? (
