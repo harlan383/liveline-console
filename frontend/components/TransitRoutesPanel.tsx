@@ -21,6 +21,7 @@ import {
   remoteCleanupDeleteTransitRoute,
   REMOTE_CLEANUP_CONFIRM_TEXT,
   requestReadonlyPreflightPlan,
+  requestTransitHaproxyReadinessApproval,
   type CsrfResult,
   type NodeData,
   type NodeListResult,
@@ -34,6 +35,7 @@ import {
   type TransitReadonlyPreflightCommandRequest,
   type TransitResourceData,
   type TransitResourceListResult,
+  type TransitHaproxyReadinessApprovalResult,
   type TransitWorkerAcceptanceResult,
   type TransitWorkerInstallCommandGenerationResult,
   type TransitRouteWorkerCreateExecuteResponse,
@@ -102,6 +104,24 @@ type TransitRouteWorkerCreatePlanResult = {
 };
 
 type DeleteFlowMode = "remote_cleanup" | "offline_local_remove";
+
+type HaproxyReadinessConfirmations = {
+  securityGroup: boolean;
+  cloudFirewall: boolean;
+  serverFirewall: boolean;
+  noCutover: boolean;
+  noShareLinkMutation: boolean;
+  noFullClientLink: boolean;
+};
+
+const emptyHaproxyReadinessConfirmations: HaproxyReadinessConfirmations = {
+  securityGroup: false,
+  cloudFirewall: false,
+  serverFirewall: false,
+  noCutover: false,
+  noShareLinkMutation: false,
+  noFullClientLink: false,
+};
 
 function isOfflineLocalRemoveOffer(data: unknown): data is RemoteCleanupUnavailableData {
   return Boolean(
@@ -1758,6 +1778,12 @@ export function TransitRoutesPanel() {
   const [remotePreflightCommand, setRemotePreflightCommand] = useState<WorkerCommandData | null>(null);
   const [readonlyPreflightApiMessage, setReadonlyPreflightApiMessage] = useState("");
   const [remotePreflightMessage, setRemotePreflightMessage] = useState("");
+  const [haproxyReadiness, setHaproxyReadiness] = useState<TransitHaproxyReadinessApprovalResult | null>(null);
+  const [haproxyReadinessLoading, setHaproxyReadinessLoading] = useState(false);
+  const [haproxyReadinessMessage, setHaproxyReadinessMessage] = useState("HAProxy TCP readiness 尚未生成。");
+  const [haproxyReadinessConfirmations, setHaproxyReadinessConfirmations] = useState<HaproxyReadinessConfirmations>(
+    emptyHaproxyReadinessConfirmations,
+  );
   const [healthConfirmed, setHealthConfirmed] = useState(false);
   const [boundaryConfirmed, setBoundaryConfirmed] = useState(false);
   const [workerBoundaryConfirmed, setWorkerBoundaryConfirmed] = useState(false);
@@ -2333,6 +2359,18 @@ export function TransitRoutesPanel() {
     });
   }, [selectableResources, activeNodes]);
 
+  useEffect(() => {
+    setHaproxyReadiness(null);
+    setHaproxyReadinessMessage("HAProxy TCP readiness 尚未生成。");
+  }, [
+    selectedResource?.id,
+    selectedNode?.id,
+    draft.plannedListenPort,
+    draft.forwardingMethod,
+    targetPort,
+    haproxyReadinessConfirmations,
+  ]);
+
   function readonlyPayload(): ReadonlyPreflightPlanRequest {
     return {
       transit_resource_id: selectedResource?.id ?? null,
@@ -2402,6 +2440,49 @@ export function TransitRoutesPanel() {
       setRemotePreflightMessage(error instanceof Error ? error.message : "创建远程只读预检命令失败。");
     } finally {
       setRemotePreflightLoading(false);
+    }
+  }
+
+  function updateHaproxyReadinessConfirmation(key: keyof HaproxyReadinessConfirmations, value: boolean) {
+    setHaproxyReadinessConfirmations((current) => ({ ...current, [key]: value }));
+  }
+
+  async function generateHaproxyReadinessApproval() {
+    if (!selectedResource || !selectedNode || plannedPort === null || targetPort <= 0) {
+      setHaproxyReadinessMessage("计划参数不完整，不能生成 HAProxy readiness。");
+      return;
+    }
+    if (draft.forwardingMethod !== "haproxy_tcp") {
+      setHaproxyReadinessMessage("请先把转发方式切换为 HAProxy TCP mode。");
+      return;
+    }
+    setHaproxyReadinessLoading(true);
+    setHaproxyReadinessMessage("正在生成只读 HAProxy TCP route 创建审批包；不会创建 Worker command。");
+    try {
+      const result = await requestTransitHaproxyReadinessApproval({
+        transit_resource_id: selectedResource.id,
+        landing_node_id: selectedNode.id,
+        planned_listen_port: plannedPort,
+        landing_target_port: targetPort,
+        forwarding_method: "haproxy_tcp",
+        purpose: draft.purpose || null,
+        firewall_security_group_confirmed: haproxyReadinessConfirmations.securityGroup,
+        cloud_firewall_confirmed: haproxyReadinessConfirmations.cloudFirewall,
+        server_firewall_confirmed: haproxyReadinessConfirmations.serverFirewall,
+        no_cutover_confirmed: haproxyReadinessConfirmations.noCutover,
+        no_node_share_link_change_confirmed: haproxyReadinessConfirmations.noShareLinkMutation,
+        no_full_client_link_confirmed: haproxyReadinessConfirmations.noFullClientLink,
+      });
+      if (!result.success) {
+        setHaproxyReadinessMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setHaproxyReadiness(result.data);
+      setHaproxyReadinessMessage(result.data.summary);
+    } catch (error) {
+      setHaproxyReadinessMessage(error instanceof Error ? error.message : "生成 HAProxy readiness 失败。");
+    } finally {
+      setHaproxyReadinessLoading(false);
     }
   }
 
@@ -2713,6 +2794,139 @@ export function TransitRoutesPanel() {
             onRefreshCommand={() => void refreshRemoteCommand()}
             onCopySummary={() => void copyPreflightSummary()}
           />
+
+          <div className="haproxy-readiness-panel">
+            <div className="status-row">
+              <div>
+                <h3>HAProxy TCP route 创建审批包</h3>
+                <p className="message">
+                  只读生成 HAProxy TCP readiness/approval，不创建 Worker command、不安装 HAProxy、不创建监听端口、不导出完整客户端链接。
+                </p>
+              </div>
+              <button className="secondary" disabled={haproxyReadinessLoading} type="button" onClick={() => void generateHaproxyReadinessApproval()}>
+                {haproxyReadinessLoading ? "生成中" : "生成 HAProxy route 创建审批包"}
+              </button>
+            </div>
+
+            <div className="haproxy-readiness-grid">
+              <span>中转资源</span>
+              <strong>{selectedResource ? `${selectedResource.name} / ${displayValue(selectedResource.entry_host)}` : "未选择"}</strong>
+              <span>Worker</span>
+              <strong>
+                {selectedResource?.worker_online ? "online" : displayValue(selectedResource?.worker_status)} / {displayValue(selectedResource?.worker_version)}
+              </strong>
+              <span>网卡</span>
+              <strong>{displayValue(selectedResource?.worker_interface_name)}</strong>
+              <span>落地节点</span>
+              <strong>{selectedNode ? `${selectedNode.node_name} / ${landingHostForNode(selectedNode)}:${targetPort || "-"}` : "未选择"}</strong>
+              <span>计划监听</span>
+              <strong>{draft.plannedListenPort || "-"}</strong>
+              <span>转发方式</span>
+              <strong>{draft.forwardingMethod === "haproxy_tcp" ? "HAProxy TCP mode" : "请切换到 HAProxy TCP mode"}</strong>
+            </div>
+
+            <div className="haproxy-readiness-warning">
+              <strong>端口放行人工确认</strong>
+              <span>真实创建前必须人工确认监听端口已在云安全组、云防火墙、服务器本机防火墙同时放行。</span>
+              <span>本阶段只生成审批包，不远程检查、不修改防火墙、不创建 HAProxy service。</span>
+            </div>
+
+            <div className="haproxy-confirm-list">
+              <label className="haproxy-confirm-row">
+                <input
+                  type="checkbox"
+                  checked={haproxyReadinessConfirmations.securityGroup}
+                  onChange={(event) => updateHaproxyReadinessConfirmation("securityGroup", event.target.checked)}
+                />
+                <span>我确认云安全组已放行该 HAProxy TCP 监听端口。</span>
+              </label>
+              <label className="haproxy-confirm-row">
+                <input
+                  type="checkbox"
+                  checked={haproxyReadinessConfirmations.cloudFirewall}
+                  onChange={(event) => updateHaproxyReadinessConfirmation("cloudFirewall", event.target.checked)}
+                />
+                <span>我确认云防火墙已放行该 HAProxy TCP 监听端口。</span>
+              </label>
+              <label className="haproxy-confirm-row">
+                <input
+                  type="checkbox"
+                  checked={haproxyReadinessConfirmations.serverFirewall}
+                  onChange={(event) => updateHaproxyReadinessConfirmation("serverFirewall", event.target.checked)}
+                />
+                <span>我确认服务器本机防火墙已放行该 HAProxy TCP 监听端口。</span>
+              </label>
+              <label className="haproxy-confirm-row">
+                <input
+                  type="checkbox"
+                  checked={haproxyReadinessConfirmations.noCutover}
+                  onChange={(event) => updateHaproxyReadinessConfirmation("noCutover", event.target.checked)}
+                />
+                <span>我确认本阶段不 cutover。</span>
+              </label>
+              <label className="haproxy-confirm-row">
+                <input
+                  type="checkbox"
+                  checked={haproxyReadinessConfirmations.noShareLinkMutation}
+                  onChange={(event) => updateHaproxyReadinessConfirmation("noShareLinkMutation", event.target.checked)}
+                />
+                <span>我确认本阶段不读取或修改 nodes.share_link，也不写 transit_routes.share_link。</span>
+              </label>
+              <label className="haproxy-confirm-row">
+                <input
+                  type="checkbox"
+                  checked={haproxyReadinessConfirmations.noFullClientLink}
+                  onChange={(event) => updateHaproxyReadinessConfirmation("noFullClientLink", event.target.checked)}
+                />
+                <span>我确认本阶段不生成、不展示、不记录完整客户端链接。</span>
+              </label>
+            </div>
+
+            <div className="haproxy-disabled-actions">
+              <strong>后续阶段入口</strong>
+              <span>真实创建 HAProxy route、创建 Worker command、安装 HAProxy、生成客户端链接均未接入本阶段。</span>
+              <button className="secondary compact" disabled type="button">
+                下一阶段才允许创建 HAProxy route
+              </button>
+            </div>
+
+            {haproxyReadiness ? (
+              <div className={`haproxy-readiness-result ${haproxyReadiness.ready ? "ready" : "blocked"}`}>
+                <strong>{haproxyReadiness.ready ? "ready" : "blocked"}：{haproxyReadiness.summary}</strong>
+                <span>{haproxyReadiness.next_action}</span>
+                <div className="haproxy-readiness-grid">
+                  <span>计划 service</span>
+                  <strong>{haproxyReadiness.planned_route.service_name}</strong>
+                  <span>入口</span>
+                  <strong>{displayValue(haproxyReadiness.transit_resource.entry_host)}:{haproxyReadiness.planned_route.planned_listen_port}</strong>
+                  <span>目标</span>
+                  <strong>{displayValue(haproxyReadiness.planned_route.landing_target_host)}:{haproxyReadiness.planned_route.landing_target_port}</strong>
+                  <span>Worker 最低版本</span>
+                  <strong>{haproxyReadiness.transit_worker.minimum_supported_worker_version}</strong>
+                </div>
+                <div className="haproxy-readiness-checks">
+                  {haproxyReadiness.checks.map((check) => (
+                    <div className="haproxy-readiness-check" key={check.id}>
+                      <span className={`pill ${check.passed ? "ok" : "warn"}`}>{check.passed ? "通过" : "阻塞"}</span>
+                      <strong>{check.label}</strong>
+                      <span>{check.message}</span>
+                      {!check.passed ? <small>{check.next_action}</small> : null}
+                    </div>
+                  ))}
+                </div>
+                <details className="node-create-safety-details">
+                  <summary>本审批包安全边界</summary>
+                  <div className="node-create-safety-body">
+                    {haproxyReadiness.safety_boundary.map((item) => (
+                      <span key={item}>{item}</span>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            ) : null}
+
+            <p className="message">{haproxyReadinessMessage}</p>
+          </div>
 
           <div className="status-row">
             <div>
