@@ -188,6 +188,7 @@ const requiredTransitWorkerVersion = "0.1.24-stage-3.3.122";
 const transitWorkerBinaryChecksum = "cf7990f3ba0f85348fa714edb69a94d36b8752323fe9c843fa676cf50f38fcce";
 const transitWorkerPublicControllerUrl = "http://my-con.golirong.xyz:8200";
 const transitWorkerPlaceholderToken = "<generated-in-later-stage>";
+const transitWorkerInstallCommandApprovalConfirmText = "CONFIRM_GENERATE_WORKER_INSTALL_COMMAND_LATER";
 
 const emptyTransitResourceDraftForm: TransitResourceDraftFormState = {
   name: "",
@@ -439,6 +440,42 @@ function transitWorkerApprovalChecklist(resource: TransitResourceData) {
   ].join("\n");
 }
 
+function transitWorkerCommandGenerationApprovalChecklist(resource: TransitResourceData) {
+  return [
+    "Stage 3.3.131 Worker install command generation approval",
+    "",
+    `Resource: ${resource.name}`,
+    `Status: ${resource.status}`,
+    `Entry host: ${resource.entry_host ?? "待补充"}`,
+    `SSH: ${sshSummaryForResource(resource)}`,
+    `Entry region: ${resource.entry_region ?? "待确认"}`,
+    `Exit region: ${resource.exit_region ?? "待确认"}`,
+    `Planned interface: ${plannedInterfaceForResource(resource)}`,
+    `Protocol intent: ${protocolIntentForResource(resource)}`,
+    `Required Worker version: ${requiredTransitWorkerVersion}`,
+    `Worker binary checksum: ${transitWorkerBinaryChecksum}`,
+    `Public controller URL: ${transitWorkerPublicControllerUrl}`,
+    "",
+    "Approval requirements:",
+    "- Generate one-time Worker token only in a later approved stage.",
+    "- Generate install command only in a later approved stage.",
+    "- Do not execute SSH or remote command in this approval stage.",
+    "- Do not store token in docs, README, PR, logs, chat, or notes.",
+    "- Use public controller URL, not localhost or 127.0.0.1.",
+    "- Confirm the real VPS can access the public controller.",
+    "- Confirm root/sudo, systemd, and curl are available.",
+    "",
+    "Typed confirmation required later:",
+    transitWorkerInstallCommandApprovalConfirmText,
+    "",
+    "Placeholder token:",
+    transitWorkerPlaceholderToken,
+    "",
+    "Placeholder command only, not executable in this stage:",
+    transitWorkerInstallPlaceholderCommand(),
+  ].join("\n");
+}
+
 function transitResourcePayloadFromForm(
   form: TransitResourceDraftFormState,
   status = "pending_worker",
@@ -548,6 +585,8 @@ export function TransitServersPanel() {
   const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [approvalPreviewResource, setApprovalPreviewResource] = useState<TransitResourceData | null>(null);
   const [approvalPreviewCopied, setApprovalPreviewCopied] = useState(false);
+  const [commandApprovalConfirmText, setCommandApprovalConfirmText] = useState("");
+  const [commandApprovalCopied, setCommandApprovalCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -590,6 +629,8 @@ export function TransitServersPanel() {
   function closeApprovalPreview() {
     setApprovalPreviewResource(null);
     setApprovalPreviewCopied(false);
+    setCommandApprovalConfirmText("");
+    setCommandApprovalCopied(false);
   }
 
   function openAdd() {
@@ -614,6 +655,8 @@ export function TransitServersPanel() {
   function openWorkerInstallApprovalPreview(resource: TransitResourceData) {
     setApprovalPreviewResource(resource);
     setApprovalPreviewCopied(false);
+    setCommandApprovalConfirmText("");
+    setCommandApprovalCopied(false);
   }
 
   async function copyWorkerInstallApprovalChecklist(resource: TransitResourceData) {
@@ -624,6 +667,17 @@ export function TransitServersPanel() {
     } catch (error) {
       setApprovalPreviewCopied(false);
       setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制审批清单失败。");
+    }
+  }
+
+  async function copyWorkerCommandGenerationApprovalPackage(resource: TransitResourceData) {
+    try {
+      await copyText(transitWorkerCommandGenerationApprovalChecklist(resource));
+      setCommandApprovalCopied(true);
+      setMessage("生成命令审批包已复制；内容只包含占位 token 和安全检查。");
+    } catch (error) {
+      setCommandApprovalCopied(false);
+      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制生成命令审批包失败。");
     }
   }
 
@@ -745,6 +799,8 @@ export function TransitServersPanel() {
       setSubmitting(false);
     }
   }
+
+  const commandApprovalConfirmed = commandApprovalConfirmText === transitWorkerInstallCommandApprovalConfirmText;
 
   return (
     <section className="panel wide">
@@ -931,6 +987,54 @@ export function TransitServersPanel() {
                 <li>安装命令必须使用公网主控 URL，不能使用 localhost 或 127.0.0.1。</li>
                 <li>不要把 SSH 私钥、密码、Worker token 或 secret 写入 notes、README、PR 或聊天。</li>
               </ul>
+            </div>
+            <div className="transit-worker-approval-section command-generation-gate">
+              <strong>生成命令前审批门</strong>
+              <span>
+                这里仅演示未来生成一次性 Worker token / install command 前需要确认的条件。本阶段不会调用 token/bootstrap API，也不会生成真实安装命令。
+              </span>
+              <div className="transit-worker-approval-requirements" aria-label="生成命令前审批要求">
+                <span>资源状态必须是 pending_worker</span>
+                <strong className={approvalPreviewResource.status === "pending_worker" ? "approval-state-ok" : "approval-state-warn"}>
+                  {approvalPreviewResource.status === "pending_worker" ? "满足" : "需调整"}
+                </strong>
+                <span>资源必须有 entry_host</span>
+                <strong className={approvalPreviewResource.entry_host ? "approval-state-ok" : "approval-state-warn"}>
+                  {approvalPreviewResource.entry_host ? approvalPreviewResource.entry_host : "待补充"}
+                </strong>
+                <span>SSH host / port / username</span>
+                <strong className={approvalPreviewResource.has_ssh ? "approval-state-ok" : "approval-state-warn"}>
+                  {approvalPreviewResource.has_ssh ? sshSummaryForResource(approvalPreviewResource) : "待补充或后续确认"}
+                </strong>
+                <span>真实命令使用公网主控 URL</span>
+                <strong className="approval-state-ok">{transitWorkerPublicControllerUrl}</strong>
+                <span>一次性 Worker token 生成时机</span>
+                <strong className="approval-state-warn">仅后续独立审批阶段</strong>
+              </div>
+              <label className="command-approval-confirm">
+                <span>模拟 typed confirmation。本阶段输入后也不会生成 token 或真实命令。</span>
+                <input
+                  value={commandApprovalConfirmText}
+                  onChange={(event) => {
+                    setCommandApprovalConfirmText(event.target.value);
+                    setCommandApprovalCopied(false);
+                  }}
+                  placeholder={transitWorkerInstallCommandApprovalConfirmText}
+                />
+              </label>
+              <div className={`approval-gate-status ${commandApprovalConfirmed ? "ok" : "warn"}`}>
+                {commandApprovalConfirmed
+                  ? "审批门 UI 已确认；真实命令生成仍必须进入后续独立阶段。"
+                  : `请输入 ${transitWorkerInstallCommandApprovalConfirmText} 以模拟后续审批确认。`}
+              </div>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => void copyWorkerCommandGenerationApprovalPackage(approvalPreviewResource)}
+              >
+                复制生成命令审批包
+              </button>
+              {commandApprovalCopied ? <p className="approval-copy-status">生成命令审批包已复制，只包含占位 token。</p> : null}
             </div>
             <div className="transit-worker-approval-section">
               <strong>只读确认项</strong>

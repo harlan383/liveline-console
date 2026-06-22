@@ -1527,6 +1527,61 @@ textarea {
   padding-left: 18px;
 }
 
+.transit-worker-approval-requirements {
+  background: rgba(7, 16, 24, 0.62);
+  border: 1px solid rgba(40, 229, 197, 0.16);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: minmax(180px, 0.72fr) minmax(0, 1fr);
+  padding: 12px;
+}
+
+.transit-worker-approval-requirements span,
+.command-approval-confirm span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.approval-state-ok {
+  color: var(--success) !important;
+}
+
+.approval-state-warn {
+  color: #ffe0a3 !important;
+}
+
+.command-approval-confirm {
+  display: grid;
+  gap: 7px;
+}
+
+.command-approval-confirm input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0;
+}
+
+.approval-gate-status {
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+  padding: 10px 12px;
+}
+
+.approval-gate-status.ok {
+  background: rgba(40, 229, 197, 0.1);
+  border: 1px solid rgba(40, 229, 197, 0.24);
+  color: var(--success);
+}
+
+.approval-gate-status.warn {
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.24);
+  color: #ffe0a3;
+}
+
 .worker-install-placeholder-command {
   background: #071018;
   border: 1px solid rgba(40, 229, 197, 0.2);
@@ -1550,7 +1605,8 @@ textarea {
 }
 
 @media (max-width: 720px) {
-  .transit-worker-approval-grid {
+  .transit-worker-approval-grid,
+  .transit-worker-approval-requirements {
     grid-template-columns: 1fr;
   }
 }
