@@ -49,7 +49,7 @@ No full VLESS/V2Ray link in docs, PR, logs, or chat.
 No arbitrary shell/systemd/config payload from API.
 ```
 
-## Current code progress
+## Implemented code
 
 This stage added the Worker-side HAProxy helper file:
 
@@ -57,7 +57,7 @@ This stage added the Worker-side HAProxy helper file:
 worker/cmd/liveline-worker/transit_haproxy.go
 ```
 
-The helper currently provides:
+The helper provides:
 
 ```text
 haproxy_tcp method normalization
@@ -207,6 +207,17 @@ server local firewall
 
 Do not modify firewalls automatically unless the user explicitly approves.
 
-## Stage status
+## Stage 3.3.122-e review result
 
-Stage 3.3.122-e review confirmed the Worker helper, main real-create branch, and backend forwarding-method version helpers are in PR #196. Remote deploy, Worker binary replacement on the transit VPS, and real HAProxy route creation are not part of this stage.
+Stage 3.3.122-e review confirmed:
+
+```text
+workerVersion is 0.1.24-stage-3.3.122
+main.go branches haproxy_tcp / haproxy / haproxy-tcp to executeTransitRouteCreateHaproxy()
+existing socat path remains below the new branch and was not replaced
+backend haproxy_tcp minimum Worker version is 0.1.24-stage-3.3.122
+existing socat transit_route_create minimum Worker version remains 0.1.20-stage-3.3.73
+GitHub Actions did not run for this PR; local Worker module test/build results are the validation source
+```
+
+Remote deploy, Worker binary replacement on the transit VPS, and real HAProxy route creation are not part of this stage.
