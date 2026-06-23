@@ -1486,6 +1486,44 @@ export function TransitServersPanel() {
                   <li>本 runbook 不自动安装或重启远端 Worker。</li>
                   <li>本 runbook 不创建 Worker command、HAProxy route 或 TransitRoute active record。</li>
                 </ul>
+                <details className="node-create-safety-details">
+                  <summary>Stage 3.3.137-hotfix-5：手动升级命令审核</summary>
+                  <div className="worker-install-dry-run">
+                    <strong>A. 公网主控 VPS 执行：确认 bundled binary</strong>
+                    <span>以下是只读核对命令，用于确认公网主控仓库内 binary 版本和 checksum；不生成 token，不连接 transit VPS。</span>
+                    <pre className="worker-install-placeholder-command">{`cd /opt/liveline-console
+sha256sum backend/worker-binaries/liveline-worker-linux-amd64
+chmod +x backend/worker-binaries/liveline-worker-linux-amd64
+./backend/worker-binaries/liveline-worker-linux-amd64 version`}</pre>
+                    <strong>B. transit VPS 手动执行：替换本地 Worker binary</strong>
+                    <span>
+                      这是用户手动执行模板，不是系统生成的 SSH 命令。`/tmp/liveline-worker-linux-amd64`
+                      只是用户手动上传到 transit VPS 后的临时路径，LiveLine Console 不上传文件、不远程执行。
+                    </span>
+                    <pre className="worker-install-placeholder-command">{`sudo systemctl stop liveline-worker.service
+sudo cp /usr/local/bin/liveline-worker /usr/local/bin/liveline-worker.bak.$(date +%Y%m%d%H%M%S)
+sudo install -m 0755 /tmp/liveline-worker-linux-amd64 /usr/local/bin/liveline-worker
+/usr/local/bin/liveline-worker version
+sudo systemctl start liveline-worker.service
+sudo systemctl status liveline-worker.service --no-pager -l`}</pre>
+                    <strong>C. 升级后验收：只查 Worker 状态</strong>
+                    <span>优先在页面点击“刷新 Worker 升级验收”。如需数据库只读核对，只查询 Worker 版本和 heartbeat，不查询 token、secret 或 share_link。</span>
+                    <pre className="worker-install-placeholder-command">{`cd /opt/liveline-console
+docker compose exec -T postgres psql -U livelines -d livelines -c "
+SELECT id, role, status, server_id, hostname, interface_name, worker_version, last_heartbeat_at
+FROM workers
+WHERE server_id = '80ec346d-3ac1-402e-ab09-33cb404ca81c'
+ORDER BY last_heartbeat_at DESC NULLS LAST, created_at DESC
+LIMIT 5;
+"`}</pre>
+                    <ul className="dry-run-safety-list">
+                      <li>验收通过条件：role=transit，heartbeat online，interface_name=eth0。</li>
+                      <li>server_id 必须是 80ec346d-3ac1-402e-ab09-33cb404ca81c。</li>
+                      <li>worker_version 必须满足 {requiredTransitWorkerVersion} 或更高。</li>
+                      <li>通过后才能回到 Stage 3.3.137 重新生成 HAProxy route dry-run。</li>
+                    </ul>
+                  </div>
+                </details>
               </div>
               <div className="dry-run-actions">
                 <button
