@@ -3,6 +3,7 @@ from typing import Any
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from app.api.deps import auth_error, csrf_error, csrf_valid, require_admin_session
 from app.db.session import get_db
 from app.models.worker_command import WorkerCommand
 from app.schemas.common import success_response
@@ -218,6 +219,12 @@ def create_haproxy_route_create_real_execution(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
     command = db.get(WorkerCommand, payload.dry_run_command_id)
     command_payload = command.payload_json if command and isinstance(command.payload_json, dict) else None
     if command_payload is not None:
