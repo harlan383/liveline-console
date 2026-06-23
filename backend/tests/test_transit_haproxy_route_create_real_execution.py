@@ -1,0 +1,398 @@
+import json
+import unittest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
+
+from app.api.routes import transit_routes
+from app.models.node import Node
+from app.models.transit_resource import TransitResource
+from app.models.transit_route import TransitRoute
+from app.models.vps_server import VpsServer
+from app.models.worker import Worker
+from app.models.worker_command import WorkerCommand
+from app.schemas.transit_route import (
+    HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
+    HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
+    TransitHaproxyRouteCreateRealExecutionRequest,
+)
+
+TRANSIT_RESOURCE_ID = "80ec346d-3ac1-402e-ab09-33cb404ca81c"
+TRANSIT_WORKER_ID = "f2e16197-e953-46dd-90af-66f64759a2a9"
+LANDING_NODE_ID = "a71472c6-f62c-43b5-a223-9f5f070ae4ef"
+LANDING_VPS_ID = "968519b3-9017-4b27-a9a0-d5731033f84f"
+DRY_RUN_COMMAND_ID = "ecfcf03a-8549-4b4a-9214-abebf6eee7f"
+
+
+def make_request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/transit-routes/haproxy-route-create-real-execution",
+            "headers": [(b"x-csrf-token", b"test")],
+            "client": ("127.0.0.1", 12345),
+            "scheme": "http",
+            "server": ("testserver", 80),
+        }
+    )
+
+
+def response_payload(response):
+    if isinstance(response, JSONResponse):
+        return json.loads(response.body)
+    return response
+
+
+class FakeAdminSession:
+    admin_id = "admin-1"
+
+
+class FakeScalarResult:
+    def __init__(self, items: list[object]) -> None:
+        self.items = items
+
+    def all(self):
+        return self.items
+
+
+def dry_run_payload(**overrides):
+    payload = {
+        "command_intent": "haproxy_route_create_dry_run",
+        "transit_resource_id": TRANSIT_RESOURCE_ID,
+        "transit_resource_name": "mkiepl广港",
+        "transit_entry_host": "109.244.79.147",
+        "landing_node_id": LANDING_NODE_ID,
+        "landing_node_name": "liveline-reality-27939",
+        "planned_listen_port": 23843,
+        "landing_target_host": "64.90.13.19",
+        "landing_target_port": 27939,
+        "forwarding_method": "haproxy_tcp",
+        "purpose": "直播",
+        "approval_stage": "Stage 3.3.137-new-transit-haproxy-route-create-dry-run",
+        "readiness_approval_confirmed": True,
+        "dry_run": True,
+        "approval_required": True,
+        "user_approved_real_execution": False,
+        "real_execution": False,
+        "route_created": False,
+        "haproxy_installed": False,
+        "listener_bound": False,
+        "firewall_modified": False,
+        "share_link_mutated": False,
+        "cutover": False,
+        "route_name": "haproxy-tcp-23843",
+        "planned_service_name": "liveline-haproxy-23843.service",
+    }
+    payload.update(overrides)
+    return payload
+
+
+class FakeSession:
+    def __init__(
+        self,
+        *,
+        command_present: bool = True,
+        command_payload: dict | None = None,
+        command_status: str = "succeeded",
+        resource_present: bool = True,
+        node_present: bool = True,
+        node_port: int | None = 27939,
+        worker_present: bool = True,
+        worker_status: str = "online",
+        worker_role: str = "transit",
+        worker_version: str | None = "0.1.25-stage-3.3.137-hotfix-2",
+        worker_interface: str | None = "eth0",
+        worker_heartbeat_recent: bool = True,
+        existing_route: bool = False,
+        duplicate_real_command: bool = False,
+    ) -> None:
+        self.added: list[object] = []
+        self.commit_called = False
+        self.refresh_called = False
+        self.resource = (
+            TransitResource(
+                id=TRANSIT_RESOURCE_ID,
+                name="mkiepl广港",
+                resource_type="server",
+                status="worker_online",
+                entry_host="109.244.79.147",
+                entry_port=22,
+            )
+            if resource_present
+            else None
+        )
+        self.node = (
+            Node(
+                id=LANDING_NODE_ID,
+                vps_id=LANDING_VPS_ID,
+                node_name="liveline-reality-27939",
+                xray_port=node_port,
+                status="active",
+                share_link="redacted-share-link-present",
+            )
+            if node_present
+            else None
+        )
+        if self.node:
+            self.node.vps = VpsServer(id=LANDING_VPS_ID, ip="64.90.13.19")
+        self.worker = (
+            Worker(
+                id=TRANSIT_WORKER_ID,
+                server_id=TRANSIT_RESOURCE_ID,
+                role=worker_role,
+                status=worker_status,
+                interface_name=worker_interface,
+                worker_version=worker_version,
+                worker_secret_hash="hash",
+                last_heartbeat_at=(
+                    datetime.now(timezone.utc)
+                    if worker_heartbeat_recent
+                    else datetime.now(timezone.utc) - timedelta(hours=1)
+                ),
+            )
+            if worker_present
+            else None
+        )
+        self.command = (
+            WorkerCommand(
+                id=DRY_RUN_COMMAND_ID,
+                worker_id=TRANSIT_WORKER_ID,
+                server_type="transit",
+                server_id=TRANSIT_RESOURCE_ID,
+                command_type="transit_route_create",
+                payload_json=command_payload if command_payload is not None else dry_run_payload(),
+                status=command_status,
+                attempts=1,
+            )
+            if command_present
+            else None
+        )
+        self.existing_route = (
+            TransitRoute(
+                id="existing-route",
+                name="haproxy-tcp-23843",
+                transit_resource_id=TRANSIT_RESOURCE_ID,
+                node_id=LANDING_NODE_ID,
+                landing_vps_id=LANDING_VPS_ID,
+                listen_port=23843,
+                target_host="64.90.13.19",
+                target_port=27939,
+                forwarding_method="haproxy_tcp",
+                service_name="liveline-haproxy-23843.service",
+                service_path="/etc/systemd/system/liveline-haproxy-23843.service",
+                status="active",
+                share_link=None,
+            )
+            if existing_route
+            else None
+        )
+        self.duplicate_command = (
+            WorkerCommand(
+                id="duplicate-command",
+                worker_id=TRANSIT_WORKER_ID,
+                server_type="transit",
+                server_id=TRANSIT_RESOURCE_ID,
+                command_type="transit_route_create",
+                payload_json=dry_run_payload(
+                    command_intent="haproxy_route_create_real_execution",
+                    approval_stage="Stage 3.3.139-new-transit-haproxy-route-create-real-execution",
+                    dry_run=False,
+                    approval_required=False,
+                    real_execution=True,
+                    user_approved_real_execution=True,
+                ),
+                status="pending",
+                attempts=0,
+            )
+            if duplicate_real_command
+            else None
+        )
+
+    def get(self, model, key):
+        if model is WorkerCommand and self.command and key == self.command.id:
+            return self.command
+        if model is TransitResource and self.resource and key == self.resource.id:
+            return self.resource
+        if model is Node and self.node and key == self.node.id:
+            return self.node
+        return None
+
+    def scalar(self, statement):
+        text = str(statement)
+        if "transit_routes" in text:
+            return self.existing_route
+        return None
+
+    def scalars(self, statement):
+        text = str(statement)
+        if "worker_commands" in text:
+            return FakeScalarResult([self.duplicate_command] if self.duplicate_command else [])
+        return FakeScalarResult([self.worker] if self.worker else [])
+
+    def add(self, item):
+        self.added.append(item)
+
+    def flush(self):
+        for item in self.added:
+            if isinstance(item, WorkerCommand) and not item.id:
+                item.id = "created-real-command"
+
+    def commit(self):
+        self.commit_called = True
+
+    def refresh(self, item):
+        self.refresh_called = True
+
+
+def valid_payload(**overrides):
+    payload = {
+        "dry_run_command_id": DRY_RUN_COMMAND_ID,
+        "transit_resource_id": TRANSIT_RESOURCE_ID,
+        "landing_node_id": LANDING_NODE_ID,
+        "planned_listen_port": 23843,
+        "landing_target_host": "64.90.13.19",
+        "landing_target_port": 27939,
+        "forwarding_method": "haproxy_tcp",
+        "route_name": "haproxy-tcp-23843",
+        "approval_stage": "Stage 3.3.139-new-transit-haproxy-route-create-real-execution",
+        "firewall_security_group_confirmed": True,
+        "cloud_firewall_confirmed": True,
+        "server_firewall_confirmed": True,
+        "no_cutover_confirmed": True,
+        "no_node_share_link_change_confirmed": True,
+        "no_full_client_link_confirmed": True,
+        "final_approval_text": HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
+        "real_execution_text": HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
+    }
+    payload.update(overrides)
+    return TransitHaproxyRouteCreateRealExecutionRequest(**payload)
+
+
+def call_real_execution(payload, db):
+    with (
+        patch.object(transit_routes, "require_admin_session", return_value=FakeAdminSession()),
+        patch.object(transit_routes, "csrf_valid", return_value=True),
+    ):
+        return transit_routes.create_haproxy_route_create_real_execution(payload, make_request(), db)
+
+
+def check_map(data):
+    return {check["id"]: check for check in data["data"]["checks"]}
+
+
+class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
+    def assert_blocked_by(self, db: FakeSession, check_id: str, payload=None):
+        response = call_real_execution(payload or valid_payload(), db)
+        data = response_payload(response)
+
+        self.assertTrue(data["success"])
+        self.assertFalse(data["data"]["ready_for_real_execution"])
+        self.assertTrue(data["data"]["blocked"])
+        self.assertFalse(check_map(data)[check_id]["passed"])
+        self.assertEqual([item for item in db.added if isinstance(item, WorkerCommand)], [])
+        self.assertEqual([item for item in db.added if isinstance(item, TransitRoute)], [])
+        self.assertFalse(db.commit_called)
+        return data
+
+    def test_missing_dry_run_blocks_real_execution(self):
+        self.assert_blocked_by(FakeSession(command_present=False), "dry_run_command_exists")
+
+    def test_failed_dry_run_blocks_real_execution(self):
+        self.assert_blocked_by(FakeSession(command_status="failed"), "dry_run_command_succeeded")
+
+    def test_running_dry_run_blocks_real_execution(self):
+        self.assert_blocked_by(FakeSession(command_status="running"), "dry_run_command_succeeded")
+
+    def test_payload_mismatch_blocks_real_execution(self):
+        self.assert_blocked_by(
+            FakeSession(command_payload=dry_run_payload(planned_listen_port=12081)),
+            "dry_run_payload_matches_real_request",
+        )
+
+    def test_old_worker_version_blocks_real_execution(self):
+        self.assert_blocked_by(
+            FakeSession(worker_version="0.1.24-stage-3.3.122"),
+            "transit_worker_version_supported",
+        )
+
+    def test_missing_firewall_confirmation_blocks_real_execution(self):
+        self.assert_blocked_by(
+            FakeSession(),
+            "security_group_confirmation_present",
+            valid_payload(firewall_security_group_confirmed=False),
+        )
+
+    def test_confirmation_text_mismatch_blocks_real_execution(self):
+        self.assert_blocked_by(
+            FakeSession(),
+            "real_execution_text_matches",
+            valid_payload(real_execution_text="WRONG_CONFIRMATION"),
+        )
+
+    def test_existing_active_haproxy_route_blocks_real_execution(self):
+        self.assert_blocked_by(FakeSession(existing_route=True), "no_existing_haproxy_route_same_port")
+
+    def test_duplicate_real_execution_command_blocks_real_execution(self):
+        self.assert_blocked_by(FakeSession(duplicate_real_command=True), "no_duplicate_real_execution_command")
+
+    def test_success_creates_one_worker_command_only(self):
+        db = FakeSession()
+        original_share_link = db.node.share_link if db.node else None
+        response = call_real_execution(valid_payload(), db)
+        data = response_payload(response)
+
+        self.assertTrue(data["success"])
+        self.assertTrue(data["data"]["ready_for_real_execution"])
+        self.assertFalse(data["data"]["blocked"])
+        self.assertTrue(data["data"]["worker_command_created"])
+        self.assertTrue(data["data"]["real_execution_command_created"])
+        self.assertFalse(data["data"]["route_created"])
+        self.assertFalse(data["data"]["transit_route_active_record_created"])
+        self.assertFalse(data["data"]["share_link_mutated"])
+        self.assertFalse(data["data"]["cutover"])
+
+        commands = [item for item in db.added if isinstance(item, WorkerCommand)]
+        routes = [item for item in db.added if isinstance(item, TransitRoute)]
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(routes, [])
+        self.assertTrue(db.commit_called)
+        self.assertTrue(db.refresh_called)
+        self.assertEqual(db.node.share_link if db.node else None, original_share_link)
+
+        command_payload = commands[0].payload_json
+        self.assertEqual(command_payload["command_intent"], "haproxy_route_create_real_execution")
+        self.assertEqual(command_payload["approval_stage"], "Stage 3.3.139-new-transit-haproxy-route-create-real-execution")
+        self.assertEqual(command_payload["source_dry_run_command_id"], DRY_RUN_COMMAND_ID)
+        self.assertFalse(command_payload["dry_run"])
+        self.assertFalse(command_payload["approval_required"])
+        self.assertTrue(command_payload["approved_real_execution"])
+        self.assertEqual(command_payload["execution_mode"], "real_create")
+        self.assertEqual(command_payload["planned_service_name"], "liveline-haproxy-23843.service")
+        self.assertEqual(command_payload["forwarding_method"], "haproxy_tcp")
+        self.assertEqual(command_payload["planned_listen_port"], 23843)
+        self.assertEqual(command_payload["landing_target_host"], "64.90.13.19")
+        self.assertEqual(command_payload["landing_target_port"], 27939)
+
+        forbidden_keys = {
+            "shell",
+            "command",
+            "commands",
+            "args",
+            "argv",
+            "script",
+            "systemd_unit",
+            "unit_content",
+            "service_content",
+            "exec_start",
+            "share_link",
+            "client_link",
+            "vless",
+        }
+        self.assertFalse(forbidden_keys.intersection(command_payload))
+
+
+if __name__ == "__main__":
+    unittest.main()

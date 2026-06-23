@@ -820,6 +820,83 @@ func approvedTransitRouteCreateRealPayload() map[string]any {
 	return payload
 }
 
+func approvedTransitHaproxyRouteCreateRealPayload() map[string]any {
+	payload := approvedTransitHaproxyRouteCreatePayload()
+	payload["command_intent"] = "haproxy_route_create_real_execution"
+	payload["approval_stage"] = approvedTransitHaproxyRealCreateStage
+	payload["dry_run"] = false
+	payload["approval_required"] = false
+	payload["execution_mode"] = "real_create"
+	payload["approved_real_execution"] = true
+	payload["user_approved_real_execution"] = true
+	payload["firewall_security_group_confirmed"] = true
+	payload["cloud_firewall_confirmed"] = true
+	payload["server_firewall_confirmed"] = true
+	payload["no_node_share_link_change_confirmed"] = true
+	payload["no_full_client_link_confirmed"] = true
+	payload["no_cutover_confirmed"] = true
+	delete(payload, "haproxy_config_plan")
+	return payload
+}
+
+func TestTransitRouteCreateHaproxyRealRequestAllowsStage139(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitHaproxyRouteCreateRealPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTransitRouteCreateHaproxyRequest(approvedTransitRouteCreateConfig(), request); err != nil {
+		t.Fatalf("validateTransitRouteCreateHaproxyRequest returned error for Stage 3.3.139: %v", err)
+	}
+}
+
+func TestTransitRouteCreateHaproxyRealRequestRejectsOldRealStage(t *testing.T) {
+	payload := approvedTransitHaproxyRouteCreateRealPayload()
+	payload["approval_stage"] = approvedTransitRealCreateStage
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateHaproxyRequest(approvedTransitRouteCreateConfig(), request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateHaproxyRequest returned nil for old real-create stage")
+	}
+	if !strings.Contains(err.Error(), "Stage 3.3.139") {
+		t.Fatalf("error = %q, want Stage 3.3.139 approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateHaproxyRealRequestRejectsWrongPort(t *testing.T) {
+	payload := approvedTransitHaproxyRouteCreateRealPayload()
+	payload["planned_listen_port"] = 24731
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateHaproxyRequest(approvedTransitRouteCreateConfig(), request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateHaproxyRequest returned nil for wrong port")
+	}
+	if !strings.Contains(err.Error(), "planned_listen_port is not approved") {
+		t.Fatalf("error = %q, want planned listen approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateHaproxyRealRequestRejectsDryRun(t *testing.T) {
+	payload := approvedTransitHaproxyRouteCreateRealPayload()
+	payload["dry_run"] = true
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateHaproxyRequest(approvedTransitRouteCreateConfig(), request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateHaproxyRequest returned nil for dry_run=true")
+	}
+	if !strings.Contains(err.Error(), "dry_run=false") {
+		t.Fatalf("error = %q, want dry_run=false error", err.Error())
+	}
+}
+
 func TestTransitRouteCreateRealRequestRejectsNonApprovedPort(t *testing.T) {
 	request, err := parseTransitRouteCreateRequest(approvedTransitRouteCreateRealPayload())
 	if err != nil {
