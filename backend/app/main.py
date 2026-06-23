@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import admin, auth, health, nodes, tasks, transit_resources, transit_routes, vps, workers
+from app.api.routes import transit_haproxy_real_execution_gate
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -15,6 +16,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+transit_haproxy_real_execution_gate.install()
 
 app.include_router(health.router, prefix="/api")
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
