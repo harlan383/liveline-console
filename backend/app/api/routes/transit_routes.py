@@ -1476,6 +1476,7 @@ def haproxy_route_create_final_approval(
         and command_payload.get("listener_bound", False) is False
         and command_payload.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP
     )
+    dry_run_succeeded = bool(command and command.status == "succeeded")
     final_text_ok = payload.final_approval_text.strip() == HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT
     worker_version_supported = worker_supports_transit_forwarding_method(
         target_worker,
@@ -1492,11 +1493,19 @@ def haproxy_route_create_final_approval(
             evidence_summary=payload.dry_run_command_id,
         ),
         make_haproxy_readiness_check(
-            check_id="dry_run_command_status_readable",
-            label="dry-run command 状态可读",
-            passed=bool(command and command.status),
-            message=f"dry-run command 状态：{command.status}" if command and command.status else "dry-run command 状态不可读。",
-            next_action="刷新 dry-run command 状态。" if not command or not command.status else "继续检查。",
+            check_id="dry_run_command_succeeded",
+            label="dry-run command 已成功",
+            passed=dry_run_succeeded,
+            message=(
+                "dry-run command 已 succeeded。"
+                if dry_run_succeeded
+                else f"dry-run command 必须为 succeeded，当前状态为 {command.status if command and command.status else 'missing'}。"
+            ),
+            next_action=(
+                "重新生成 HAProxy route dry-run，并确认 dry-run command succeeded 后再进入最终审批。"
+                if not dry_run_succeeded
+                else "继续检查。"
+            ),
             evidence_summary=command.status if command else None,
         ),
         make_haproxy_readiness_check(
@@ -1685,12 +1694,20 @@ def haproxy_route_create_final_approval(
             "summary": (
                 "HAProxy TCP route 创建最终审批包已满足 Go 条件。"
                 if ready
-                else "HAProxy TCP route 创建最终审批包仍有 No-Go / blocked 检查项。"
+                else (
+                    "HAProxy route final approval blocked"
+                    if not dry_run_succeeded
+                    else "HAProxy TCP route 创建最终审批包仍有 No-Go / blocked 检查项。"
+                )
             ),
             "next_action": (
                 "可以进入 Stage 3.3.139，由用户再次明确授权后创建真实 HAProxy TCP route。"
                 if ready
-                else "先处理 blocked 检查项；本阶段不会创建 Worker command 或 HAProxy route。"
+                else (
+                    "请先重新生成并完成 Stage 3.3.137 HAProxy route dry-run，直到 dry-run command succeeded。"
+                    if not dry_run_succeeded
+                    else "先处理 blocked 检查项；本阶段不会创建 Worker command 或 HAProxy route。"
+                )
             ),
             "dry_run_command_id": payload.dry_run_command_id,
             "planned_service_name": payload.planned_service_name,
