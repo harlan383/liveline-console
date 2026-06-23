@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.24-stage-3.3.122"
+const workerVersion = "0.1.25-stage-3.3.137-hotfix-2"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -47,10 +47,12 @@ const commandTimeout = 180 * time.Second
 const formalLandingPort = 27939
 const approvedTransitCreateStage = "Stage 3.3.71-transit-route-worker-create-path"
 const approvedTransitRealCreateStage = "Stage 3.3.73d-transit-route-real-create-code-path"
+const approvedTransitHaproxyDryRunStage = "Stage 3.3.137-new-transit-haproxy-route-create-dry-run"
 const approvedTransitListenPort = 23843
 const approvedTransitLandingTargetHost = "64.90.13.19"
 const approvedTransitLandingTargetPort = 27939
 const approvedTransitForwardingMethod = "socat"
+const approvedTransitHaproxyForwardingMethod = "haproxy_tcp"
 const approvedTransitRouteName = "hk-socat-live-23843"
 const approvedTransitSocatServiceName = "liveline-socat-23843.service"
 const approvedTransitSocatServicePath = "/etc/systemd/system/liveline-socat-23843.service"
@@ -1202,6 +1204,11 @@ func executeTransitRouteCreate(cfg config, hostname string, command workerComman
 }
 
 func executeTransitRouteCreateDryRunWithRequest(cfg config, hostname string, command workerCommand, request transitRouteCreateRequest) (map[string]any, error) {
+	if isTransitHaproxyForwardingMethod(request.ForwardingMethod) {
+		request.ForwardingMethod = approvedTransitHaproxyForwardingMethod
+		return executeTransitRouteCreateHaproxyDryRunWithRequest(cfg, hostname, request)
+	}
+
 	if err := validateTransitRouteCreateDryRunRequest(request); err != nil {
 		return nil, err
 	}
@@ -1259,6 +1266,74 @@ func executeTransitRouteCreateDryRunWithRequest(cfg config, hostname string, com
 			"no cutover",
 		},
 		"next_stage": "Stage 3.3.72-transit-route-create-execution",
+	}, nil
+}
+
+func executeTransitRouteCreateHaproxyDryRunWithRequest(cfg config, hostname string, request transitRouteCreateRequest) (map[string]any, error) {
+	if err := validateTransitRouteCreateHaproxyDryRunRequest(request); err != nil {
+		return nil, err
+	}
+	if request.InterfaceName != "" && request.InterfaceName != cfg.InterfaceName {
+		return nil, errors.New("TRANSIT_INTERFACE_MISMATCH: transit_route_create interface_name does not match current worker")
+	}
+
+	serviceName := transitHaproxyServiceNameForPort(request.PlannedListenPort)
+	configPath := transitHaproxyConfigPathForPort(request.PlannedListenPort)
+	return map[string]any{
+		"status":               "approval_required",
+		"execution_mode":       "dry_run",
+		"real_execution":       false,
+		"summary":              "HAProxy TCP route create dry-run accepted; no HAProxy config, service, or listener was created.",
+		"worker_version":       workerVersion,
+		"hostname":             hostname,
+		"role":                 cfg.Role,
+		"interface_name":       cfg.InterfaceName,
+		"transit_resource_id":  request.TransitResourceID,
+		"landing_node_id":      request.LandingNodeID,
+		"planned_listen_port":  request.PlannedListenPort,
+		"landing_target_host":  request.LandingTargetHost,
+		"landing_target_port":  request.LandingTargetPort,
+		"forwarding_method":    approvedTransitHaproxyForwardingMethod,
+		"purpose":              request.Purpose,
+		"approval_stage":       request.ApprovalStage,
+		"route_name":           request.RouteName,
+		"planned_service_name": serviceName,
+		"planned_config_path":  configPath,
+		"route_created":        false,
+		"haproxy_installed":    false,
+		"listener_bound":       false,
+		"firewall_modified":    false,
+		"share_link_mutated":   false,
+		"cutover":              false,
+		"haproxy_config_plan": map[string]any{
+			"mode":           "tcp",
+			"frontend_bind":  fmt.Sprintf("*:%d", request.PlannedListenPort),
+			"backend_target": fmt.Sprintf("%s:%d", request.LandingTargetHost, request.LandingTargetPort),
+		},
+		"planned_remote_actions": []any{"validate HAProxy TCP approval parameters only", "defer real config/service/listener creation to a later explicit stage"},
+		"checks": []any{
+			map[string]any{"name": "dry_run_required", "passed": true},
+			map[string]any{"name": "approved_haproxy_tcp_parameters_match", "passed": true},
+			map[string]any{"name": "fixed_haproxy_tcp_template_only", "passed": true},
+			map[string]any{"name": "no_arbitrary_shell_payload", "passed": true},
+			map[string]any{"name": "no_haproxy_config_written", "passed": true},
+			map[string]any{"name": "no_listener_created", "passed": true},
+			map[string]any{"name": "no_firewall_mutation", "passed": true},
+			map[string]any{"name": "no_share_link_mutation", "passed": true},
+			map[string]any{"name": "no_cutover", "passed": true},
+		},
+		"safety_boundary": []any{
+			"dry-run plan only",
+			"no arbitrary shell accepted",
+			"no systemd unit content accepted from API",
+			"no HAProxy install, config write, service start, or listener binding",
+			"no firewall mutation",
+			"no Xray mutation",
+			"no nodes.share_link read or modification",
+			"no full client link export",
+			"no cutover",
+		},
+		"next_stage": "Stage 3.3.138-new-transit-haproxy-route-create-final-approval",
 	}, nil
 }
 
@@ -1447,6 +1522,10 @@ func validateTransitRouteCreateWorkerApproval(cfg config, request transitRouteCr
 }
 
 func validateTransitRouteCreateDryRunRequest(request transitRouteCreateRequest) error {
+	if isTransitHaproxyForwardingMethod(request.ForwardingMethod) {
+		request.ForwardingMethod = approvedTransitHaproxyForwardingMethod
+		return validateTransitRouteCreateHaproxyDryRunRequest(request)
+	}
 	if !request.DryRun {
 		return errors.New("transit_route_create dry-run requires dry_run=true")
 	}
@@ -1457,6 +1536,49 @@ func validateTransitRouteCreateDryRunRequest(request transitRouteCreateRequest) 
 		return errors.New("transit_route_create approval_stage does not match Stage 3.3.71")
 	}
 	return validateTransitRouteCreateApprovedParams(request)
+}
+
+func validateTransitRouteCreateHaproxyDryRunRequest(request transitRouteCreateRequest) error {
+	if !request.DryRun {
+		return errors.New("transit_route_create haproxy_tcp dry-run requires dry_run=true")
+	}
+	if !request.ApprovalRequired {
+		return errors.New("transit_route_create haproxy_tcp dry-run requires approval_required=true")
+	}
+	if request.ApprovalStage != approvedTransitHaproxyDryRunStage {
+		return errors.New("transit_route_create haproxy_tcp approval_stage does not match Stage 3.3.137")
+	}
+	if request.TransitResourceID == "" {
+		return errors.New("transit_route_create haproxy_tcp transit_resource_id is required")
+	}
+	if request.LandingNodeID == "" {
+		return errors.New("transit_route_create haproxy_tcp landing_node_id is required")
+	}
+	if request.PlannedListenPort != approvedTransitListenPort {
+		return errors.New("transit_route_create haproxy_tcp planned_listen_port is not approved")
+	}
+	if request.LandingTargetHost != approvedTransitLandingTargetHost {
+		return errors.New("transit_route_create haproxy_tcp landing_target_host is not approved")
+	}
+	if request.LandingTargetPort != approvedTransitLandingTargetPort {
+		return errors.New("transit_route_create haproxy_tcp landing_target_port is not approved")
+	}
+	if request.ForwardingMethod != approvedTransitHaproxyForwardingMethod {
+		return errors.New("transit_route_create haproxy_tcp requires forwarding_method=haproxy_tcp")
+	}
+	if !validTCPPort(request.PlannedListenPort) || !validTCPPort(request.LandingTargetPort) {
+		return errors.New("transit_route_create haproxy_tcp ports must be 1-65535")
+	}
+	if reason, reserved := protectedTransitListenPorts[request.PlannedListenPort]; reserved {
+		return fmt.Errorf("transit_route_create haproxy_tcp planned listen port is protected: %s", reason)
+	}
+	if !safeDialTargetHost(request.LandingTargetHost) {
+		return errors.New("transit_route_create haproxy_tcp landing target host is invalid")
+	}
+	if !transitRouteNameRE.MatchString(request.RouteName) {
+		return errors.New("transit_route_create haproxy_tcp route_name contains unsafe characters")
+	}
+	return nil
 }
 
 func validateTransitRouteCreateRealRequest(cfg config, request transitRouteCreateRequest) error {

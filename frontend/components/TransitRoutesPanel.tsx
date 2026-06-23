@@ -214,8 +214,8 @@ function SafeDeleteModal({
   );
 }
 
-const requiredTransitWorkerVersion = "0.1.24-stage-3.3.122";
-const transitWorkerBinaryChecksum = "cf7990f3ba0f85348fa714edb69a94d36b8752323fe9c843fa676cf50f38fcce";
+const requiredTransitWorkerVersion = "0.1.25-stage-3.3.137-hotfix-2";
+const transitWorkerBinaryChecksum = "fbc2e240bbb8cd64962e5151752cf410951673efadae704d192ca83f2ab89d2b";
 const transitWorkerPublicControllerUrl = "http://my-con.golirong.xyz:8200";
 const transitWorkerPlaceholderToken = "<generated-in-later-stage>";
 const transitWorkerInstallCommandApprovalConfirmText = "CONFIRM_GENERATE_WORKER_INSTALL_COMMAND_LATER";

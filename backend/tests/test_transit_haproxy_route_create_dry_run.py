@@ -66,7 +66,7 @@ class FakeSession:
         worker_present: bool = True,
         worker_status: str = "online",
         worker_role: str = "transit",
-        worker_version: str | None = "0.1.24-stage-3.3.122",
+        worker_version: str | None = "0.1.25-stage-3.3.137-hotfix-2",
         worker_interface: str | None = "eth0",
         worker_heartbeat_recent: bool = True,
     ) -> None:
