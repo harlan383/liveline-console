@@ -14,6 +14,7 @@ import {
   exportTransitRouteCandidate,
   generateTransitWorkerInstallCommand,
   getTransitWorkerAcceptance,
+  getTransitWorkerUpgradeAcceptance,
   getWorkerCommand,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
@@ -41,6 +42,7 @@ import {
   type TransitHaproxyRouteCreateDryRunResult,
   type TransitHaproxyRouteCreateFinalApprovalResult,
   type TransitWorkerAcceptanceResult,
+  type TransitWorkerUpgradeAcceptanceResult,
   type TransitWorkerInstallCommandGenerationResult,
   type TransitRouteWorkerCreateExecuteResponse,
   type TransitRouteData,
@@ -780,6 +782,9 @@ export function TransitServersPanel() {
   const [workerInstallCommandGenerating, setWorkerInstallCommandGenerating] = useState(false);
   const [workerAcceptanceResult, setWorkerAcceptanceResult] = useState<TransitWorkerAcceptanceResult | null>(null);
   const [workerAcceptanceLoading, setWorkerAcceptanceLoading] = useState(false);
+  const [workerUpgradeAcceptanceResult, setWorkerUpgradeAcceptanceResult] =
+    useState<TransitWorkerUpgradeAcceptanceResult | null>(null);
+  const [workerUpgradeAcceptanceLoading, setWorkerUpgradeAcceptanceLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -833,6 +838,8 @@ export function TransitServersPanel() {
     setWorkerInstallCommandGenerating(false);
     setWorkerAcceptanceResult(null);
     setWorkerAcceptanceLoading(false);
+    setWorkerUpgradeAcceptanceResult(null);
+    setWorkerUpgradeAcceptanceLoading(false);
   }
 
   function openAdd() {
@@ -868,6 +875,8 @@ export function TransitServersPanel() {
     setWorkerInstallCommandGenerating(false);
     setWorkerAcceptanceResult(null);
     setWorkerAcceptanceLoading(false);
+    setWorkerUpgradeAcceptanceResult(null);
+    setWorkerUpgradeAcceptanceLoading(false);
   }
 
   async function copyWorkerInstallApprovalChecklist(resource: TransitResourceData) {
@@ -988,6 +997,25 @@ export function TransitServersPanel() {
       setMessage(error instanceof Error ? error.message : "读取 Worker 验收状态失败。");
     } finally {
       setWorkerAcceptanceLoading(false);
+    }
+  }
+
+  async function refreshWorkerUpgradeAcceptance(resource: TransitResourceData) {
+    setWorkerUpgradeAcceptanceLoading(true);
+    try {
+      const result = await getTransitWorkerUpgradeAcceptance(resource.id);
+      if (!result.success) {
+        setWorkerUpgradeAcceptanceResult(null);
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setWorkerUpgradeAcceptanceResult(result.data);
+      setMessage(result.data.acceptance_passed ? "Transit Worker 升级验收通过。" : result.data.next_action);
+    } catch (error) {
+      setWorkerUpgradeAcceptanceResult(null);
+      setMessage(error instanceof Error ? error.message : "读取 Transit Worker 升级验收状态失败。");
+    } finally {
+      setWorkerUpgradeAcceptanceLoading(false);
     }
   }
 
@@ -1368,6 +1396,76 @@ export function TransitServersPanel() {
               {workerAcceptanceResult?.accepted ? (
                 <p className="approval-copy-status">Worker 手动安装验收通过：role / binding / version / heartbeat 均满足要求。</p>
               ) : null}
+            </div>
+            <div className="transit-worker-approval-section worker-acceptance-panel">
+              <strong>Stage 3.3.137-hotfix-3：Transit Worker 升级验收</strong>
+              <span>
+                HAProxy TCP dry-run 需要 transit Worker 升级到要求版本。这里仅读取当前 Worker 版本和 heartbeat，不生成 token、不生成安装命令、不创建
+                Worker command，也不执行远程升级。
+              </span>
+              <div className="worker-install-real-approval-grid">
+                <span>资源</span>
+                <strong>{approvalPreviewResource.name}</strong>
+                <span>当前 Worker 状态</span>
+                <strong className={workerUpgradeAcceptanceResult?.heartbeat_ok ? "approval-state-ok" : "approval-state-warn"}>
+                  {workerUpgradeAcceptanceResult ? displayStatusLabel(workerUpgradeAcceptanceResult.worker_status ?? "unknown") : "待刷新"}
+                </strong>
+                <span>当前 Worker version</span>
+                <strong className={workerUpgradeAcceptanceResult?.version_ok ? "approval-state-ok" : "approval-state-warn"}>
+                  {workerUpgradeAcceptanceResult?.current_worker_version || "待刷新"}
+                </strong>
+                <span>要求 Worker version</span>
+                <strong>{workerUpgradeAcceptanceResult?.required_worker_version || requiredTransitWorkerVersion}</strong>
+                <span>bundled binary checksum</span>
+                <strong>{workerUpgradeAcceptanceResult?.required_worker_checksum || transitWorkerBinaryChecksum}</strong>
+                <span>是否需要升级</span>
+                <strong className={workerUpgradeAcceptanceResult?.upgrade_required ? "approval-state-warn" : "approval-state-ok"}>
+                  {workerUpgradeAcceptanceResult ? (workerUpgradeAcceptanceResult.upgrade_required ? "需要升级" : "不需要") : "待刷新"}
+                </strong>
+                <span>验收状态</span>
+                <strong className={workerUpgradeAcceptanceResult?.acceptance_passed ? "approval-state-ok" : "approval-state-warn"}>
+                  {workerUpgradeAcceptanceResult ? (workerUpgradeAcceptanceResult.acceptance_passed ? "通过" : "阻塞") : "待刷新"}
+                </strong>
+              </div>
+              <div className={`approval-gate-status ${workerUpgradeAcceptanceResult?.acceptance_passed ? "ok" : "warn"}`}>
+                {workerUpgradeAcceptanceResult
+                  ? workerUpgradeAcceptanceResult.summary
+                  : "请刷新 Transit Worker 升级验收。未满足最低版本前，不要重新生成 Stage 3.3.137 HAProxy route dry-run。"}
+              </div>
+              {workerUpgradeAcceptanceResult?.blocked_reason ? (
+                <p className="message">阻塞原因：{workerUpgradeAcceptanceResult.blocked_reason}</p>
+              ) : null}
+              {workerUpgradeAcceptanceResult ? <p className="message">下一步：{workerUpgradeAcceptanceResult.next_action}</p> : null}
+              {workerUpgradeAcceptanceResult ? (
+                <div className="worker-acceptance-checks">
+                  {workerUpgradeAcceptanceResult.checks.map((check) => (
+                    <div className="worker-acceptance-check-row" key={check.id}>
+                      <span className={check.passed ? "approval-state-ok" : "approval-state-warn"}>
+                        {check.passed ? "通过" : "待处理"}
+                      </span>
+                      <strong>{check.label}</strong>
+                      <small>{check.detail}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <ul className="dry-run-safety-list">
+                <li>本验收不会生成 Worker token 或 install command。</li>
+                <li>本验收不会 SSH、不会安装或重启远端 Worker。</li>
+                <li>本验收不会创建 Worker command 或真实 execution command。</li>
+                <li>本验收不会创建 HAProxy route、TransitRoute active record 或绑定 23843。</li>
+                <li>本验收不会读取 / 写入 share_link，也不会 cutover。</li>
+              </ul>
+              <div className="dry-run-actions">
+                <button
+                  className="secondary"
+                  type="button"
+                  disabled={workerUpgradeAcceptanceLoading}
+                  onClick={() => void refreshWorkerUpgradeAcceptance(approvalPreviewResource)}
+                >
+                  {workerUpgradeAcceptanceLoading ? "刷新中..." : "刷新 Worker 升级验收"}
+                </button>
+              </div>
             </div>
             <div className="transit-worker-approval-section">
               <strong>占位安装命令模板</strong>

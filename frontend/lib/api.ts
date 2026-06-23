@@ -756,6 +756,38 @@ export type TransitWorkerAcceptanceResult = {
   safety_boundary: string[];
 };
 
+export type TransitWorkerUpgradeAcceptanceResult = {
+  resource_id: string;
+  resource_name: string;
+  role: "transit";
+  worker_id: string | null;
+  worker_status: string | null;
+  worker_online: boolean;
+  current_worker_version: string | null;
+  required_worker_version: string;
+  required_worker_checksum: string;
+  worker_hostname: string | null;
+  worker_interface_name: string | null;
+  worker_last_heartbeat_at: string | null;
+  worker_found: boolean;
+  server_binding_ok: boolean;
+  role_ok: boolean;
+  heartbeat_ok: boolean;
+  version_present: boolean;
+  version_ok: boolean;
+  upgrade_required: boolean;
+  acceptance_passed: boolean;
+  blocked: boolean;
+  blocked_reason: string | null;
+  summary: string;
+  next_action: string;
+  checks: TransitWorkerAcceptanceCheck[];
+  worker_command_created: boolean;
+  transit_route_created: boolean;
+  share_link_read_or_written: boolean;
+  safety_boundary: string[];
+};
+
 export type WorkerMetadataSummary = {
   received_at?: string | null;
   uptime_seconds?: number | null;
@@ -951,6 +983,12 @@ export async function getTransitWorkerAcceptance(
   resourceId: string,
 ): Promise<ApiResponse<TransitWorkerAcceptanceResult>> {
   return apiFetch<TransitWorkerAcceptanceResult>(`/api/transit-resources/${resourceId}/worker-acceptance`);
+}
+
+export async function getTransitWorkerUpgradeAcceptance(
+  resourceId: string,
+): Promise<ApiResponse<TransitWorkerUpgradeAcceptanceResult>> {
+  return apiFetch<TransitWorkerUpgradeAcceptanceResult>(`/api/transit-resources/${resourceId}/worker-upgrade-acceptance`);
 }
 
 export type CsrfResult = {
