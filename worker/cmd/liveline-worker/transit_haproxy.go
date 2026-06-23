@@ -76,8 +76,8 @@ func validateTransitRouteCreateHaproxyRequest(cfg config, request transitRouteCr
 	if request.ExecutionMode != "real_create" {
 		return errors.New("haproxy_tcp real execution requires execution_mode=real_create")
 	}
-	if request.ApprovalStage != approvedTransitRealCreateStage {
-		return errors.New("haproxy_tcp approval_stage does not match protected real-create stage")
+	if request.ApprovalStage != approvedTransitHaproxyRealCreateStage {
+		return errors.New("haproxy_tcp approval_stage does not match Stage 3.3.139 protected real-create stage")
 	}
 	if !request.ApprovedReal {
 		return errors.New("haproxy_tcp requires approved_real_execution=true")
@@ -93,6 +93,18 @@ func validateTransitRouteCreateHaproxyRequest(cfg config, request transitRouteCr
 	}
 	if normalizeTransitHaproxyForwardingMethod(request.ForwardingMethod) != transitHaproxyForwardingMethod {
 		return errors.New("haproxy_tcp create path requires forwarding_method=haproxy_tcp")
+	}
+	if request.PlannedListenPort != approvedTransitListenPort {
+		return errors.New("haproxy_tcp planned_listen_port is not approved")
+	}
+	if request.LandingTargetHost != approvedTransitLandingTargetHost {
+		return errors.New("haproxy_tcp landing_target_host is not approved")
+	}
+	if request.LandingTargetPort != approvedTransitLandingTargetPort {
+		return errors.New("haproxy_tcp landing_target_port is not approved")
+	}
+	if request.RouteName != approvedTransitHaproxyRouteName {
+		return errors.New("haproxy_tcp route_name is not approved")
 	}
 	if !validTCPPort(request.PlannedListenPort) || !validTCPPort(request.LandingTargetPort) {
 		return errors.New("haproxy_tcp ports must be 1-65535")
