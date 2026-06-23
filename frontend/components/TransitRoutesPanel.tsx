@@ -7,6 +7,7 @@ import { TransitReadonlyPreflightSimplePanel } from "@/components/TransitReadonl
 import {
   apiFetch,
   createTransitResource,
+  createTransitHaproxyRouteDryRun,
   createTransitRouteWorkerExecuteCommand,
   createTransitReadonlyPreflightCommand,
   createWorkerCommand,
@@ -36,6 +37,7 @@ import {
   type TransitResourceData,
   type TransitResourceListResult,
   type TransitHaproxyReadinessApprovalResult,
+  type TransitHaproxyRouteCreateDryRunResult,
   type TransitWorkerAcceptanceResult,
   type TransitWorkerInstallCommandGenerationResult,
   type TransitRouteWorkerCreateExecuteResponse,
@@ -1784,6 +1786,9 @@ export function TransitRoutesPanel() {
   const [haproxyReadinessConfirmations, setHaproxyReadinessConfirmations] = useState<HaproxyReadinessConfirmations>(
     emptyHaproxyReadinessConfirmations,
   );
+  const [haproxyDryRun, setHaproxyDryRun] = useState<TransitHaproxyRouteCreateDryRunResult | null>(null);
+  const [haproxyDryRunLoading, setHaproxyDryRunLoading] = useState(false);
+  const [haproxyDryRunMessage, setHaproxyDryRunMessage] = useState("HAProxy route dry-run 尚未生成。");
   const [healthConfirmed, setHealthConfirmed] = useState(false);
   const [boundaryConfirmed, setBoundaryConfirmed] = useState(false);
   const [workerBoundaryConfirmed, setWorkerBoundaryConfirmed] = useState(false);
@@ -2362,6 +2367,8 @@ export function TransitRoutesPanel() {
   useEffect(() => {
     setHaproxyReadiness(null);
     setHaproxyReadinessMessage("HAProxy TCP readiness 尚未生成。");
+    setHaproxyDryRun(null);
+    setHaproxyDryRunMessage("HAProxy route dry-run 尚未生成。");
   }, [
     selectedResource?.id,
     selectedNode?.id,
@@ -2483,6 +2490,60 @@ export function TransitRoutesPanel() {
       setHaproxyReadinessMessage(error instanceof Error ? error.message : "生成 HAProxy readiness 失败。");
     } finally {
       setHaproxyReadinessLoading(false);
+    }
+  }
+
+  async function createHaproxyRouteDryRun() {
+    if (!selectedResource || !selectedNode || plannedPort === null || targetPort <= 0) {
+      setHaproxyDryRunMessage("计划参数不完整，不能生成 HAProxy route dry-run。");
+      return;
+    }
+    if (draft.forwardingMethod !== "haproxy_tcp") {
+      setHaproxyDryRunMessage("请先把转发方式切换为 HAProxy TCP mode。");
+      return;
+    }
+    if (!haproxyReadiness?.ready) {
+      setHaproxyDryRunMessage("请先生成并通过 HAProxy TCP readiness 审批包。");
+      return;
+    }
+
+    setHaproxyDryRunLoading(true);
+    setHaproxyDryRunMessage("正在创建 HAProxy route dry-run Worker command；不会创建真实 HAProxy route。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await createTransitHaproxyRouteDryRun(
+        {
+          transit_resource_id: selectedResource.id,
+          landing_node_id: selectedNode.id,
+          planned_listen_port: plannedPort,
+          landing_target_host: landingHostForNode(selectedNode),
+          landing_target_port: targetPort,
+          forwarding_method: "haproxy_tcp",
+          purpose: draft.purpose || null,
+          route_name: haproxyReadiness.planned_route.route_name || `haproxy-tcp-${plannedPort}`,
+          approval_stage: "Stage 3.3.137-new-transit-haproxy-route-create-dry-run",
+          readiness_approval_confirmed: true,
+          dry_run: true,
+          approval_required: true,
+          firewall_security_group_confirmed: haproxyReadinessConfirmations.securityGroup,
+          cloud_firewall_confirmed: haproxyReadinessConfirmations.cloudFirewall,
+          server_firewall_confirmed: haproxyReadinessConfirmations.serverFirewall,
+          no_cutover_confirmed: haproxyReadinessConfirmations.noCutover,
+          no_node_share_link_change_confirmed: haproxyReadinessConfirmations.noShareLinkMutation,
+          no_full_client_link_confirmed: haproxyReadinessConfirmations.noFullClientLink,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setHaproxyDryRunMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setHaproxyDryRun(result.data);
+      setHaproxyDryRunMessage(`HAProxy route dry-run command 已创建：${result.data.command.id}。未创建真实监听。`);
+    } catch (error) {
+      setHaproxyDryRunMessage(error instanceof Error ? error.message : "创建 HAProxy route dry-run 失败。");
+    } finally {
+      setHaproxyDryRunLoading(false);
     }
   }
 
@@ -2884,7 +2945,7 @@ export function TransitRoutesPanel() {
 
             <div className="haproxy-disabled-actions">
               <strong>后续阶段入口</strong>
-              <span>真实创建 HAProxy route、创建 Worker command、安装 HAProxy、生成客户端链接均未接入本阶段。</span>
+              <span>本阶段只允许创建 dry-run Worker command；真实创建 HAProxy route、安装 HAProxy、绑定监听和生成客户端链接均未接入。</span>
               <button className="secondary compact" disabled type="button">
                 下一阶段才允许创建 HAProxy route
               </button>
@@ -2924,6 +2985,78 @@ export function TransitRoutesPanel() {
                 </details>
               </div>
             ) : null}
+
+            <div className="haproxy-dry-run-panel">
+              <div className="status-row">
+                <div>
+                  <h3>HAProxy route 创建 dry-run</h3>
+                  <p className="message">
+                    只创建 dry-run Worker command，用于记录计划 service、监听端口、目标端口和安全边界；不会创建真实 HAProxy route。
+                  </p>
+                </div>
+                <button
+                  className="secondary"
+                  disabled={haproxyDryRunLoading || !haproxyReadiness?.ready}
+                  type="button"
+                  onClick={() => void createHaproxyRouteDryRun()}
+                >
+                  {haproxyDryRunLoading ? "生成中" : "生成 HAProxy route dry-run 创建计划"}
+                </button>
+              </div>
+
+              <div className="haproxy-readiness-grid">
+                <span>计划 service</span>
+                <strong>{haproxyReadiness?.planned_route.service_name ?? `liveline-haproxy-${draft.plannedListenPort || "-"}.service`}</strong>
+                <span>计划监听</span>
+                <strong>{draft.plannedListenPort || "-"}</strong>
+                <span>目标</span>
+                <strong>{selectedNode ? `${landingHostForNode(selectedNode)}:${targetPort || "-"}` : "未选择"}</strong>
+                <span>转发方式</span>
+                <strong>haproxy_tcp</strong>
+                <span>下一阶段</span>
+                <strong>Stage 3.3.138 final approval</strong>
+              </div>
+
+              {haproxyDryRun ? (
+                <div className="haproxy-readiness-result ready">
+                  <strong>dry-run command 已创建：{haproxyDryRun.command.id}</strong>
+                  <div className="haproxy-readiness-grid">
+                    <span>planned service</span>
+                    <strong>{haproxyDryRun.planned_service_name}</strong>
+                    <span>planned listen</span>
+                    <strong>{haproxyDryRun.planned_listen_port}</strong>
+                    <span>target</span>
+                    <strong>{haproxyDryRun.landing_target_host}:{haproxyDryRun.landing_target_port}</strong>
+                    <span>dry_run</span>
+                    <strong>{String(haproxyDryRun.dry_run)}</strong>
+                    <span>route_created</span>
+                    <strong>{String(haproxyDryRun.route_created)}</strong>
+                    <span>listener_bound</span>
+                    <strong>{String(haproxyDryRun.listener_bound)}</strong>
+                    <span>next stage</span>
+                    <strong>{haproxyDryRun.next_stage}</strong>
+                  </div>
+                  <details className="node-create-safety-details">
+                    <summary>dry-run 安全边界</summary>
+                    <div className="node-create-safety-body">
+                      {haproxyDryRun.safety_boundary.map((item) => (
+                        <span key={item}>{item}</span>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+              ) : null}
+
+              <div className="haproxy-disabled-actions">
+                <strong>真实执行未启用</strong>
+                <span>当前没有“创建 HAProxy route / 安装 HAProxy / 绑定监听 / 生成客户端链接 / cutover”的可点击入口。</span>
+                <button className="secondary compact" disabled type="button">
+                  Stage 3.3.138 final approval 后再启用
+                </button>
+              </div>
+
+              <p className="message">{haproxyDryRunMessage}</p>
+            </div>
 
             <p className="message">{haproxyReadinessMessage}</p>
           </div>
