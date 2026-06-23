@@ -14,7 +14,13 @@ from app.schemas.transit_route import (
     TransitRouteWorkerCreatePlanRequest,
 )
 from app.schemas.worker_commands import WorkerCommandCreate
-from app.services.worker_targeting import minimum_worker_version_for_command, minimum_worker_version_key_for_command
+from app.services.worker_targeting import (
+    minimum_worker_version_for_command,
+    minimum_worker_version_for_transit_forwarding_method,
+    minimum_worker_version_key_for_command,
+    minimum_worker_version_key_for_transit_forwarding_method,
+    parse_worker_version,
+)
 
 
 class WorkerCommandResultNormalizationTests(unittest.TestCase):
@@ -102,6 +108,20 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         self.assertEqual(
             minimum_worker_version_key_for_command("transit_route_create"),
             (0, 1, 20, 3, 3, 73),
+        )
+
+    def test_haproxy_tcp_minimum_worker_version_requires_dry_run_hotfix(self):
+        self.assertEqual(
+            minimum_worker_version_for_transit_forwarding_method("haproxy_tcp"),
+            "0.1.25-stage-3.3.137-hotfix-2",
+        )
+        self.assertEqual(
+            minimum_worker_version_key_for_transit_forwarding_method("haproxy_tcp"),
+            (0, 1, 25, 3, 3, 137),
+        )
+        self.assertLess(
+            parse_worker_version("0.1.24-stage-3.3.122"),
+            minimum_worker_version_key_for_transit_forwarding_method("haproxy_tcp"),
         )
 
     def test_sanitize_command_payload_preserves_share_link_confirmation_boolean_only(self):

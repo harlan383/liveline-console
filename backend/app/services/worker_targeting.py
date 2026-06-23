@@ -18,11 +18,11 @@ MIN_TRANSIT_READONLY_PREFLIGHT_VERSION = "0.1.8-stage-3.3.68"
 MIN_TRANSIT_READONLY_PREFLIGHT_VERSION_KEY = (0, 1, 8, 3, 3, 68)
 MIN_TRANSIT_ROUTE_CREATE_VERSION = "0.1.20-stage-3.3.73"
 MIN_TRANSIT_ROUTE_CREATE_VERSION_KEY = (0, 1, 20, 3, 3, 73)
-MIN_TRANSIT_ROUTE_HAPROXY_TCP_VERSION = "0.1.24-stage-3.3.122"
-MIN_TRANSIT_ROUTE_HAPROXY_TCP_VERSION_KEY = (0, 1, 24, 3, 3, 122)
+MIN_TRANSIT_ROUTE_HAPROXY_TCP_VERSION = "0.1.25-stage-3.3.137-hotfix-2"
+MIN_TRANSIT_ROUTE_HAPROXY_TCP_VERSION_KEY = (0, 1, 25, 3, 3, 137)
 MIN_REMOTE_CLEANUP_VERSION = "0.1.21-stage-3.3.97"
 MIN_REMOTE_CLEANUP_VERSION_KEY = (0, 1, 21, 3, 3, 97)
-VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+))?$")
+VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+)(?:-hotfix-\d+)?)?$")
 REMOTE_CLEANUP_COMMAND_TYPES = {
     "cleanup_landing_node",
     "cleanup_landing_server",

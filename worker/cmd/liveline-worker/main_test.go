@@ -589,12 +589,88 @@ func approvedTransitRouteCreatePayload() map[string]any {
 	}
 }
 
+func approvedTransitHaproxyRouteCreatePayload() map[string]any {
+	return map[string]any{
+		"command_intent":       "haproxy_route_create_dry_run",
+		"transit_resource_id":  testTransitResourceID,
+		"transit_worker_id":    testTransitWorkerID,
+		"interface_name":       testTransitInterfaceName,
+		"landing_node_id":      testTransitLandingNodeID,
+		"planned_listen_port":  approvedTransitListenPort,
+		"landing_target_host":  approvedTransitLandingTargetHost,
+		"landing_target_port":  approvedTransitLandingTargetPort,
+		"forwarding_method":    approvedTransitHaproxyForwardingMethod,
+		"purpose":              "直播",
+		"approval_stage":       approvedTransitHaproxyDryRunStage,
+		"dry_run":              true,
+		"approval_required":    true,
+		"real_execution":       false,
+		"route_created":        false,
+		"haproxy_installed":    false,
+		"listener_bound":       false,
+		"firewall_modified":    false,
+		"share_link_mutated":   false,
+		"cutover":              false,
+		"route_name":           "haproxy-tcp-23843",
+		"planned_service_name": "liveline-haproxy-23843.service",
+		"haproxy_config_plan": map[string]any{
+			"mode":           "tcp",
+			"frontend_bind":  "*:23843",
+			"backend_target": "64.90.13.19:27939",
+		},
+		"safety_boundary": []any{"dry-run plan only", "no arbitrary shell accepted"},
+	}
+}
+
 func approvedTransitRouteCreateConfig() config {
 	return config{
 		Role:          "transit",
 		WorkerID:      testTransitWorkerID,
 		ServerID:      testTransitResourceID,
 		InterfaceName: testTransitInterfaceName,
+	}
+}
+
+func TestTransitRouteCreateHaproxyDryRunReturnsPlanOnly(t *testing.T) {
+	command := workerCommand{
+		ID:          "12345678-1234-1234-1234-123456789abc",
+		CommandType: "transit_route_create",
+		Payload:     approvedTransitHaproxyRouteCreatePayload(),
+	}
+	result, err := executeTransitRouteCreate(
+		approvedTransitRouteCreateConfig(),
+		"WEPC202605221223335",
+		command,
+	)
+	if err != nil {
+		t.Fatalf("executeTransitRouteCreate returned error: %v", err)
+	}
+	if result["status"] != "approval_required" {
+		t.Fatalf("status = %#v, want approval_required", result["status"])
+	}
+	if result["execution_mode"] != "dry_run" {
+		t.Fatalf("execution_mode = %#v, want dry_run", result["execution_mode"])
+	}
+	if result["real_execution"] != false {
+		t.Fatalf("real_execution = %#v, want false", result["real_execution"])
+	}
+	if result["forwarding_method"] != approvedTransitHaproxyForwardingMethod {
+		t.Fatalf("forwarding_method = %#v, want %q", result["forwarding_method"], approvedTransitHaproxyForwardingMethod)
+	}
+	if intResultValue(result["planned_listen_port"]) != approvedTransitListenPort {
+		t.Fatalf("planned_listen_port = %#v, want %d", result["planned_listen_port"], approvedTransitListenPort)
+	}
+	if result["approval_stage"] != approvedTransitHaproxyDryRunStage {
+		t.Fatalf("approval_stage = %#v, want %q", result["approval_stage"], approvedTransitHaproxyDryRunStage)
+	}
+	if result["route_created"] != false || result["haproxy_installed"] != false || result["listener_bound"] != false {
+		t.Fatalf("haproxy dry-run mutated route state: %#v", result)
+	}
+	if result["firewall_modified"] != false || result["share_link_mutated"] != false || result["cutover"] != false {
+		t.Fatalf("haproxy dry-run crossed safety boundary: %#v", result)
+	}
+	if result["next_stage"] != "Stage 3.3.138-new-transit-haproxy-route-create-final-approval" {
+		t.Fatalf("next_stage = %#v", result["next_stage"])
 	}
 }
 
@@ -624,6 +700,9 @@ func TestTransitRouteCreateDryRunReturnsPlanOnly(t *testing.T) {
 	if intResultValue(result["landing_target_port"]) != approvedTransitLandingTargetPort {
 		t.Fatalf("landing_target_port = %#v, want %d", result["landing_target_port"], approvedTransitLandingTargetPort)
 	}
+	if result["forwarding_method"] == approvedTransitHaproxyForwardingMethod {
+		t.Fatalf("socat dry-run used haproxy forwarding: %#v", result["forwarding_method"])
+	}
 	plannedService := result["planned_service"].(map[string]any)
 	serviceName := stringResultValue(plannedService["name"])
 	if !strings.HasPrefix(serviceName, "liveline-socat-") || !strings.HasSuffix(serviceName, ".service") {
@@ -646,6 +725,52 @@ func TestTransitRouteCreateDryRunRejectsArbitraryShellPayload(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported execution field") {
 		t.Fatalf("error = %q, want unsupported execution field", err.Error())
+	}
+}
+
+func TestTransitRouteCreateHaproxyDryRunRejectsOldSocatStage(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitHaproxyRouteCreatePayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ApprovalStage = approvedTransitCreateStage
+	err = validateTransitRouteCreateDryRunRequest(request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateDryRunRequest returned nil for old socat stage")
+	}
+	if !strings.Contains(err.Error(), "Stage 3.3.137") {
+		t.Fatalf("error = %q, want Stage 3.3.137 approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateHaproxyDryRunRejectsNonApprovedPort(t *testing.T) {
+	request, err := parseTransitRouteCreateRequest(approvedTransitHaproxyRouteCreatePayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.PlannedListenPort = 24731
+	err = validateTransitRouteCreateDryRunRequest(request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateDryRunRequest returned nil for non-approved HAProxy port")
+	}
+	if !strings.Contains(err.Error(), "planned_listen_port is not approved") {
+		t.Fatalf("error = %q, want planned_listen_port approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateHaproxyDryRunRejectsSocatForwardingMethod(t *testing.T) {
+	payload := approvedTransitHaproxyRouteCreatePayload()
+	payload["forwarding_method"] = approvedTransitForwardingMethod
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateDryRunRequest(request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateDryRunRequest returned nil for socat forwarding with HAProxy stage")
+	}
+	if !strings.Contains(err.Error(), "Stage 3.3.71") {
+		t.Fatalf("error = %q, want socat Stage 3.3.71 validation path", err.Error())
 	}
 }
 

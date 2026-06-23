@@ -45,7 +45,7 @@ from app.services.worker_binding import (
 from app.services.worker_commands import serialize_worker_command
 
 router = APIRouter()
-EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.24-stage-3.3.122"
+EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.25-stage-3.3.137-hotfix-2"
 TRANSIT_WORKER_ACCEPTANCE_RESOURCE_STATUSES = {"pending_worker", "worker_online", "worker_offline"}
 
 
