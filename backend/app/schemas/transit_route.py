@@ -17,6 +17,8 @@ PROTECTED_CREATE_PORTS = {22, 8443, 18443, 20575}
 APPROVED_TRANSIT_ROUTE_CREATE_STAGE = "Stage 3.3.71-transit-route-worker-create-path"
 APPROVED_TRANSIT_ROUTE_REAL_CREATE_STAGE = "Stage 3.3.73d-transit-route-real-create-code-path"
 HAPROXY_ROUTE_CREATE_DRY_RUN_STAGE = "Stage 3.3.137-new-transit-haproxy-route-create-dry-run"
+HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_STAGE = "Stage 3.3.138-new-transit-haproxy-route-create-final-approval"
+HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT = "CONFIRM_HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_ONLY"
 APPROVED_TRANSIT_RESOURCE_ID = "1e222459-9fa2-4c62-800f-a3b35edb7df8"
 APPROVED_TRANSIT_WORKER_ID = "f2e16197-e953-46dd-90af-66f64759a2a9"
 APPROVED_LANDING_NODE_ID = "a71472c6-f62c-43b5-a223-9f5f070ae4ef"
@@ -322,6 +324,57 @@ class TransitHaproxyRouteCreateDryRunRequest(BaseModel):
             raise ValueError("approval_stage 不匹配当前 dry-run 阶段")
         return cleaned
 
+
+class TransitHaproxyRouteCreateFinalApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run_command_id: str = Field(min_length=1, max_length=36)
+    transit_resource_id: str = Field(min_length=1, max_length=36)
+    landing_node_id: str = Field(min_length=1, max_length=36)
+    planned_listen_port: int = Field(ge=1, le=65535)
+    landing_target_host: str = Field(min_length=1, max_length=255)
+    landing_target_port: int = Field(ge=1, le=65535)
+    forwarding_method: str = FORWARDING_METHOD_HAPROXY_TCP
+    route_name: str = Field(min_length=1, max_length=120)
+    planned_service_name: str = Field(min_length=1, max_length=160)
+    approval_stage: str = HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_STAGE
+    dry_run_verified: bool = False
+    firewall_security_group_confirmed: bool = False
+    cloud_firewall_confirmed: bool = False
+    server_firewall_confirmed: bool = False
+    no_cutover_confirmed: bool = False
+    no_node_share_link_change_confirmed: bool = False
+    no_full_client_link_confirmed: bool = False
+    final_approval_text: str = Field(min_length=1, max_length=120)
+
+    @field_validator("forwarding_method")
+    @classmethod
+    def validate_haproxy_final_forwarding_method(cls, value: str) -> str:
+        return normalize_forwarding_method(value)
+
+    @field_validator("route_name")
+    @classmethod
+    def validate_haproxy_final_route_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not TRANSIT_ROUTE_SAFE_NAME_RE.match(cleaned):
+            raise ValueError("route_name 只能包含字母、数字、点、下划线和短横线，并且必须以字母或数字开头")
+        return cleaned
+
+    @field_validator("planned_service_name")
+    @classmethod
+    def validate_haproxy_final_service_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not re.match(r"^liveline-haproxy-[0-9]{1,5}\.service$", cleaned):
+            raise ValueError("planned_service_name 必须是 liveline-haproxy-<port>.service")
+        return cleaned
+
+    @field_validator("approval_stage")
+    @classmethod
+    def validate_haproxy_final_approval_stage(cls, value: str) -> str:
+        cleaned = value.strip()
+        if cleaned != HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_STAGE:
+            raise ValueError("approval_stage 不匹配当前 final approval 阶段")
+        return cleaned
 
 class TransitRouteWorkerCreatePlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

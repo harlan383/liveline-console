@@ -23,6 +23,7 @@ import {
   REMOTE_CLEANUP_CONFIRM_TEXT,
   requestReadonlyPreflightPlan,
   requestTransitHaproxyReadinessApproval,
+  requestTransitHaproxyRouteFinalApproval,
   type CsrfResult,
   type NodeData,
   type NodeListResult,
@@ -38,6 +39,7 @@ import {
   type TransitResourceListResult,
   type TransitHaproxyReadinessApprovalResult,
   type TransitHaproxyRouteCreateDryRunResult,
+  type TransitHaproxyRouteCreateFinalApprovalResult,
   type TransitWorkerAcceptanceResult,
   type TransitWorkerInstallCommandGenerationResult,
   type TransitRouteWorkerCreateExecuteResponse,
@@ -124,6 +126,8 @@ const emptyHaproxyReadinessConfirmations: HaproxyReadinessConfirmations = {
   noShareLinkMutation: false,
   noFullClientLink: false,
 };
+
+const HAPROXY_FINAL_APPROVAL_TEXT = "CONFIRM_HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_ONLY";
 
 function isOfflineLocalRemoveOffer(data: unknown): data is RemoteCleanupUnavailableData {
   return Boolean(
@@ -1789,6 +1793,10 @@ export function TransitRoutesPanel() {
   const [haproxyDryRun, setHaproxyDryRun] = useState<TransitHaproxyRouteCreateDryRunResult | null>(null);
   const [haproxyDryRunLoading, setHaproxyDryRunLoading] = useState(false);
   const [haproxyDryRunMessage, setHaproxyDryRunMessage] = useState("HAProxy route dry-run 尚未生成。");
+  const [haproxyFinalApproval, setHaproxyFinalApproval] = useState<TransitHaproxyRouteCreateFinalApprovalResult | null>(null);
+  const [haproxyFinalApprovalLoading, setHaproxyFinalApprovalLoading] = useState(false);
+  const [haproxyFinalApprovalMessage, setHaproxyFinalApprovalMessage] = useState("HAProxy route 最终审批包尚未生成。");
+  const [haproxyFinalApprovalText, setHaproxyFinalApprovalText] = useState("");
   const [healthConfirmed, setHealthConfirmed] = useState(false);
   const [boundaryConfirmed, setBoundaryConfirmed] = useState(false);
   const [workerBoundaryConfirmed, setWorkerBoundaryConfirmed] = useState(false);
@@ -2369,6 +2377,9 @@ export function TransitRoutesPanel() {
     setHaproxyReadinessMessage("HAProxy TCP readiness 尚未生成。");
     setHaproxyDryRun(null);
     setHaproxyDryRunMessage("HAProxy route dry-run 尚未生成。");
+    setHaproxyFinalApproval(null);
+    setHaproxyFinalApprovalMessage("HAProxy route 最终审批包尚未生成。");
+    setHaproxyFinalApprovalText("");
   }, [
     selectedResource?.id,
     selectedNode?.id,
@@ -2539,11 +2550,64 @@ export function TransitRoutesPanel() {
         return;
       }
       setHaproxyDryRun(result.data);
+      setHaproxyFinalApproval(null);
+      setHaproxyFinalApprovalText("");
+      setHaproxyFinalApprovalMessage("HAProxy route 最终审批包尚未生成。");
       setHaproxyDryRunMessage(`HAProxy route dry-run command 已创建：${result.data.command.id}。未创建真实监听。`);
     } catch (error) {
       setHaproxyDryRunMessage(error instanceof Error ? error.message : "创建 HAProxy route dry-run 失败。");
     } finally {
       setHaproxyDryRunLoading(false);
+    }
+  }
+
+  async function generateHaproxyFinalApproval() {
+    if (!selectedResource || !selectedNode || !haproxyDryRun) {
+      setHaproxyFinalApprovalMessage("缺少 dry-run 结果，不能生成最终审批包。");
+      return;
+    }
+    if (haproxyFinalApprovalText.trim() !== HAPROXY_FINAL_APPROVAL_TEXT) {
+      setHaproxyFinalApprovalMessage(`请先输入最终确认文本：${HAPROXY_FINAL_APPROVAL_TEXT}`);
+      return;
+    }
+
+    setHaproxyFinalApprovalLoading(true);
+    setHaproxyFinalApprovalMessage("正在生成 HAProxy route 最终审批包；不会创建 Worker command。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await requestTransitHaproxyRouteFinalApproval(
+        {
+          dry_run_command_id: haproxyDryRun.command.id,
+          transit_resource_id: selectedResource.id,
+          landing_node_id: selectedNode.id,
+          planned_listen_port: haproxyDryRun.planned_listen_port,
+          landing_target_host: haproxyDryRun.landing_target_host,
+          landing_target_port: haproxyDryRun.landing_target_port,
+          forwarding_method: "haproxy_tcp",
+          route_name: haproxyDryRun.route_name,
+          planned_service_name: haproxyDryRun.planned_service_name,
+          approval_stage: "Stage 3.3.138-new-transit-haproxy-route-create-final-approval",
+          dry_run_verified: true,
+          firewall_security_group_confirmed: haproxyReadinessConfirmations.securityGroup,
+          cloud_firewall_confirmed: haproxyReadinessConfirmations.cloudFirewall,
+          server_firewall_confirmed: haproxyReadinessConfirmations.serverFirewall,
+          no_cutover_confirmed: haproxyReadinessConfirmations.noCutover,
+          no_node_share_link_change_confirmed: haproxyReadinessConfirmations.noShareLinkMutation,
+          no_full_client_link_confirmed: haproxyReadinessConfirmations.noFullClientLink,
+          final_approval_text: haproxyFinalApprovalText.trim(),
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setHaproxyFinalApprovalMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setHaproxyFinalApproval(result.data);
+      setHaproxyFinalApprovalMessage(result.data.summary);
+    } catch (error) {
+      setHaproxyFinalApprovalMessage(error instanceof Error ? error.message : "生成 HAProxy route 最终审批包失败。");
+    } finally {
+      setHaproxyFinalApprovalLoading(false);
     }
   }
 
@@ -3044,6 +3108,105 @@ export function TransitRoutesPanel() {
                       ))}
                     </div>
                   </details>
+                </div>
+              ) : null}
+
+              {haproxyDryRun ? (
+                <div className="haproxy-final-approval-panel">
+                  <div className="status-row">
+                    <div>
+                      <h3>HAProxy route 创建最终审批</h3>
+                      <p className="message">
+                        只生成最终审批包和 Go / No-Go 检查；不会创建 Worker command、HAProxy route、监听端口或客户端链接。
+                      </p>
+                    </div>
+                    <button
+                      className="secondary"
+                      disabled={haproxyFinalApprovalLoading || haproxyFinalApprovalText.trim() !== HAPROXY_FINAL_APPROVAL_TEXT}
+                      type="button"
+                      onClick={() => void generateHaproxyFinalApproval()}
+                    >
+                      {haproxyFinalApprovalLoading ? "生成中" : "生成 HAProxy route 最终审批包"}
+                    </button>
+                  </div>
+
+                  <div className="haproxy-readiness-grid">
+                    <span>dry-run command</span>
+                    <strong>{haproxyDryRun.command.id}</strong>
+                    <span>planned service</span>
+                    <strong>{haproxyDryRun.planned_service_name}</strong>
+                    <span>planned listen</span>
+                    <strong>{haproxyDryRun.planned_listen_port}</strong>
+                    <span>target</span>
+                    <strong>{haproxyDryRun.landing_target_host}:{haproxyDryRun.landing_target_port}</strong>
+                    <span>route name</span>
+                    <strong>{haproxyDryRun.route_name}</strong>
+                    <span>Worker</span>
+                    <strong>
+                      {selectedResource?.worker_online ? "online" : displayValue(selectedResource?.worker_status)} / {displayValue(selectedResource?.worker_version)} / {displayValue(selectedResource?.worker_interface_name)}
+                    </strong>
+                  </div>
+
+                  <label className="wide-field">
+                    最终审批确认文本
+                    <input
+                      placeholder={HAPROXY_FINAL_APPROVAL_TEXT}
+                      value={haproxyFinalApprovalText}
+                      onChange={(event) => setHaproxyFinalApprovalText(event.target.value)}
+                    />
+                    <span className="field-hint">
+                      请输入 {HAPROXY_FINAL_APPROVAL_TEXT}。这只生成审批包，不执行真实创建。
+                    </span>
+                  </label>
+
+                  {haproxyFinalApproval ? (
+                    <div className={`haproxy-readiness-result ${haproxyFinalApproval.ready_for_real_create ? "ready" : "blocked"}`}>
+                      <strong>
+                        ready_for_real_create: {String(haproxyFinalApproval.ready_for_real_create)} / blocked: {String(haproxyFinalApproval.blocked)}
+                      </strong>
+                      <span>{haproxyFinalApproval.next_action}</span>
+                      <div className="haproxy-readiness-grid">
+                        <span>next stage</span>
+                        <strong>{haproxyFinalApproval.next_stage}</strong>
+                        <span>Worker command</span>
+                        <strong>{String(haproxyFinalApproval.worker_command_created)}</strong>
+                        <span>route_created</span>
+                        <strong>{String(haproxyFinalApproval.route_created)}</strong>
+                        <span>listener_bound</span>
+                        <strong>{String(haproxyFinalApproval.listener_bound)}</strong>
+                        <span>cutover</span>
+                        <strong>{String(haproxyFinalApproval.cutover)}</strong>
+                      </div>
+                      <div className="haproxy-readiness-checks">
+                        {haproxyFinalApproval.checks.map((check) => (
+                          <div className="haproxy-readiness-check" key={check.id}>
+                            <span className={`pill ${check.passed ? "ok" : "warn"}`}>{check.passed ? "通过" : "阻塞"}</span>
+                            <strong>{check.label}</strong>
+                            <span>{check.message}</span>
+                            {!check.passed ? <small>{check.next_action}</small> : null}
+                          </div>
+                        ))}
+                      </div>
+                      <details className="node-create-safety-details">
+                        <summary>最终审批安全边界</summary>
+                        <div className="node-create-safety-body">
+                          {haproxyFinalApproval.safety_boundary.map((item) => (
+                            <span key={item}>{item}</span>
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  ) : null}
+
+                  <div className="haproxy-disabled-actions">
+                    <strong>Stage 3.3.139 才允许真实创建</strong>
+                    <span>当前没有“创建 HAProxy route / 安装 HAProxy / 启动 HAProxy / 创建监听 / 生成客户端链接 / cutover”的可点击入口。</span>
+                    <button className="secondary compact" disabled type="button">
+                      Stage 3.3.139 才允许真实创建
+                    </button>
+                  </div>
+
+                  <p className="message">{haproxyFinalApprovalMessage}</p>
                 </div>
               ) : null}
 
