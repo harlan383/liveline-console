@@ -1456,6 +1456,37 @@ export function TransitServersPanel() {
                 <li>本验收不会创建 HAProxy route、TransitRoute active record 或绑定 23843。</li>
                 <li>本验收不会读取 / 写入 share_link，也不会 cutover。</li>
               </ul>
+              <div className="transit-worker-approval-section">
+                <strong>Stage 3.3.137-hotfix-4：手动升级 runbook</strong>
+                <span>
+                  这是手动升级 Worker 的准备阶段。系统不会远程执行任何命令；升级需要用户在 transit VPS 上手动完成。
+                  升级完成后刷新验收，看到 Worker version 满足要求后，才能重新执行 Stage 3.3.137 dry-run。
+                </span>
+                <div className="worker-install-real-approval-grid">
+                  <span>目标资源</span>
+                  <strong>{approvalPreviewResource.name}</strong>
+                  <span>当前 Worker version</span>
+                  <strong>{workerUpgradeAcceptanceResult?.current_worker_version || approvalPreviewResource.worker_version || "待刷新"}</strong>
+                  <span>目标 Worker version</span>
+                  <strong>{workerUpgradeAcceptanceResult?.required_worker_version || requiredTransitWorkerVersion}</strong>
+                  <span>bundled binary checksum</span>
+                  <strong>{workerUpgradeAcceptanceResult?.required_worker_checksum || transitWorkerBinaryChecksum}</strong>
+                </div>
+                <ol className="dry-run-safety-list">
+                  <li>在公网主控确认 bundled Worker binary 已是目标版本，并记录 checksum。</li>
+                  <li>由用户自行登录 transit VPS，先备份旧的 liveline-worker binary。</li>
+                  <li>由用户手动把目标版本 binary 放到 `/usr/local/bin/liveline-worker`，并保留可执行权限。</li>
+                  <li>由用户手动重启远端 `liveline-worker.service`，等待 heartbeat 回到 online。</li>
+                  <li>回到本页面点击“刷新 Worker 升级验收”，确认版本满足要求。</li>
+                  <li>验收通过后，再回到 Stage 3.3.137 重新生成 HAProxy route dry-run。</li>
+                </ol>
+                <ul className="dry-run-safety-list">
+                  <li>本 runbook 不生成 Worker token。</li>
+                  <li>本 runbook 不生成完整 install command。</li>
+                  <li>本 runbook 不自动安装或重启远端 Worker。</li>
+                  <li>本 runbook 不创建 Worker command、HAProxy route 或 TransitRoute active record。</li>
+                </ul>
+              </div>
               <div className="dry-run-actions">
                 <button
                   className="secondary"
