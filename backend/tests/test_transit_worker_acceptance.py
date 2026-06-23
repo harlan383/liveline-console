@@ -168,5 +168,91 @@ class TransitWorkerAcceptanceTests(unittest.TestCase):
         self.assertFalse(db.committed)
 
 
+class TransitWorkerUpgradeAcceptanceTests(unittest.TestCase):
+    def call_endpoint(self, db):
+        with patch.object(transit_resources, "require_admin_session", return_value=FakeAdminSession()):
+            return transit_resources.get_transit_resource_worker_upgrade_acceptance(
+                "resource-1",
+                make_request("/api/transit-resources/resource-1/worker-upgrade-acceptance"),
+                db,
+            )
+
+    def assert_read_only(self, db):
+        self.assertEqual(db.added, [])
+        self.assertFalse(db.committed)
+        self.assertFalse(db.rolled_back)
+
+    def test_old_worker_version_requires_upgrade(self):
+        db = FakeDb([transit_resource(status="worker_online"), transit_worker(worker_version="0.1.24-stage-3.3.122")])
+        response = self.call_endpoint(db)
+        result = response_payload(response)["data"]
+
+        self.assertTrue(result["worker_found"])
+        self.assertFalse(result["version_ok"])
+        self.assertTrue(result["upgrade_required"])
+        self.assertFalse(result["acceptance_passed"])
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["blocked_reason"], "Transit Worker must be upgraded before HAProxy TCP dry-run.")
+        self.assertIn("手动升级", result["next_action"])
+        self.assertFalse(result["worker_command_created"])
+        self.assertFalse(result["transit_route_created"])
+        self.assertFalse(result["share_link_read_or_written"])
+        self.assertTrue(any(check["id"] == "worker_command_not_created" and check["passed"] for check in result["checks"]))
+        self.assertTrue(any(check["id"] == "transit_route_not_created" and check["passed"] for check in result["checks"]))
+        self.assertTrue(any(check["id"] == "share_link_not_read_or_written" and check["passed"] for check in result["checks"]))
+        self.assert_read_only(db)
+
+    def test_required_worker_version_passes_acceptance(self):
+        db = FakeDb([transit_resource(status="worker_online"), transit_worker(worker_version="0.1.25-stage-3.3.137-hotfix-2")])
+        response = self.call_endpoint(db)
+        result = response_payload(response)["data"]
+
+        self.assertTrue(result["version_ok"])
+        self.assertFalse(result["upgrade_required"])
+        self.assertTrue(result["acceptance_passed"])
+        self.assertFalse(result["blocked"])
+        self.assertIsNone(result["blocked_reason"])
+        self.assertIn("重新生成 HAProxy route dry-run", result["next_action"])
+        self.assertFalse(result["worker_command_created"])
+        self.assertFalse(result["transit_route_created"])
+        self.assertFalse(result["share_link_read_or_written"])
+        self.assert_read_only(db)
+
+    def test_worker_offline_blocks_acceptance(self):
+        old_heartbeat = datetime.now(timezone.utc) - timedelta(hours=1)
+        db = FakeDb([transit_resource(status="worker_online"), transit_worker(last_heartbeat_at=old_heartbeat)])
+        response = self.call_endpoint(db)
+        result = response_payload(response)["data"]
+
+        self.assertFalse(result["heartbeat_ok"])
+        self.assertFalse(result["acceptance_passed"])
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["blocked_reason"], "Transit Worker must be online before HAProxy TCP dry-run.")
+        self.assert_read_only(db)
+
+    def test_non_transit_role_blocks_acceptance(self):
+        db = FakeDb([transit_resource(status="worker_online"), transit_worker(role="landing")])
+        response = self.call_endpoint(db)
+        result = response_payload(response)["data"]
+
+        self.assertFalse(result["role_ok"])
+        self.assertFalse(result["acceptance_passed"])
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["blocked_reason"], "Transit Worker role must be transit.")
+        self.assert_read_only(db)
+
+    def test_missing_worker_version_blocks_acceptance(self):
+        db = FakeDb([transit_resource(status="worker_online"), transit_worker(worker_version=None)])
+        response = self.call_endpoint(db)
+        result = response_payload(response)["data"]
+
+        self.assertFalse(result["version_present"])
+        self.assertFalse(result["version_ok"])
+        self.assertFalse(result["acceptance_passed"])
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["blocked_reason"], "Transit Worker version is missing.")
+        self.assert_read_only(db)
+
+
 if __name__ == "__main__":
     unittest.main()
