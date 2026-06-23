@@ -3636,6 +3636,7 @@ button.ghost-action {
 .haproxy-readiness-warning,
 .haproxy-disabled-actions,
 .haproxy-dry-run-panel,
+.haproxy-final-approval-panel,
 .haproxy-readiness-result {
   border-radius: 8px;
   display: grid;
@@ -3656,6 +3657,11 @@ button.ghost-action {
 .haproxy-dry-run-panel {
   background: rgba(14, 165, 233, 0.08);
   border: 1px solid rgba(14, 165, 233, 0.24);
+}
+
+.haproxy-final-approval-panel {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.22);
 }
 
 .haproxy-confirm-list {
