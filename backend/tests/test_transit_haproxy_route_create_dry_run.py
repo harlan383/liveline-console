@@ -306,6 +306,13 @@ class TransitHaproxyRouteCreateDryRunTests(unittest.TestCase):
         self.assertFalse(data["data"]["command"]["payload"]["user_approved_real_execution"])
         self.assertEqual(data["data"]["forwarding_method"], "haproxy_tcp")
         self.assertEqual(data["data"]["planned_service_name"], "liveline-haproxy-12081.service")
+        command_payload = data["data"]["command"]["payload"]
+        haproxy_config_plan = command_payload["haproxy_config_plan"]
+        self.assertEqual(command_payload["planned_service_name"], "liveline-haproxy-12081.service")
+        self.assertEqual(haproxy_config_plan["mode"], "tcp")
+        self.assertEqual(haproxy_config_plan["frontend_bind"], "*:12081")
+        self.assertEqual(haproxy_config_plan["backend_target"], "64.90.13.19:27939")
+        self.assertNotIn("service_name", haproxy_config_plan)
         self.assertEqual(data["data"]["next_stage"], "Stage 3.3.138-new-transit-haproxy-route-create-final-approval")
         self.assertEqual(db.node.share_link if db.node else None, original_share_link)
         self.assertEqual(len([item for item in db.added if isinstance(item, WorkerCommand)]), 1)

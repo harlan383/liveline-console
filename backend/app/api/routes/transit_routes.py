@@ -1377,7 +1377,6 @@ def create_haproxy_route_create_dry_run(
             "mode": "tcp",
             "frontend_bind": f"*:{payload.planned_listen_port}",
             "backend_target": f"{payload.landing_target_host}:{payload.landing_target_port}",
-            "service_name": planned_service_name,
         },
         "firewall_security_group_confirmed": True,
         "cloud_firewall_confirmed": True,
