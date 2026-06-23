@@ -1,8 +1,9 @@
 from typing import Any
 
-from fastapi import Request
+from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from app.db.session import get_db
 from app.models.worker_command import WorkerCommand
 from app.schemas.common import success_response
 from app.schemas.transit_route import (
@@ -215,7 +216,7 @@ def blocked_fixed_parameter_response(
 def create_haproxy_route_create_real_execution(
     payload: TransitHaproxyRouteCreateRealExecutionRequest,
     request: Request,
-    db: Session,
+    db: Session = Depends(get_db),
 ):
     command = db.get(WorkerCommand, payload.dry_run_command_id)
     command_payload = command.payload_json if command and isinstance(command.payload_json, dict) else None
