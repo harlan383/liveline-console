@@ -253,6 +253,36 @@ class TransitHaproxyRouteCreateFinalApprovalTests(unittest.TestCase):
             "dry_run_command_shape_valid",
         )
 
+    def test_failed_dry_run_command_blocks_approval(self):
+        data = self.assert_blocked_by(
+            FakeSession(command_status="failed"),
+            "dry_run_command_succeeded",
+        )
+
+        self.assertEqual(data["data"]["summary"], "HAProxy route final approval blocked")
+        self.assertEqual(
+            data["data"]["next_action"],
+            "请先重新生成并完成 Stage 3.3.137 HAProxy route dry-run，直到 dry-run command succeeded。",
+        )
+        self.assertFalse(data["data"]["worker_command_created"])
+        self.assertFalse(data["data"]["route_created"])
+        self.assertFalse(data["data"]["transit_route_active_record_created"])
+        self.assertFalse(data["data"]["share_link_mutated"])
+
+    def test_running_dry_run_command_blocks_approval(self):
+        data = self.assert_blocked_by(
+            FakeSession(command_status="running"),
+            "dry_run_command_succeeded",
+        )
+
+        self.assertEqual(data["data"]["summary"], "HAProxy route final approval blocked")
+        self.assertFalse(data["data"]["ready_for_real_create"])
+        self.assertTrue(data["data"]["blocked"])
+        self.assertFalse(data["data"]["worker_command_created"])
+        self.assertFalse(data["data"]["route_created"])
+        self.assertFalse(data["data"]["transit_route_active_record_created"])
+        self.assertFalse(data["data"]["share_link_mutated"])
+
     def test_dry_run_payload_mismatch_blocks_approval(self):
         self.assert_blocked_by(
             FakeSession(command_payload=dry_run_payload(planned_listen_port=12081)),
@@ -340,6 +370,7 @@ class TransitHaproxyRouteCreateFinalApprovalTests(unittest.TestCase):
         self.assertFalse(data["data"]["firewall_modified"])
         self.assertFalse(data["data"]["share_link_mutated"])
         self.assertFalse(data["data"]["cutover"])
+        self.assertTrue(check_map(data)["dry_run_command_succeeded"]["passed"])
         self.assertTrue(check_map(data)["worker_command_not_created"]["passed"])
         self.assertTrue(check_map(data)["haproxy_not_created"]["passed"])
         self.assertTrue(check_map(data)["firewall_not_modified"]["passed"])
