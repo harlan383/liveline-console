@@ -28,12 +28,14 @@ from app.schemas.transit_route import (
     APPROVED_TRANSIT_ROUTE_CREATE_STAGE,
     FORWARDING_METHOD_HAPROXY_TCP,
     FORWARDING_METHOD_SOCAT,
+    HAPROXY_ROUTE_CREATE_DRY_RUN_STAGE,
     PROTECTED_CREATE_PORT_MESSAGES,
     PROTECTED_CREATE_PORTS,
     ReadonlyPreflightPlanCheck,
     ReadonlyPreflightPlanRequest,
     ReadonlyPreflightPlanResponse,
     TransitHaproxyReadinessApprovalRequest,
+    TransitHaproxyRouteCreateDryRunRequest,
     TransitReadonlyPreflightCommandRequest,
     TransitRouteCandidateExportRequest,
     TransitRouteWorkerCreateExecuteRequest,
@@ -137,6 +139,23 @@ HAPROXY_READINESS_SAFETY_BOUNDARY = [
     "read-only HAProxy TCP route creation readiness approval only",
     "no Worker command created",
     "no HAProxy route created",
+    "no HAProxy install, start, stop, or restart",
+    "no listener binding",
+    "no firewall, cloud firewall, or cloud security group mutation",
+    "no socat service modification",
+    "no Xray modification",
+    "no nodes.share_link read or mutation",
+    "no transit_routes.share_link write",
+    "no full client link export",
+    "no cutover",
+]
+HAPROXY_ROUTE_CREATE_DRY_RUN_BOUNDARY = [
+    "HAProxy TCP route create dry-run only",
+    "dry-run Worker command only",
+    "approval required before real execution",
+    "no real execution command created",
+    "no HAProxy route created",
+    "no TransitRoute active record created",
     "no HAProxy install, start, stop, or restart",
     "no listener binding",
     "no firewall, cloud firewall, or cloud security group mutation",
@@ -1181,6 +1200,210 @@ def haproxy_readiness_approval(
     return success_response(
         result,
         "HAProxy TCP route 创建审批包已生成；本接口只读，未创建 Worker command、HAProxy route 或监听端口。",
+    )
+
+
+@router.post("/haproxy-route-create-dry-run")
+def create_haproxy_route_create_dry_run(
+    payload: TransitHaproxyRouteCreateDryRunRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    if not payload.readiness_approval_confirmed:
+        return error_response(
+            400,
+            "HAPROXY_READINESS_APPROVAL_REQUIRED",
+            "必须先确认 Stage 3.3.136 HAProxy readiness 审批包已通过。",
+        )
+    if not payload.dry_run:
+        return error_response(400, "HAPROXY_ROUTE_DRY_RUN_REQUIRED", "本阶段只允许 dry_run=true。")
+    if not payload.approval_required:
+        return error_response(
+            400,
+            "HAPROXY_ROUTE_APPROVAL_REQUIRED",
+            "本阶段仍需要下一阶段再次审批，approval_required 必须为 true。",
+        )
+    if payload.approval_stage != HAPROXY_ROUTE_CREATE_DRY_RUN_STAGE:
+        return error_response(
+            400,
+            "HAPROXY_ROUTE_DRY_RUN_STAGE_MISMATCH",
+            "approval_stage 不匹配 Stage 3.3.137 dry-run 阶段。",
+        )
+    if payload.forwarding_method != FORWARDING_METHOD_HAPROXY_TCP:
+        return error_response(400, "HAPROXY_FORWARDING_METHOD_REQUIRED", "本阶段只允许 haproxy_tcp。")
+    if not payload.firewall_security_group_confirmed:
+        return error_response(
+            400,
+            "SECURITY_GROUP_CONFIRMATION_REQUIRED",
+            f"必须确认云安全组已放行 {payload.planned_listen_port}/TCP。",
+        )
+    if not payload.cloud_firewall_confirmed:
+        return error_response(
+            400,
+            "CLOUD_FIREWALL_CONFIRMATION_REQUIRED",
+            f"必须确认云防火墙已放行 {payload.planned_listen_port}/TCP。",
+        )
+    if not payload.server_firewall_confirmed:
+        return error_response(
+            400,
+            "SERVER_FIREWALL_CONFIRMATION_REQUIRED",
+            f"必须确认服务器本机防火墙已放行 {payload.planned_listen_port}/TCP。",
+        )
+    if not payload.no_cutover_confirmed:
+        return error_response(400, "NO_CUTOVER_CONFIRMATION_REQUIRED", "必须确认本阶段不执行 cutover。")
+    if not payload.no_node_share_link_change_confirmed:
+        return error_response(
+            400,
+            "NODE_SHARE_LINK_BOUNDARY_REQUIRED",
+            "必须确认本阶段不读取或修改 nodes.share_link。",
+        )
+    if not payload.no_full_client_link_confirmed:
+        return error_response(
+            400,
+            "NO_FULL_CLIENT_LINK_CONFIRMATION_REQUIRED",
+            "必须确认本阶段不生成或展示完整客户端链接。",
+        )
+
+    readiness_payload = TransitHaproxyReadinessApprovalRequest(
+        transit_resource_id=payload.transit_resource_id,
+        landing_node_id=payload.landing_node_id,
+        planned_listen_port=payload.planned_listen_port,
+        landing_target_port=payload.landing_target_port,
+        forwarding_method=payload.forwarding_method,
+        purpose=payload.purpose,
+        firewall_security_group_confirmed=payload.firewall_security_group_confirmed,
+        cloud_firewall_confirmed=payload.cloud_firewall_confirmed,
+        server_firewall_confirmed=payload.server_firewall_confirmed,
+        no_cutover_confirmed=payload.no_cutover_confirmed,
+        no_node_share_link_change_confirmed=payload.no_node_share_link_change_confirmed,
+        no_full_client_link_confirmed=payload.no_full_client_link_confirmed,
+    )
+    readiness = build_haproxy_readiness_approval(db, readiness_payload)
+    if not readiness["ready"]:
+        return error_response(
+            400,
+            "HAPROXY_READINESS_NOT_READY",
+            "HAProxy TCP route 创建 readiness 仍有阻塞项，不能创建 dry-run Worker command。",
+            {"readiness": readiness},
+        )
+
+    resource = db.get(TransitResource, payload.transit_resource_id)
+    node = db.get(Node, payload.landing_node_id)
+    target_worker = latest_bound_worker(db, server_id=resource.id if resource else None)
+    landing_host = node.vps.ip if node and node.vps else None
+    if not resource or resource.deleted_at is not None:
+        return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转服务器记录不存在。")
+    if not node or node.deleted_at is not None:
+        return error_response(404, "LANDING_NODE_NOT_FOUND", "落地节点不存在。")
+    if landing_host != payload.landing_target_host:
+        return error_response(400, "LANDING_HOST_MISMATCH", "落地节点当前 IP 与 dry-run 目标不一致。")
+    if node.xray_port != payload.landing_target_port:
+        return error_response(400, "LANDING_TARGET_PORT_MISMATCH", "落地节点当前端口与 dry-run 目标不一致。")
+    if not target_worker:
+        return error_response(400, "WORKER_NOT_FOUND", "该中转资源尚未绑定 Worker。")
+    if target_worker.status != "online" or worker_runtime_status(target_worker) != "online":
+        return error_response(400, "WORKER_OFFLINE", "目标 transit Worker 不在线。")
+    if target_worker.role != "transit":
+        return error_response(400, "WORKER_ROLE_MISMATCH", "只允许 transit role Worker 创建 HAProxy route dry-run。")
+    if not target_worker.interface_name:
+        return error_response(400, "WORKER_INTERFACE_MISSING", "目标 Worker 尚未上报 interface_name。")
+    if not worker_supports_transit_forwarding_method(target_worker, FORWARDING_METHOD_HAPROXY_TCP):
+        return error_response(
+            400,
+            "WORKER_FORWARDING_METHOD_UNSUPPORTED",
+            "当前在线 Worker 版本不支持 HAProxy TCP，请先升级中转 Worker。",
+            {
+                "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
+                    FORWARDING_METHOD_HAPROXY_TCP
+                ),
+                "target_worker_version": target_worker.worker_version,
+                "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
+            },
+        )
+
+    planned_service_name = f"liveline-haproxy-{payload.planned_listen_port}.service"
+    command_payload = {
+        "command_intent": "haproxy_route_create_dry_run",
+        "transit_resource_id": resource.id,
+        "transit_resource_name": resource.name,
+        "transit_entry_host": resource.entry_host,
+        "landing_node_id": node.id,
+        "landing_node_name": node.node_name,
+        "planned_listen_port": payload.planned_listen_port,
+        "landing_target_host": payload.landing_target_host,
+        "landing_target_port": payload.landing_target_port,
+        "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
+        "purpose": payload.purpose,
+        "approval_stage": payload.approval_stage,
+        "readiness_approval_confirmed": True,
+        "dry_run": True,
+        "approval_required": True,
+        "user_approved_real_execution": False,
+        "real_execution": False,
+        "route_name": payload.route_name,
+        "planned_service_name": planned_service_name,
+        "haproxy_config_plan": {
+            "mode": "tcp",
+            "frontend_bind": f"*:{payload.planned_listen_port}",
+            "backend_target": f"{payload.landing_target_host}:{payload.landing_target_port}",
+            "service_name": planned_service_name,
+        },
+        "firewall_security_group_confirmed": True,
+        "cloud_firewall_confirmed": True,
+        "server_firewall_confirmed": True,
+        "no_cutover_confirmed": True,
+        "no_node_share_link_change_confirmed": True,
+        "no_full_client_link_confirmed": True,
+        "safety_boundary": HAPROXY_ROUTE_CREATE_DRY_RUN_BOUNDARY,
+    }
+    command = create_worker_command(db, target_worker, TRANSIT_ROUTE_CREATE_COMMAND, command_payload)
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="create_haproxy_route_create_dry_run",
+        result="success",
+        request=request,
+        resource_type="worker_command",
+        resource_id=command.id,
+    )
+    db.commit()
+    db.refresh(command)
+
+    return success_response(
+        {
+            "command": serialize_worker_command(command, include_payload=True, worker=target_worker),
+            "target_worker_id": target_worker.id,
+            "target_worker_version": target_worker.worker_version,
+            "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
+                FORWARDING_METHOD_HAPROXY_TCP
+            ),
+            "dry_run": True,
+            "approval_required": True,
+            "real_execution": False,
+            "route_created": False,
+            "haproxy_installed": False,
+            "listener_bound": False,
+            "firewall_modified": False,
+            "share_link_mutated": False,
+            "cutover": False,
+            "planned_service_name": planned_service_name,
+            "planned_listen_port": payload.planned_listen_port,
+            "landing_target_host": payload.landing_target_host,
+            "landing_target_port": payload.landing_target_port,
+            "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
+            "route_name": payload.route_name,
+            "readiness_summary": readiness["summary"],
+            "checks": readiness["checks"],
+            "safety_boundary": HAPROXY_ROUTE_CREATE_DRY_RUN_BOUNDARY,
+            "next_stage": "Stage 3.3.138-new-transit-haproxy-route-create-final-approval",
+        },
+        "HAProxy route dry-run Worker command 已创建；不会真实创建 HAProxy route、监听端口或客户端链接。",
     )
 
 

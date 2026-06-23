@@ -366,6 +366,53 @@ export type TransitHaproxyReadinessApprovalResult = {
   safety_boundary: string[];
 };
 
+export type TransitHaproxyRouteCreateDryRunRequest = {
+  transit_resource_id: string;
+  landing_node_id: string;
+  planned_listen_port: number;
+  landing_target_host: string;
+  landing_target_port: number;
+  forwarding_method: "haproxy_tcp";
+  purpose: string | null;
+  route_name: string;
+  approval_stage: string;
+  readiness_approval_confirmed: true;
+  dry_run: true;
+  approval_required: true;
+  firewall_security_group_confirmed: boolean;
+  cloud_firewall_confirmed: boolean;
+  server_firewall_confirmed: boolean;
+  no_cutover_confirmed: boolean;
+  no_node_share_link_change_confirmed: boolean;
+  no_full_client_link_confirmed: boolean;
+};
+
+export type TransitHaproxyRouteCreateDryRunResult = {
+  command: WorkerCommandData;
+  target_worker_id: string;
+  target_worker_version: string | null;
+  minimum_supported_worker_version: string;
+  dry_run: boolean;
+  approval_required: boolean;
+  real_execution: boolean;
+  route_created: boolean;
+  haproxy_installed: boolean;
+  listener_bound: boolean;
+  firewall_modified: boolean;
+  share_link_mutated: boolean;
+  cutover: boolean;
+  planned_service_name: string;
+  planned_listen_port: number;
+  landing_target_host: string;
+  landing_target_port: number;
+  forwarding_method: "haproxy_tcp";
+  route_name: string;
+  readiness_summary: string;
+  checks: ReadonlyPreflightCheckItem[];
+  safety_boundary: string[];
+  next_stage: string;
+};
+
 export type TransitRouteWorkerCreateExecuteRequest = {
   transit_resource_id: string;
   landing_node_id: string;
@@ -922,6 +969,17 @@ export async function requestTransitHaproxyReadinessApproval(
 ): Promise<ApiResponse<TransitHaproxyReadinessApprovalResult>> {
   return apiFetch<TransitHaproxyReadinessApprovalResult>("/api/transit-routes/haproxy-readiness-approval", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createTransitHaproxyRouteDryRun(
+  payload: TransitHaproxyRouteCreateDryRunRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitHaproxyRouteCreateDryRunResult>> {
+  return apiFetch<TransitHaproxyRouteCreateDryRunResult>("/api/transit-routes/haproxy-route-create-dry-run", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
   });
 }
