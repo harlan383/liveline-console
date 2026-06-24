@@ -284,7 +284,7 @@ function forwardingMethodLabel(method: string | null | undefined) {
 
 function defaultTransitRouteName(method: TransitCreateForwardingMethod, listenPort: string) {
   const cleanedPort = listenPort.trim() || String(approvedTransitListenPort);
-  return method === "haproxy_tcp" ? `hk-haproxy-live-${cleanedPort}` : approvedTransitRouteName;
+  return method === "haproxy_tcp" ? `haproxy-tcp-${cleanedPort}` : approvedTransitRouteName;
 }
 
 function transitRouteCreateProgressLabel(step: TransitRouteCreateStep, method: TransitCreateForwardingMethod) {
@@ -2258,6 +2258,9 @@ export function TransitRoutesPanel() {
       setCreateError("请先确认中转监听端口已在云安全组、云防火墙和服务器本机防火墙放行。");
       return;
     }
+
+    const routeName = createForm.routeName.trim() || defaultTransitRouteName(createForm.forwardingMethod, createForm.listenPort);
+
     setCreateStep("preflight_create");
     setCreateCommand(null);
     setCreateExecuteResult(null);
@@ -2266,10 +2269,165 @@ export function TransitRoutesPanel() {
     setCreateError("");
     setCreateCopyFallbackRequired(false);
     setCreateQrVisible(false);
-    setMessage("正在自动执行中转只读预检和受保护创建流程。成功后才会临时生成客户端链接和二维码。");
+    setMessage(
+      createForm.forwardingMethod === "haproxy_tcp"
+        ? "正在自动执行 HAProxy TCP 审批、dry-run、最终确认和受保护创建流程。"
+        : "正在自动执行中转只读预检和受保护创建流程。成功后才会临时生成客户端链接和二维码。",
+    );
 
     try {
       const csrfToken = await ensureCsrfToken();
+
+      if (createForm.forwardingMethod === "haproxy_tcp") {
+        const landingTargetHost = landingHostForNode(createNode);
+
+        const readinessResult = await requestTransitHaproxyReadinessApproval({
+          transit_resource_id: createResource.id,
+          landing_node_id: createNode.id,
+          planned_listen_port: createListenPort,
+          landing_target_port: createTargetPort,
+          forwarding_method: "haproxy_tcp",
+          purpose: "直播",
+          firewall_security_group_confirmed: createForm.firewallConfirmed,
+          cloud_firewall_confirmed: createForm.firewallConfirmed,
+          server_firewall_confirmed: createForm.firewallConfirmed,
+          no_cutover_confirmed: true,
+          no_node_share_link_change_confirmed: true,
+          no_full_client_link_confirmed: true,
+        });
+        if (!readinessResult.success) {
+          throw new Error(`${readinessResult.error_code}: ${readinessResult.message}`);
+        }
+        if (!readinessResult.data.ready || readinessResult.data.blocked) {
+          throw new Error(readinessResult.data.summary || "HAProxy TCP 创建审批包未通过。");
+        }
+
+        setCreateStep("command_create");
+        const dryRunResult = await createTransitHaproxyRouteDryRun(
+          {
+            transit_resource_id: createResource.id,
+            landing_node_id: createNode.id,
+            planned_listen_port: createListenPort,
+            landing_target_host: landingTargetHost,
+            landing_target_port: createTargetPort,
+            forwarding_method: "haproxy_tcp",
+            purpose: "直播",
+            route_name: routeName,
+            approval_stage: "Stage 3.3.137-new-transit-haproxy-route-create-dry-run",
+            readiness_approval_confirmed: true,
+            dry_run: true,
+            approval_required: true,
+            firewall_security_group_confirmed: createForm.firewallConfirmed,
+            cloud_firewall_confirmed: createForm.firewallConfirmed,
+            server_firewall_confirmed: createForm.firewallConfirmed,
+            no_cutover_confirmed: true,
+            no_node_share_link_change_confirmed: true,
+            no_full_client_link_confirmed: true,
+          },
+          csrfToken,
+        );
+        if (!dryRunResult.success) {
+          throw new Error(`${dryRunResult.error_code}: ${dryRunResult.message}`);
+        }
+        setCreateCommand(dryRunResult.data.command);
+        const dryRunCommand = await waitForTransitCommandCompletion(dryRunResult.data.command.id, "command_running");
+        if (dryRunCommand.status !== "succeeded") {
+          throw new Error(dryRunCommand.error_message || "HAProxy TCP dry-run 未通过。");
+        }
+
+        const finalApprovalResult = await requestTransitHaproxyRouteFinalApproval(
+          {
+            dry_run_command_id: dryRunResult.data.command.id,
+            transit_resource_id: createResource.id,
+            landing_node_id: createNode.id,
+            planned_listen_port: createListenPort,
+            landing_target_host: landingTargetHost,
+            landing_target_port: createTargetPort,
+            forwarding_method: "haproxy_tcp",
+            route_name: routeName,
+            planned_service_name: dryRunResult.data.planned_service_name,
+            approval_stage: "Stage 3.3.138-new-transit-haproxy-route-create-final-approval",
+            dry_run_verified: true,
+            firewall_security_group_confirmed: createForm.firewallConfirmed,
+            cloud_firewall_confirmed: createForm.firewallConfirmed,
+            server_firewall_confirmed: createForm.firewallConfirmed,
+            no_cutover_confirmed: true,
+            no_node_share_link_change_confirmed: true,
+            no_full_client_link_confirmed: true,
+            final_approval_text: HAPROXY_FINAL_APPROVAL_TEXT,
+          },
+          csrfToken,
+        );
+        if (!finalApprovalResult.success) {
+          throw new Error(`${finalApprovalResult.error_code}: ${finalApprovalResult.message}`);
+        }
+        if (!finalApprovalResult.data.ready_for_real_create || finalApprovalResult.data.blocked) {
+          throw new Error(finalApprovalResult.data.summary || "HAProxy TCP 最终审批未通过。");
+        }
+
+        const realExecutionResult = await createTransitHaproxyRouteRealExecution(
+          {
+            dry_run_command_id: dryRunResult.data.command.id,
+            transit_resource_id: createResource.id,
+            landing_node_id: createNode.id,
+            planned_listen_port: createListenPort,
+            landing_target_host: landingTargetHost,
+            landing_target_port: createTargetPort,
+            forwarding_method: "haproxy_tcp",
+            route_name: routeName,
+            approval_stage: "Stage 3.3.139-new-transit-haproxy-route-create-real-execution",
+            final_approval_text: HAPROXY_FINAL_APPROVAL_TEXT,
+            real_execution_text: HAPROXY_REAL_EXECUTION_TEXT,
+            firewall_security_group_confirmed: createForm.firewallConfirmed,
+            cloud_firewall_confirmed: createForm.firewallConfirmed,
+            server_firewall_confirmed: createForm.firewallConfirmed,
+            no_cutover_confirmed: true,
+            no_node_share_link_change_confirmed: true,
+            no_full_client_link_confirmed: true,
+          },
+          csrfToken,
+        );
+        if (!realExecutionResult.success) {
+          throw new Error(`${realExecutionResult.error_code}: ${realExecutionResult.message}`);
+        }
+        if (!realExecutionResult.data.command) {
+          throw new Error("HAProxy TCP 真实创建命令未返回，请刷新任务中心检查。");
+        }
+        setCreateCommand(realExecutionResult.data.command);
+        const realCreateCommand = await waitForTransitCommandCompletion(realExecutionResult.data.command.id, "command_running");
+        if (realCreateCommand.status !== "succeeded") {
+          throw new Error(realCreateCommand.error_message || "HAProxy TCP 真实创建命令执行失败。");
+        }
+
+        setCreateStep("refresh");
+        const refreshed = await loadData();
+        const route = findCreatedTransitRoute(refreshed.routes);
+        if (!route) {
+          throw new Error("HAProxy TCP 创建命令已成功，但列表刷新后未找到 active 链路。请刷新页面确认。");
+        }
+        setCreatedRoute(route);
+
+        setCreateStep("export_link");
+        const exportResult = await exportTransitRouteCandidate(
+          route.id,
+          {
+            confirm_transient_export: true,
+            confirm_no_database_write: true,
+            confirm_no_share_link_mutation: true,
+            confirm_no_cutover: true,
+            reason: "haproxy_transit_route_create_success",
+          },
+          csrfToken,
+        );
+        if (!exportResult.success) {
+          throw new Error(`${exportResult.error_code}: ${exportResult.message}`);
+        }
+        setCreateExport(exportResult.data);
+        setCreateStep("complete");
+        setMessage("HAProxy TCP 中转链路创建完成。可以复制客户端链接或临时显示二维码。");
+        return;
+      }
+
       const preflightResult = await createTransitReadonlyPreflightCommand(
         {
           transit_resource_id: createResource.id,
@@ -2301,7 +2459,7 @@ export function TransitRoutesPanel() {
           landing_target_port: createTargetPort,
           forwarding_method: createForm.forwardingMethod,
           purpose: "直播",
-          route_name: createForm.routeName.trim(),
+          route_name: routeName,
           approval_stage: approvedTransitRealCreateStage,
           dry_run: false,
           approval_required: false,
@@ -3040,7 +3198,8 @@ export function TransitRoutesPanel() {
       </div>
 
       <details
-        className="advanced-section transit-advanced-section"
+        className="advanced-section transit-advanced-section hidden"
+        style={{ display: "none" }}
         open={advancedTransitOpsOpen}
         onToggle={(event) => setAdvancedTransitOpsOpen(event.currentTarget.open)}
       >
