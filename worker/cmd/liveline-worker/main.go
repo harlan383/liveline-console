@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.26-stage-3.3.144-haproxy-real-create"
+const workerVersion = "0.1.27-stage-3.3.150-haproxy-real-create-hotfix"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -1483,8 +1483,8 @@ func validateTransitRouteCreateApprovedParams(request transitRouteCreateRequest)
 	if request.LandingTargetPort != approvedTransitLandingTargetPort {
 		return errors.New("transit_route_create landing_target_port is not approved")
 	}
-	if request.ForwardingMethod != approvedTransitForwardingMethod {
-		return errors.New("transit_route_create only approved socat forwarding")
+	if request.ForwardingMethod != approvedTransitForwardingMethod && request.ForwardingMethod != approvedTransitHaproxyForwardingMethod {
+		return errors.New("transit_route_create forwarding_method is not approved")
 	}
 	if !validTCPPort(request.PlannedListenPort) || !validTCPPort(request.LandingTargetPort) {
 		return errors.New("transit_route_create ports must be 1-65535")
