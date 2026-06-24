@@ -3200,7 +3200,10 @@ export function TransitRoutesPanel() {
         </div>
       ) : (
         <div className="transit-route-inline-panel">
-          <p className="message">暂无 active 中转链路。新增链路弹窗只在本地生成配置预览，真实创建仍需受保护流程。</p>
+          <p className="message">
+            当前没有 active 中转链路。如刚完成删除测试，这是预期状态；已删除链路不会继续监听端口，也不会显示为可用线路。
+            如需继续使用中转访问，请通过受保护流程新建中转链路。
+          </p>
         </div>
       )}
 
@@ -3215,7 +3218,11 @@ export function TransitRoutesPanel() {
             <span>操作</span>
           </div>
           {loading ? <div className="server-table-empty">正在加载中转链路。</div> : null}
-          {!loading && routes.length === 0 ? <div className="server-table-empty">暂无中转链路记录。</div> : null}
+          {!loading && routes.length === 0 ? (
+            <div className="server-table-empty">
+              当前没有 active 中转链路。删除后的线路不会继续监听端口；如果需要中转访问，请新建中转链路。
+            </div>
+          ) : null}
           {!loading
             ? routes.map((route) => {
               const routeSelected = candidateRouteId === route.id;
