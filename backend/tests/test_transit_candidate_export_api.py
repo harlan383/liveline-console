@@ -221,6 +221,8 @@ class TransitCandidateExportApiTests(unittest.TestCase):
         self.assertTrue(exported["reality_public_key_present"])
         self.assertTrue(exported["reality_short_id_present"])
         self.assertEqual(exported["cutover_status"], "not_cutover")
+        self.assertEqual(exported["export_mode"], "transient")
+        self.assertEqual(exported["persistence"], "not_saved")
         self.assertFalse(exported["database_write_performed"])
         self.assertFalse(exported["nodes_share_link_mutated"])
         self.assertFalse(exported["transit_route_share_link_mutated"])
