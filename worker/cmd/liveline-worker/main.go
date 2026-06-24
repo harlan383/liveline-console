@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.25-stage-3.3.137-hotfix-2"
+const workerVersion = "0.1.26-stage-3.3.144-haproxy-real-create"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
