@@ -11,10 +11,13 @@ from app.schemas.transit_route import (
     APPROVED_LANDING_TARGET_PORT,
     APPROVED_TRANSIT_FORWARDING_METHOD,
     APPROVED_TRANSIT_LISTEN_PORT,
+    FORWARDING_METHOD_HAPROXY_TCP,
+    normalize_forwarding_method,
 )
 from app.services.worker_commands import normalize_worker_command_result
 
 TRANSIT_ROUTE_CREATE_COMMAND = "transit_route_create"
+SUPPORTED_PERSIST_FORWARDING_METHODS = {APPROVED_TRANSIT_FORWARDING_METHOD, FORWARDING_METHOD_HAPROXY_TCP}
 
 
 class TransitRouteCreateResultError(Exception):
@@ -46,12 +49,29 @@ def _payload_dict(command: WorkerCommand) -> dict[str, Any]:
     return command.payload_json if isinstance(command.payload_json, dict) else {}
 
 
-def _expected_service_name(listen_port: int) -> str:
+def _normalized_forwarding_method(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return normalize_forwarding_method(value)
+    except ValueError:
+        return value.strip().lower().replace("-", "_")
+
+
+def _expected_service_name(listen_port: int, forwarding_method: str) -> str:
+    if forwarding_method == FORWARDING_METHOD_HAPROXY_TCP:
+        return f"liveline-haproxy-{listen_port}.service"
     return f"liveline-socat-{listen_port}.service"
 
 
-def _expected_service_path(listen_port: int) -> str:
-    return f"/etc/systemd/system/{_expected_service_name(listen_port)}"
+def _expected_service_path(listen_port: int, forwarding_method: str) -> str:
+    return f"/etc/systemd/system/{_expected_service_name(listen_port, forwarding_method)}"
+
+
+def _expected_config_path(listen_port: int, forwarding_method: str) -> str | None:
+    if forwarding_method == FORWARDING_METHOD_HAPROXY_TCP:
+        return f"/etc/haproxy/liveline/routes/liveline-haproxy-{listen_port}.cfg"
+    return None
 
 
 def _existing_route(db: Session, transit_resource_id: str, listen_port: int) -> TransitRoute | None:
@@ -89,7 +109,7 @@ def persist_successful_transit_route_create_result(
     planned_listen_port = _result_int(payload, "planned_listen_port")
     landing_target_host = _result_string(payload, "landing_target_host")
     landing_target_port = _result_int(payload, "landing_target_port")
-    forwarding_method = _result_string(payload, "forwarding_method")
+    forwarding_method = _normalized_forwarding_method(_result_string(payload, "forwarding_method"))
     transit_worker_id = _result_string(payload, "transit_worker_id")
 
     if not transit_resource_id or command.server_id != transit_resource_id:
@@ -104,11 +124,12 @@ def persist_successful_transit_route_create_result(
         raise TransitRouteCreateResultError("LISTEN_PORT_APPROVAL_MISMATCH", "Worker 命令监听端口不在受保护审批范围。")
     if landing_target_port != APPROVED_LANDING_TARGET_PORT:
         raise TransitRouteCreateResultError("LANDING_PORT_APPROVAL_MISMATCH", "Worker 命令落地端口不在受保护审批范围。")
-    if forwarding_method != APPROVED_TRANSIT_FORWARDING_METHOD:
+    if forwarding_method not in SUPPORTED_PERSIST_FORWARDING_METHODS:
         raise TransitRouteCreateResultError("FORWARDING_METHOD_APPROVAL_MISMATCH", "Worker 命令转发方式不在受保护审批范围。")
 
-    expected_service_name = _expected_service_name(planned_listen_port)
-    expected_service_path = _expected_service_path(planned_listen_port)
+    expected_service_name = _expected_service_name(planned_listen_port, forwarding_method)
+    expected_service_path = _expected_service_path(planned_listen_port, forwarding_method)
+    expected_config_path = _expected_config_path(planned_listen_port, forwarding_method)
 
     checks = {
         "LISTEN_PORT_APPROVAL_MISMATCH": _result_int(normalized, "planned_listen_port")
@@ -116,7 +137,10 @@ def persist_successful_transit_route_create_result(
         "LANDING_HOST_APPROVAL_MISMATCH": _result_string(normalized, "landing_target_host")
         == landing_target_host,
         "LANDING_PORT_APPROVAL_MISMATCH": _result_int(normalized, "landing_target_port") == landing_target_port,
-        "FORWARDING_METHOD_APPROVAL_MISMATCH": _result_string(normalized, "forwarding_method") == forwarding_method,
+        "FORWARDING_METHOD_APPROVAL_MISMATCH": _normalized_forwarding_method(
+            _result_string(normalized, "forwarding_method")
+        )
+        == forwarding_method,
         "ROUTE_NAME_APPROVAL_MISMATCH": _result_string(normalized, "route_name") == route_name,
         "SERVICE_NAME_APPROVAL_MISMATCH": _result_string(normalized, "service_name") == expected_service_name,
         "SERVICE_PATH_APPROVAL_MISMATCH": _result_string(normalized, "service_path") == expected_service_path,
@@ -124,6 +148,9 @@ def persist_successful_transit_route_create_result(
     for code, passed in checks.items():
         if not passed:
             raise TransitRouteCreateResultError(code, "Worker 返回结果与审批参数不一致。")
+    result_config_path = _result_string(normalized, "config_path")
+    if expected_config_path and result_config_path and result_config_path != expected_config_path:
+        raise TransitRouteCreateResultError("CONFIG_PATH_APPROVAL_MISMATCH", "Worker 返回 HAProxy 配置路径与审批参数不一致。")
 
     resource = db.get(TransitResource, transit_resource_id)
     if not resource or resource.deleted_at is not None:
