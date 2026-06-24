@@ -952,8 +952,8 @@ func TestTransitRouteCreateRealRequestRejectsNonSocatForwarding(t *testing.T) {
 	if err == nil {
 		t.Fatal("validateTransitRouteCreateRealRequest returned nil for non-socat forwarding")
 	}
-	if !strings.Contains(err.Error(), "only approved socat forwarding") {
-		t.Fatalf("error = %q, want socat approval error", err.Error())
+	if !strings.Contains(err.Error(), "forwarding_method is not approved") {
+		t.Fatalf("error = %q, want forwarding_method approval error", err.Error())
 	}
 }
 
