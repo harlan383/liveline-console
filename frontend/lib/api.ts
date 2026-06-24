@@ -731,6 +731,7 @@ export type WorkerTokenCreateRequest = {
   name?: string | null;
   server_id?: string | null;
   expires_in_minutes?: number;
+  interface_name?: string;
 };
 
 export type WorkerTokenCreateResult = {
@@ -747,6 +748,7 @@ export type VpsWorkerBootstrapRequest = {
   name: string;
   ip: string;
   expires_in_minutes?: number;
+  interface_name?: string;
 };
 
 export type VpsWorkerBootstrapResult = {
@@ -760,6 +762,7 @@ export type TransitWorkerBootstrapRequest = {
   name: string;
   ip: string;
   expires_in_minutes?: number;
+  interface_name?: string;
 };
 
 export type TransitWorkerBootstrapResult = {
@@ -771,11 +774,13 @@ export type TransitWorkerBootstrapResult = {
 
 export type TransitWorkerBootstrapRegenerateRequest = {
   expires_in_minutes?: number;
+  interface_name?: string;
 };
 
 export type TransitWorkerInstallCommandGenerationRequest = {
   confirmation: string;
   expires_in_minutes?: number;
+  interface_name?: string;
 };
 
 export type TransitWorkerInstallCommandGenerationResult = {

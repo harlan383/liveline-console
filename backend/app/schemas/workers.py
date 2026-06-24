@@ -8,6 +8,7 @@ WORKER_STATUSES = {"online", "offline", "unknown"}
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60
 OFFLINE_THRESHOLD_SECONDS = DEFAULT_HEARTBEAT_INTERVAL_SECONDS * 3
 HEARTBEAT_STALE_THRESHOLD_SECONDS = DEFAULT_HEARTBEAT_INTERVAL_SECONDS * 5
+INTERFACE_NAME_RE = r"^[A-Za-z0-9_.-]+$"
 
 
 def clean_optional(value: str | None, max_length: int | None = None) -> str | None:
@@ -26,6 +27,7 @@ class WorkerTokenCreate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     server_id: str | None = Field(default=None, max_length=36)
     expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
+    interface_name: str = Field(default="eth0", min_length=1, max_length=80, pattern=INTERFACE_NAME_RE)
 
     @field_validator("role")
     @classmethod
@@ -44,6 +46,14 @@ class WorkerTokenCreate(BaseModel):
     @classmethod
     def clean_server_id(cls, value: str | None) -> str | None:
         return clean_optional(value, max_length=36)
+
+    @field_validator("interface_name")
+    @classmethod
+    def clean_interface_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("interface_name cannot be empty")
+        return cleaned
 
 
 class WorkerRegisterRequest(BaseModel):

@@ -25,6 +25,7 @@ from app.services.worker_binding import (
     latest_worker_for_server,
     latest_workers_by_server,
     serialize_worker_token_bootstrap,
+    validate_worker_interface_name,
     vps_display_status,
     worker_public_url_error_response,
     worker_summary_fields,
@@ -73,6 +74,7 @@ class VpsWorkerBootstrapRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     ip: str = Field(min_length=1, max_length=45)
     expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
+    interface_name: str = Field(default="eth0", min_length=1, max_length=80)
 
     @field_validator("name", "ip")
     @classmethod
@@ -81,6 +83,11 @@ class VpsWorkerBootstrapRequest(BaseModel):
         if not cleaned:
             raise ValueError("value cannot be empty")
         return cleaned
+
+    @field_validator("interface_name")
+    @classmethod
+    def clean_interface_name(cls, value: str) -> str:
+        return validate_worker_interface_name(value)
 
 
 def clean_optional_text(value: str | None, *, max_length: int | None = None) -> str | None:
@@ -326,6 +333,7 @@ def create_vps_worker_bootstrap(
             server_id=vps.id,
             admin_id=session.admin_id,
             expires_in_minutes=payload.expires_in_minutes,
+            interface_name=payload.interface_name,
         )
         record_audit(
             db,

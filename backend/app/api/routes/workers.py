@@ -30,6 +30,7 @@ from app.schemas.workers import (
 )
 from app.services.auth_service import record_audit
 from app.services.worker_binding import (
+    build_worker_install_command,
     sync_worker_bound_resource_status,
     try_bind_worker_by_public_ip,
     validate_worker_token_binding_target,
@@ -670,8 +671,7 @@ def create_worker_token(
     db.commit()
     db.refresh(token)
 
-    setup_url = base_url + f"/worker_setup_script/{raw_token}"
-    install_command = f"curl -s {setup_url} | bash -s eth0 {token.role}"
+    install_command = build_worker_install_command(raw_token, token.role, base_url, payload.interface_name)
     return success_response(
         {
             "token_id": token.id,

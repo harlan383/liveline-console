@@ -196,6 +196,16 @@ function SafeDeleteModal({
 const requiredTransitWorkerVersion = "0.1.25-stage-3.3.137-hotfix-2";
 const transitWorkerBinaryChecksum = "fbc2e240bbb8cd64962e5151752cf410951673efadae704d192ca83f2ab89d2b";
 const transitWorkerInstallCommandConfirmText = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE";
+const workerInterfaceNamePattern = /^[A-Za-z0-9_.-]+$/;
+
+function defaultWorkerInterfaceName(value: string | null | undefined) {
+  return value?.trim() || "eth0";
+}
+
+function isValidWorkerInterfaceName(value: string) {
+  const cleaned = value.trim();
+  return Boolean(cleaned) && cleaned.length <= 80 && workerInterfaceNamePattern.test(cleaned);
+}
 
 const emptyTransitResourceDraftForm: TransitResourceDraftFormState = {
   name: "",
@@ -532,6 +542,7 @@ export function TransitServersPanel() {
     useState<TransitWorkerInstallCommandGenerationResult | null>(null);
   const [workerInstallCommandCopied, setWorkerInstallCommandCopied] = useState(false);
   const [workerInstallCommandGenerating, setWorkerInstallCommandGenerating] = useState(false);
+  const [workerInstallInterfaceName, setWorkerInstallInterfaceName] = useState("eth0");
   const [workerInstallHeartbeatMessage, setWorkerInstallHeartbeatMessage] = useState("");
   const workerInstallPollTimeoutRef = useRef<number | null>(null);
   const workerInstallPollingResourceIdRef = useRef<string | null>(null);
@@ -716,6 +727,7 @@ export function TransitServersPanel() {
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
+    setWorkerInstallInterfaceName("eth0");
   }
 
   function openAdd() {
@@ -736,21 +748,36 @@ export function TransitServersPanel() {
     setModalMode("delete");
   }
 
-  async function openWorkerInstallApprovalPreview(resource: TransitResourceData) {
+  function openWorkerInstallApprovalPreview(resource: TransitResourceData) {
     setApprovalPreviewResource(resource);
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
+    setWorkerInstallInterfaceName(defaultWorkerInterfaceName(resource.worker_interface_name));
     setWorkerInstallHeartbeatMessage("");
+  }
+
+  async function generateWorkerInstallCommandForPreview() {
+    if (!approvalPreviewResource) {
+      return;
+    }
+    const interfaceName = workerInstallInterfaceName.trim();
+    if (!isValidWorkerInterfaceName(interfaceName)) {
+      setMessage("网卡不能为空，且只能包含字母、数字、点、下划线或短横线。");
+      return;
+    }
+    setWorkerInstallCommandResult(null);
+    setWorkerInstallCommandCopied(false);
     clearWorkerInstallPolling();
     setWorkerInstallCommandGenerating(true);
     try {
       const csrfToken = await ensureCsrfToken();
       const result = await generateTransitWorkerInstallCommand(
-        resource.id,
+        approvalPreviewResource.id,
         {
           confirmation: transitWorkerInstallCommandConfirmText,
           expires_in_minutes: 60,
+          interface_name: interfaceName,
         },
         csrfToken,
       );
@@ -1029,10 +1056,23 @@ export function TransitServersPanel() {
               </button>
             </div>
             <div className="worker-install-command-result" aria-label="Worker 安装命令">
-              <span>请在中转 VPS 上执行以下命令：</span>
+              <label>
+                网卡
+                <input
+                  value={workerInstallInterfaceName}
+                  onChange={(event) => setWorkerInstallInterfaceName(event.target.value)}
+                  placeholder="例如：ens17、eth0、enp1s0"
+                />
+              </label>
+              <div className="modal-actions">
+                <button disabled={workerInstallCommandGenerating} type="button" onClick={() => void generateWorkerInstallCommandForPreview()}>
+                  {workerInstallCommandGenerating ? "生成中..." : "生成安装命令"}
+                </button>
+              </div>
               {workerInstallCommandGenerating ? <p className="message">正在生成安装命令...</p> : null}
               {workerInstallCommandResult ? (
                 <>
+                  <span>请在中转 VPS 上执行以下命令：</span>
                   <pre className="worker-install-placeholder-command">{workerInstallCommandResult.install_command}</pre>
                   <div className="modal-actions">
                     <button className="secondary" type="button" onClick={() => void copyGeneratedWorkerInstallCommand()}>
@@ -1046,7 +1086,7 @@ export function TransitServersPanel() {
                 </>
               ) : null}
               {!workerInstallCommandGenerating && !workerInstallCommandResult ? (
-                <p className="message">安装命令未生成，请关闭后重试。</p>
+                <p className="message">填写网卡后生成一次性安装命令。</p>
               ) : null}
               {workerInstallHeartbeatMessage ? <p className="message">{workerInstallHeartbeatMessage}</p> : null}
             </div>
