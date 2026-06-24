@@ -678,6 +678,8 @@ export function TransitServersPanel() {
   }
 
   function closeApprovalPreview() {
+    // Keep heartbeat polling alive after the command modal closes. Users often
+    // copy the command, close the modal, then run it on the VPS.
     setApprovalPreviewResource(null);
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);

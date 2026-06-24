@@ -448,6 +448,8 @@ export function ServerManagementPanel() {
   }, []);
 
   function closeModal() {
+    // Keep Worker heartbeat polling alive after the modal closes; it stops on
+    // online, timeout, unmount, or when a new install command replaces it.
     setModalMode(null);
     setSelectedServer(null);
     setServerForm(emptyServerForm);
