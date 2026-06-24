@@ -535,7 +535,33 @@ export function TransitServersPanel() {
   const [workerInstallHeartbeatMessage, setWorkerInstallHeartbeatMessage] = useState("");
   const workerInstallPollTimeoutRef = useRef<number | null>(null);
   const workerInstallPollingResourceIdRef = useRef<string | null>(null);
+  const pendingDeletedTransitResourceIdsRef = useRef<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
+
+  function filterVisibleTransitResources(nextResources: TransitResourceData[]) {
+    const pendingResourceIds = pendingDeletedTransitResourceIdsRef.current;
+    return nextResources.filter(
+      (resource) => !pendingResourceIds.has(resource.id) && resource.status.toLowerCase() !== "deleted" && !resource.deleted_at,
+    );
+  }
+
+  function setVisibleTransitResources(nextResources: TransitResourceData[]) {
+    const visibleResources = filterVisibleTransitResources(nextResources);
+    setResources(visibleResources);
+    return visibleResources;
+  }
+
+  function markTransitResourcePendingDelete(resourceId: string) {
+    pendingDeletedTransitResourceIdsRef.current.add(resourceId);
+    if (workerInstallPollingResourceIdRef.current === resourceId) {
+      clearWorkerInstallPolling();
+    }
+    setResources((current) => filterVisibleTransitResources(current));
+  }
+
+  function releaseTransitResourcePendingDelete(resourceId: string) {
+    pendingDeletedTransitResourceIdsRef.current.delete(resourceId);
+  }
 
   async function loadResources() {
     setLoading(true);
@@ -545,15 +571,15 @@ export function TransitServersPanel() {
       setLoading(false);
       return [];
     }
-    setResources(result.data.resources);
+    const visibleResources = setVisibleTransitResources(result.data.resources);
     await Promise.all(
-      result.data.resources
+      visibleResources
         .filter((resource) => resource.worker_id)
         .map((resource) => loadWorkerCommands(resource.worker_id as string)),
     );
     setMessage("中转服务器列表已刷新。");
     setLoading(false);
-    return result.data.resources;
+    return visibleResources;
   }
 
   async function loadWorkerCommands(workerId: string) {
@@ -576,7 +602,7 @@ export function TransitServersPanel() {
     });
   }
 
-  async function refreshWhenResourceCleanupCommandCompletes(command?: WorkerCommandData | null) {
+  async function refreshWhenResourceCleanupCommandCompletes(command?: WorkerCommandData | null, resourceId?: string | null) {
     if (!command?.id) {
       return;
     }
@@ -590,6 +616,9 @@ export function TransitServersPanel() {
         latestCommand = result.data;
         if (cleanupCommandTerminalStatuses.has(result.data.status)) {
           const workerId = result.data.target_worker_id || result.data.worker_id;
+          if (result.data.status !== "succeeded" && resourceId) {
+            releaseTransitResourcePendingDelete(resourceId);
+          }
           await loadResources();
           if (workerId) {
             await loadWorkerCommands(workerId);
@@ -621,14 +650,17 @@ export function TransitServersPanel() {
   }
 
   async function pollTransitWorkerInstallHeartbeat(resourceId: string, attempt = 0) {
-    if (workerInstallPollingResourceIdRef.current !== resourceId) {
+    if (workerInstallPollingResourceIdRef.current !== resourceId || pendingDeletedTransitResourceIdsRef.current.has(resourceId)) {
+      if (pendingDeletedTransitResourceIdsRef.current.has(resourceId)) {
+        clearWorkerInstallPolling();
+      }
       return;
     }
 
     const result = await apiFetch<TransitResourceListResult>("/api/transit-resources?resource_type=server");
     if (result.success) {
-      setResources(result.data.resources);
-      const resource = result.data.resources.find((item) => item.id === resourceId);
+      const visibleResources = setVisibleTransitResources(result.data.resources);
+      const resource = visibleResources.find((item) => item.id === resourceId);
       if (resource?.worker_id) {
         await loadWorkerCommands(resource.worker_id);
       }
@@ -837,6 +869,8 @@ export function TransitServersPanel() {
     if (!selectedResource) {
       return;
     }
+    const resourceId = selectedResource.id;
+    markTransitResourcePendingDelete(resourceId);
     setSubmitting(true);
     setMessage(
       deleteMode === "offline_local_remove"
@@ -847,6 +881,8 @@ export function TransitServersPanel() {
       const csrfToken = await ensureCsrfToken();
       const result = await remoteCleanupDeleteTransitResource(selectedResource.id, csrfToken, requiredConfirmText);
       if (!result.success) {
+        releaseTransitResourcePendingDelete(resourceId);
+        await loadResources();
         if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
           setDeleteMode("offline_local_remove");
           setMessage(result.message);
@@ -863,8 +899,10 @@ export function TransitServersPanel() {
       closeModal();
       await loadResources();
       scheduleResourceRefresh(result.data.command);
-      void refreshWhenResourceCleanupCommandCompletes(result.data.command);
+      void refreshWhenResourceCleanupCommandCompletes(result.data.command, resourceId);
     } catch (error) {
+      releaseTransitResourcePendingDelete(resourceId);
+      await loadResources();
       setMessage(error instanceof Error ? error.message : "删除中转服务器失败。");
     } finally {
       setSubmitting(false);
@@ -1241,6 +1279,29 @@ export function TransitRoutesPanel() {
   const [createQrVisible, setCreateQrVisible] = useState(false);
   const createQrFrameRef = useRef<HTMLDivElement | null>(null);
   const [candidateRouteId, setCandidateRouteId] = useState("");
+  const pendingDeletedTransitRouteIdsRef = useRef<Set<string>>(new Set());
+
+  function filterVisibleRouteResources(nextResources: TransitResourceData[]) {
+    return nextResources.filter((resource) => resource.status.toLowerCase() !== "deleted" && !resource.deleted_at);
+  }
+
+  function filterVisibleRouteNodes(nextNodes: NodeData[]) {
+    return nextNodes.filter((node) => node.status.toLowerCase() !== "deleted");
+  }
+
+  function filterVisibleTransitRoutes(nextRoutes: TransitRouteData[]) {
+    const pendingRouteIds = pendingDeletedTransitRouteIdsRef.current;
+    return nextRoutes.filter((route) => !pendingRouteIds.has(route.id) && route.status.toLowerCase() !== "deleted" && !route.deleted_at);
+  }
+
+  function markTransitRoutePendingDelete(routeId: string) {
+    pendingDeletedTransitRouteIdsRef.current.add(routeId);
+    setRoutes((current) => filterVisibleTransitRoutes(current));
+  }
+
+  function releaseTransitRoutePendingDelete(routeId: string) {
+    pendingDeletedTransitRouteIdsRef.current.delete(routeId);
+  }
 
   const selectableResources = useMemo(() => resources.filter(isPlanningSelectableTransitResource), [resources]);
   const activeNodes = useMemo(() => nodes.filter((node) => node.status === "active"), [nodes]);
@@ -1302,19 +1363,19 @@ export function TransitRoutesPanel() {
     ]);
 
     if (resourceResult.success) {
-      nextResources = resourceResult.data.resources;
+      nextResources = filterVisibleRouteResources(resourceResult.data.resources);
       setResources(nextResources);
     } else {
       setMessage(`${resourceResult.error_code}: ${resourceResult.message}`);
     }
     if (nodeResult.success) {
-      nextNodes = nodeResult.data.nodes;
+      nextNodes = filterVisibleRouteNodes(nodeResult.data.nodes);
       setNodes(nextNodes);
     } else {
       setMessage(`${nodeResult.error_code}: ${nodeResult.message}`);
     }
     if (routeResult.success) {
-      nextRoutes = routeResult.data.routes;
+      nextRoutes = filterVisibleTransitRoutes(routeResult.data.routes);
       setRoutes(nextRoutes);
     } else {
       setMessage(`${routeResult.error_code}: ${routeResult.message}`);
@@ -1331,7 +1392,7 @@ export function TransitRoutesPanel() {
     });
   }
 
-  async function refreshWhenRouteCleanupCommandCompletes(command?: WorkerCommandData | null) {
+  async function refreshWhenRouteCleanupCommandCompletes(command?: WorkerCommandData | null, routeId?: string | null) {
     if (!command?.id) {
       return;
     }
@@ -1344,6 +1405,9 @@ export function TransitRoutesPanel() {
       if (result.success) {
         latestCommand = result.data;
         if (cleanupCommandTerminalStatuses.has(result.data.status)) {
+          if (result.data.status !== "succeeded" && routeId) {
+            releaseTransitRoutePendingDelete(routeId);
+          }
           await loadData();
           setMessage(
             result.data.status === "succeeded"
@@ -1867,6 +1931,8 @@ export function TransitRoutesPanel() {
     if (!deleteRoute) {
       return;
     }
+    const routeId = deleteRoute.id;
+    markTransitRoutePendingDelete(routeId);
     const backendConfirmText = requiredDeleteConfirmText(deleteRouteMode);
     setCandidateLoading(true);
     setMessage(
@@ -1878,6 +1944,8 @@ export function TransitRoutesPanel() {
       const csrfToken = await ensureCsrfToken();
       const result = await remoteCleanupDeleteTransitRoute(deleteRoute.id, csrfToken, backendConfirmText);
       if (!result.success) {
+        releaseTransitRoutePendingDelete(routeId);
+        await loadData();
         if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
           setDeleteRouteMode("offline_local_remove");
           setMessage(result.message);
@@ -1896,8 +1964,10 @@ export function TransitRoutesPanel() {
       setCandidateExport(null);
       await loadData();
       scheduleRouteDataRefresh();
-      void refreshWhenRouteCleanupCommandCompletes(result.data.command);
+      void refreshWhenRouteCleanupCommandCompletes(result.data.command, routeId);
     } catch (error) {
+      releaseTransitRoutePendingDelete(routeId);
+      await loadData();
       setMessage(error instanceof Error ? error.message : "删除中转链路失败。");
     } finally {
       setCandidateLoading(false);

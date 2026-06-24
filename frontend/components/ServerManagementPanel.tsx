@@ -360,6 +360,46 @@ export function ServerManagementPanel() {
   const [submitting, setSubmitting] = useState(false);
   const workerInstallPollTimeoutRef = useRef<number | null>(null);
   const workerInstallPollingServerIdRef = useRef<string | null>(null);
+  const pendingDeletedServerIdsRef = useRef<Set<string>>(new Set());
+  const pendingDeletedNodeIdsRef = useRef<Set<string>>(new Set());
+
+  function filterVisibleServers(nextServers: VpsServerData[]) {
+    const pendingServerIds = pendingDeletedServerIdsRef.current;
+    const pendingNodeIds = pendingDeletedNodeIdsRef.current;
+    return nextServers
+      .filter((server) => !pendingServerIds.has(server.id) && server.status.toLowerCase() !== "deleted")
+      .map((server) => ({
+        ...server,
+        nodes: server.nodes.filter((node) => !pendingNodeIds.has(node.id) && node.status.toLowerCase() !== "deleted"),
+      }));
+  }
+
+  function setVisibleServers(nextServers: VpsServerData[]) {
+    const visibleServers = filterVisibleServers(nextServers);
+    setServers(visibleServers);
+    return visibleServers;
+  }
+
+  function markServerPendingDelete(serverId: string) {
+    pendingDeletedServerIdsRef.current.add(serverId);
+    if (workerInstallPollingServerIdRef.current === serverId) {
+      clearWorkerInstallPolling();
+    }
+    setServers((current) => filterVisibleServers(current));
+  }
+
+  function releaseServerPendingDelete(serverId: string) {
+    pendingDeletedServerIdsRef.current.delete(serverId);
+  }
+
+  function markNodePendingDelete(nodeId: string) {
+    pendingDeletedNodeIdsRef.current.add(nodeId);
+    setServers((current) => filterVisibleServers(current));
+  }
+
+  function releaseNodePendingDelete(nodeId: string) {
+    pendingDeletedNodeIdsRef.current.delete(nodeId);
+  }
 
   async function ensureCsrfToken() {
     const csrf = await apiFetch<CsrfResult>("/api/auth/csrf");
@@ -373,15 +413,15 @@ export function ServerManagementPanel() {
     setLoading(true);
     const result = await apiFetch<VpsServerListResult>("/api/vps");
     if (result.success) {
-      setServers(result.data.servers);
+      const visibleServers = setVisibleServers(result.data.servers);
       await Promise.all(
-        result.data.servers
+        visibleServers
           .filter((server) => server.worker_id)
           .map((server) => loadWorkerCommands(server.worker_id as string, server.id)),
       );
       setMessage("服务器列表已刷新。");
       setLoading(false);
-      return result.data.servers;
+      return visibleServers;
     } else {
       setMessage(`${result.error_code}: ${result.message}`);
     }
@@ -398,14 +438,17 @@ export function ServerManagementPanel() {
   }
 
   async function pollWorkerInstallHeartbeat(serverId: string, attempt = 0) {
-    if (workerInstallPollingServerIdRef.current !== serverId) {
+    if (workerInstallPollingServerIdRef.current !== serverId || pendingDeletedServerIdsRef.current.has(serverId)) {
+      if (pendingDeletedServerIdsRef.current.has(serverId)) {
+        clearWorkerInstallPolling();
+      }
       return;
     }
 
     const result = await apiFetch<VpsServerListResult>("/api/vps");
     if (result.success) {
-      setServers(result.data.servers);
-      const server = result.data.servers.find((item) => item.id === serverId);
+      const visibleServers = setVisibleServers(result.data.servers);
+      const server = visibleServers.find((item) => item.id === serverId);
       if (server?.worker_id) {
         await loadWorkerCommands(server.worker_id, server.id);
       }
@@ -655,7 +698,11 @@ export function ServerManagementPanel() {
     });
   }
 
-  async function refreshWhenCleanupCommandCompletes(command?: WorkerCommandData | null, serverId?: string | null) {
+  async function refreshWhenCleanupCommandCompletes(
+    command?: WorkerCommandData | null,
+    serverId?: string | null,
+    pendingDelete?: { serverId?: string; nodeId?: string },
+  ) {
     if (!command?.id) {
       return;
     }
@@ -673,6 +720,14 @@ export function ServerManagementPanel() {
         }
         if (CLEANUP_COMMAND_TERMINAL_STATUSES.has(result.data.status)) {
           const workerId = result.data.target_worker_id || result.data.worker_id;
+          if (result.data.status !== "succeeded") {
+            if (pendingDelete?.serverId) {
+              releaseServerPendingDelete(pendingDelete.serverId);
+            }
+            if (pendingDelete?.nodeId) {
+              releaseNodePendingDelete(pendingDelete.nodeId);
+            }
+          }
           await loadServers();
           if (workerId) {
             await loadWorkerCommands(workerId, commandServerId);
@@ -1148,6 +1203,8 @@ export function ServerManagementPanel() {
     if (!selectedServer) {
       return;
     }
+    const serverId = selectedServer.id;
+    markServerPendingDelete(serverId);
     setSubmitting(true);
     setMessage(
       deleteMode === "offline_local_remove"
@@ -1159,6 +1216,8 @@ export function ServerManagementPanel() {
       const result = await remoteCleanupDeleteVpsServer(selectedServer.id, csrfToken, requiredConfirmText);
 
       if (!result.success) {
+        releaseServerPendingDelete(serverId);
+        await loadServers();
         if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
           setDeleteMode("offline_local_remove");
           setMessage(result.message);
@@ -1175,9 +1234,11 @@ export function ServerManagementPanel() {
       );
       closeModal();
       await loadServers();
-      scheduleServerRefresh(result.data.command, selectedServer.id);
-      void refreshWhenCleanupCommandCompletes(result.data.command, selectedServer.id);
+      scheduleServerRefresh(result.data.command, serverId);
+      void refreshWhenCleanupCommandCompletes(result.data.command, serverId, { serverId });
     } catch (error) {
+      releaseServerPendingDelete(serverId);
+      await loadServers();
       setMessage(error instanceof Error ? error.message : "删除服务器失败。");
     } finally {
       setSubmitting(false);
@@ -1189,6 +1250,9 @@ export function ServerManagementPanel() {
     if (!selectedNodeForDelete) {
       return;
     }
+    const nodeId = selectedNodeForDelete.id;
+    const serverId = selectedServer?.id ?? null;
+    markNodePendingDelete(nodeId);
     setSubmitting(true);
     setMessage(
       deleteMode === "offline_local_remove"
@@ -1200,6 +1264,8 @@ export function ServerManagementPanel() {
       const result = await remoteCleanupDeleteNode(selectedNodeForDelete.id, csrfToken, requiredConfirmText);
 
       if (!result.success) {
+        releaseNodePendingDelete(nodeId);
+        await loadServers();
         if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
           setDeleteMode("offline_local_remove");
           setMessage(result.message);
@@ -1216,9 +1282,11 @@ export function ServerManagementPanel() {
       );
       closeModal();
       await loadServers();
-      scheduleServerRefresh(result.data.command, selectedServer?.id);
-      void refreshWhenCleanupCommandCompletes(result.data.command, selectedServer?.id);
+      scheduleServerRefresh(result.data.command, serverId);
+      void refreshWhenCleanupCommandCompletes(result.data.command, serverId, { nodeId });
     } catch (error) {
+      releaseNodePendingDelete(nodeId);
+      await loadServers();
       setMessage(error instanceof Error ? error.message : "删除节点失败。");
     } finally {
       setSubmitting(false);
