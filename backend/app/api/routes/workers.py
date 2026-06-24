@@ -33,6 +33,8 @@ from app.services.worker_binding import (
     sync_worker_bound_resource_status,
     try_bind_worker_by_public_ip,
     validate_worker_token_binding_target,
+    worker_heartbeat_age_seconds,
+    worker_heartbeat_status,
 )
 from app.services.worker_commands import (
     DEFAULT_NEXT_POLL_SECONDS,
@@ -365,7 +367,9 @@ def metadata_summary(worker: Worker) -> dict[str, Any]:
 
 
 def serialize_worker(worker: Worker) -> dict:
-    status = worker_runtime_status(worker)
+    heartbeat_status = worker_heartbeat_status(worker)
+    heartbeat_age_seconds = worker_heartbeat_age_seconds(worker)
+    status = "online" if heartbeat_status == "online" else "offline" if heartbeat_status in {"stale", "deleted"} else "unknown"
     return {
         "id": worker.id,
         "server_id": worker.server_id,
@@ -375,7 +379,12 @@ def serialize_worker(worker: Worker) -> dict:
         "hostname": worker.hostname,
         "interface_name": worker.interface_name,
         "worker_version": worker.worker_version,
+        "raw_status": worker.status,
         "status": status,
+        "heartbeat_status": heartbeat_status,
+        "heartbeat_age_seconds": heartbeat_age_seconds,
+        "is_heartbeat_stale": heartbeat_status == "stale",
+        "display_status": heartbeat_status,
         "last_heartbeat_at": worker.last_heartbeat_at.isoformat() if worker.last_heartbeat_at else None,
         "registered_at": worker.registered_at.isoformat() if worker.registered_at else None,
         "created_at": worker.created_at.isoformat() if worker.created_at else None,

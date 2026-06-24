@@ -342,7 +342,7 @@ function statusClass(status: string) {
   if (["active", "online", "worker_online", "succeeded", "success", "passed"].includes(status)) {
     return "ok";
   }
-  if (["failed", "error", "deleted", "offline"].includes(status)) {
+  if (["failed", "error", "deleted", "offline", "stale"].includes(status)) {
     return "bad";
   }
   return "warn";
@@ -356,6 +356,7 @@ function displayStatusLabel(status: string | null | undefined) {
     worker_online: "Worker 在线",
     worker_offline: "Worker 离线",
     online: "在线",
+    stale: "心跳过期 / 离线",
     offline: "离线",
     unchecked: "未检测",
     creating: "创建中",
@@ -1257,7 +1258,12 @@ export function TransitServersPanel() {
                     </div>
                   </div>
                   <div className="server-row-worker">
-                    Worker：{resource.worker_status ? displayStatusLabel(resource.worker_status) : "未注册"}；主机名：
+                    Worker：
+                    {resource.worker_display_status
+                      ? displayStatusLabel(resource.worker_display_status)
+                      : resource.worker_status
+                        ? displayStatusLabel(resource.worker_status)
+                        : "未注册"}；主机名：
                     {resource.worker_hostname || "暂无"}；网卡：{resource.worker_interface_name || "暂无"}；版本：
                     {resource.worker_version || "暂无"}；最后心跳：{formatTime(resource.worker_last_heartbeat_at)}
                     {pendingWorkerDraft ? (
@@ -3404,7 +3410,7 @@ export function TransitRoutesPanel() {
               <strong>{selectedResource ? `${selectedResource.name} / ${displayValue(selectedResource.entry_host)}` : "未选择"}</strong>
               <span>Worker</span>
               <strong>
-                {selectedResource?.worker_online ? "online" : displayValue(selectedResource?.worker_status)} / {displayValue(selectedResource?.worker_version)}
+                {displayStatusLabel(selectedResource?.worker_display_status ?? selectedResource?.worker_status)} / {displayValue(selectedResource?.worker_version)}
               </strong>
               <span>网卡</span>
               <strong>{displayValue(selectedResource?.worker_interface_name)}</strong>
@@ -3609,7 +3615,7 @@ export function TransitRoutesPanel() {
                     <strong>{haproxyDryRun.route_name}</strong>
                     <span>Worker</span>
                     <strong>
-                      {selectedResource?.worker_online ? "online" : displayValue(selectedResource?.worker_status)} / {displayValue(selectedResource?.worker_version)} / {displayValue(selectedResource?.worker_interface_name)}
+                      {displayStatusLabel(selectedResource?.worker_display_status ?? selectedResource?.worker_status)} / {displayValue(selectedResource?.worker_version)} / {displayValue(selectedResource?.worker_interface_name)}
                     </strong>
                   </div>
 

@@ -129,6 +129,10 @@ export type TransitResourceData = {
   worker_interface_name: string | null;
   worker_version: string | null;
   worker_last_heartbeat_at: string | null;
+  worker_heartbeat_status: "online" | "stale" | "deleted" | "unknown" | null;
+  worker_heartbeat_age_seconds: number | null;
+  worker_is_heartbeat_stale: boolean;
+  worker_display_status: string | null;
   worker_online: boolean;
   display_status: string;
   expires_at: string | null;
@@ -643,6 +647,10 @@ export type VpsServerData = {
   worker_interface_name: string | null;
   worker_version: string | null;
   worker_last_heartbeat_at: string | null;
+  worker_heartbeat_status: "online" | "stale" | "deleted" | "unknown" | null;
+  worker_heartbeat_age_seconds: number | null;
+  worker_is_heartbeat_stale: boolean;
+  worker_display_status: string | null;
   worker_online: boolean;
   display_status: string;
   created_at: string | null;
@@ -857,7 +865,12 @@ export type WorkerData = {
   hostname: string | null;
   interface_name: string | null;
   worker_version: string | null;
+  raw_status: string;
   status: "online" | "offline" | "unknown";
+  heartbeat_status: "online" | "stale" | "deleted" | "unknown";
+  heartbeat_age_seconds: number | null;
+  is_heartbeat_stale: boolean;
+  display_status: string;
   last_heartbeat_at: string | null;
   registered_at: string | null;
   created_at: string | null;

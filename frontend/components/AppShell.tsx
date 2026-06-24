@@ -238,6 +238,7 @@ function displayDashboardStatus(status: string | null | undefined) {
   const labels: Record<string, string> = {
     active: "active",
     online: "在线",
+    stale: "心跳过期 / 离线",
     worker_online: "Worker 在线",
     pending_worker: "等待 Worker",
     disabled: "已停用",

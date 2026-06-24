@@ -7,6 +7,7 @@ WORKER_TOKEN_STATUSES = {"active", "used", "expired", "revoked"}
 WORKER_STATUSES = {"online", "offline", "unknown"}
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60
 OFFLINE_THRESHOLD_SECONDS = DEFAULT_HEARTBEAT_INTERVAL_SECONDS * 3
+HEARTBEAT_STALE_THRESHOLD_SECONDS = DEFAULT_HEARTBEAT_INTERVAL_SECONDS * 5
 
 
 def clean_optional(value: str | None, max_length: int | None = None) -> str | None:
