@@ -147,11 +147,24 @@ function requiredDeleteConfirmText(mode: DeleteFlowMode) {
   return mode === "offline_local_remove" ? OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT : REMOTE_CLEANUP_CONFIRM_TEXT;
 }
 
+function transitRouteDeleteConfirmText(route: TransitRouteData, mode: DeleteFlowMode) {
+  if (mode === "offline_local_remove") {
+    return `我确认离线本地移除 ${route.name}，并理解远程 ${route.listen_port} 可能仍在监听`;
+  }
+  if (isHaproxyForwardingMethod(route.forwarding_method)) {
+    return `我确认远程清理删除 ${route.name} 并接受 ${route.listen_port} 临时不可用`;
+  }
+  return `我确认远程清理删除 ${route.name} 并接受 ${route.listen_port} 临时不可用`;
+}
+
 function SafeDeleteModal({
   title,
   description,
   offlineDescription,
   targetLabel,
+  requiredConfirmTextOverride,
+  remoteConfirmButtonLabel,
+  offlineConfirmButtonLabel,
   mode,
   confirmText,
   submitting,
@@ -163,6 +176,9 @@ function SafeDeleteModal({
   description: ReactNode;
   offlineDescription?: ReactNode;
   targetLabel: string;
+  requiredConfirmTextOverride?: string;
+  remoteConfirmButtonLabel?: string;
+  offlineConfirmButtonLabel?: string;
   mode: DeleteFlowMode;
   confirmText: string;
   submitting: boolean;
@@ -170,7 +186,7 @@ function SafeDeleteModal({
   onConfirmTextChange: (value: string) => void;
   onConfirm: () => void;
 }) {
-  const requiredConfirmText = requiredDeleteConfirmText(mode);
+  const requiredConfirmText = requiredConfirmTextOverride ?? requiredDeleteConfirmText(mode);
   const isOfflineLocalRemove = mode === "offline_local_remove";
   return (
     <div className="modal-backdrop" role="presentation">
@@ -215,7 +231,7 @@ function SafeDeleteModal({
             取消
           </button>
           <button className="danger" disabled={submitting || confirmText !== requiredConfirmText} type="button" onClick={onConfirm}>
-            {isOfflineLocalRemove ? "确认本地移除" : "确认远程清理并删除"}
+            {isOfflineLocalRemove ? offlineConfirmButtonLabel ?? "确认离线本地移除" : remoteConfirmButtonLabel ?? "确认远程清理删除"}
           </button>
         </div>
       </div>
@@ -2612,7 +2628,7 @@ export function TransitRoutesPanel() {
     setDeleteRouteMode("remote_cleanup");
     setMessage(
       isHaproxyForwardingMethod(route?.forwarding_method)
-        ? "HAProxy 中转链路删除可创建受控远程清理任务；离线本地移除不会停止 HAProxy service 或释放监听端口。"
+        ? `HAProxy 中转链路远程清理删除会停止远程服务并释放监听端口 ${route?.listen_port ?? ""}；离线本地移除只隐藏本地记录。`
         : "中转链路删除可创建受控远程清理任务；离线本地移除不会停止远程服务或释放监听端口。",
     );
   }
@@ -2624,19 +2640,20 @@ export function TransitRoutesPanel() {
   }
 
   async function submitDeleteRoute() {
-    const requiredConfirmText = requiredDeleteConfirmText(deleteRouteMode);
+    const requiredConfirmText = deleteRoute ? transitRouteDeleteConfirmText(deleteRoute, deleteRouteMode) : "";
     if (!deleteRoute || deleteRouteConfirmText !== requiredConfirmText) {
       return;
     }
+    const backendConfirmText = requiredDeleteConfirmText(deleteRouteMode);
     setCandidateLoading(true);
     setMessage(
       deleteRouteMode === "offline_local_remove"
-        ? "正在本地移除中转链路记录；不会创建 Worker command 或执行远程清理。"
-        : "正在创建中转链路远程清理任务；清理成功后才会软删除系统记录。",
+        ? "正在离线本地移除中转链路记录；不会创建 Worker command 或执行远程清理。"
+        : "正在创建中转链路远程清理任务；清理成功后会停止远程服务并软删除系统记录。",
     );
     try {
       const csrfToken = await ensureCsrfToken();
-      const result = await remoteCleanupDeleteTransitRoute(deleteRoute.id, csrfToken, requiredConfirmText);
+      const result = await remoteCleanupDeleteTransitRoute(deleteRoute.id, csrfToken, backendConfirmText);
       if (!result.success) {
         if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
           setDeleteRouteMode("offline_local_remove");
@@ -2649,7 +2666,7 @@ export function TransitRoutesPanel() {
       }
       setMessage(
         result.data.delete_mode === "offline_local_remove"
-          ? "已本地移除记录。由于 Worker 离线，未执行远程清理。"
+          ? "已离线本地移除记录。由于 Worker 离线，未执行远程清理；远程服务和监听端口可能仍然存在。"
           : `清理任务已创建：${result.data.command_id}。等待 Worker 执行；远程清理成功后将软删除系统记录。`,
       );
       closeDeleteRouteModal();
@@ -3243,7 +3260,7 @@ export function TransitRoutesPanel() {
                         详情
                       </button>
                       <button className="danger compact" disabled={candidateLoading} type="button" onClick={() => openDeleteRoute(route.id)}>
-                        删除
+                        远程清理删除
                       </button>
                     </div>
                   </div>
@@ -3808,10 +3825,13 @@ export function TransitRoutesPanel() {
 
       {deleteRoute ? (
         <SafeDeleteModal
-          title="远程清理并删除中转链路"
+          title="远程清理删除中转链路"
           targetLabel={`${deleteRoute.name} / ${routeEntry(deleteRoute)} -> ${deleteRoute.target_host}:${deleteRoute.target_port}`}
           mode={deleteRouteMode}
           confirmText={deleteRouteConfirmText}
+          requiredConfirmTextOverride={transitRouteDeleteConfirmText(deleteRoute, deleteRouteMode)}
+          remoteConfirmButtonLabel="确认远程清理删除"
+          offlineConfirmButtonLabel="确认离线本地移除"
           submitting={candidateLoading}
           onCancel={closeDeleteRouteModal}
           onConfirmTextChange={setDeleteRouteConfirmText}
@@ -3819,12 +3839,14 @@ export function TransitRoutesPanel() {
           description={
             isHaproxyForwardingMethod(deleteRoute.forwarding_method) ? (
               <>
-                这会创建受控 Worker cleanup command，远程清理该中转链路对应的 HAProxy service 和配置文件。清理成功后，中转链路记录会被软删除。
-                不会修改防火墙、云安全组、云防火墙，也不会 cutover。
+                这是远程清理删除，会影响当前中转入口 {routeEntry(deleteRoute)}。成功后 {deleteRoute.listen_port} 将不再监听，
+                当前经中转访问的客户端链接会失效。系统会创建受控 Worker cleanup command，停止远程 HAProxy service，删除 systemd unit 和 HAProxy route config。
+                清理成功后，中转链路记录会被软删除。不会修改防火墙、云安全组、云防火墙，也不会 cutover。
               </>
             ) : (
               <>
-                这会创建受控 Worker cleanup command，远程清理该中转链路对应的中转服务。清理成功后，中转链路记录会被软删除。
+                这是远程清理删除，会影响当前中转入口 {routeEntry(deleteRoute)}。成功后 {deleteRoute.listen_port} 将不再监听。
+                系统会创建受控 Worker cleanup command，远程清理该中转链路对应的中转服务。清理成功后，中转链路记录会被软删除。
                 不会修改防火墙、云安全组、云防火墙，也不会 cutover。
               </>
             )
@@ -3833,14 +3855,14 @@ export function TransitRoutesPanel() {
             isHaproxyForwardingMethod(deleteRoute.forwarding_method) ? (
               <>
                 <span>当前资源对应的 Worker 离线，系统无法远程清理该服务器上的 HAProxy service 或配置文件。</span>
-                <span>如果该资源已到期、无法登录、已释放，或你确认不再使用，可以只从 LiveLine Console 本地移除记录。</span>
-                <span>此操作不会连接远程服务器，不会停止远程 HAProxy service，不会删除 HAProxy 配置，也不会释放监听端口。</span>
+                <span>离线本地移除只修改本地数据库记录，不会连接远程服务器，不会停止远程 HAProxy service，不会删除 HAProxy 配置，也不会释放监听端口。</span>
+                <span>如果远程服务仍在运行，本地移除后页面将看不到这条链路，但远程 {deleteRoute.listen_port} 可能仍然在监听。之后不能盲目重新创建同端口，必须先做远程只读核对。</span>
               </>
             ) : (
               <>
                 <span>当前资源对应的 Worker 离线，系统无法远程清理该服务器上的中转服务。</span>
-                <span>如果该资源已到期、无法登录、已释放，或你确认不再使用，可以只从 LiveLine Console 本地移除记录。</span>
-                <span>此操作不会连接远程服务器，不会停止远程服务，不会释放监听端口，不会修改防火墙，不会 cutover。</span>
+                <span>离线本地移除只修改本地数据库记录，不会连接远程服务器，不会停止远程服务，不会释放监听端口，不会修改防火墙，不会 cutover。</span>
+                <span>如果远程服务仍在运行，本地移除后页面将看不到这条链路，但远程端口可能仍然在监听。之后不能盲目重新创建同端口，必须先做远程只读核对。</span>
               </>
             )
           }
