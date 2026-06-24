@@ -559,6 +559,19 @@ export function ServerManagementPanel() {
     }
   }
 
+  function scheduleServerRefresh(command?: WorkerCommandData | null, serverId?: string | null) {
+    [1500, 4000].forEach((delay) => {
+      window.setTimeout(() => {
+        void loadServers();
+        if (command?.target_worker_id) {
+          void loadWorkerCommands(command.target_worker_id, serverId ?? undefined);
+        } else if (command?.worker_id) {
+          void loadWorkerCommands(command.worker_id, serverId ?? undefined);
+        }
+      }, delay);
+    });
+  }
+
   async function runWorkerCheck(server: VpsServerData) {
     if (!server.worker_id || !server.worker_online) {
       setMessage("Worker 未在线，不能创建 Worker 检查命令。");
@@ -1040,6 +1053,7 @@ export function ServerManagementPanel() {
       );
       closeModal();
       await loadServers();
+      scheduleServerRefresh(result.data.command, selectedServer.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除服务器失败。");
     } finally {
@@ -1080,6 +1094,7 @@ export function ServerManagementPanel() {
       );
       closeModal();
       await loadServers();
+      scheduleServerRefresh(result.data.command, selectedServer?.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除节点失败。");
     } finally {

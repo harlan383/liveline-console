@@ -865,6 +865,19 @@ export function TransitServersPanel() {
     }
   }
 
+  function scheduleResourceRefresh(command?: WorkerCommandData | null) {
+    [1500, 4000].forEach((delay) => {
+      window.setTimeout(() => {
+        void loadResources();
+        if (command?.target_worker_id) {
+          void loadWorkerCommands(command.target_worker_id);
+        } else if (command?.worker_id) {
+          void loadWorkerCommands(command.worker_id);
+        }
+      }, delay);
+    });
+  }
+
   useEffect(() => {
     void loadResources();
   }, []);
@@ -1184,6 +1197,7 @@ export function TransitServersPanel() {
       );
       closeModal();
       await loadResources();
+      scheduleResourceRefresh(result.data.command);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除中转服务器失败。");
     } finally {
@@ -2137,6 +2151,14 @@ export function TransitRoutesPanel() {
     return { resources: nextResources, nodes: nextNodes, routes: nextRoutes };
   }
 
+  function scheduleRouteDataRefresh() {
+    [1500, 4000].forEach((delay) => {
+      window.setTimeout(() => {
+        void loadData();
+      }, delay);
+    });
+  }
+
   useEffect(() => {
     void loadData();
   }, []);
@@ -2673,6 +2695,7 @@ export function TransitRoutesPanel() {
       setCandidateSummary(null);
       setCandidateExport(null);
       await loadData();
+      scheduleRouteDataRefresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除中转链路失败。");
     } finally {
