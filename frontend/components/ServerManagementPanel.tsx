@@ -77,6 +77,7 @@ type NodePlanFormState = {
 type WorkerBootstrapFormState = {
   name: string;
   ip: string;
+  interfaceName: string;
   expiresInMinutes: string;
 };
 
@@ -158,8 +159,20 @@ function sleep(ms: number) {
 const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
   name: "",
   ip: "",
+  interfaceName: "eth0",
   expiresInMinutes: "60",
 };
+
+const workerInterfaceNamePattern = /^[A-Za-z0-9_.-]+$/;
+
+function defaultWorkerInterfaceName(value: string | null | undefined) {
+  return value?.trim() || "eth0";
+}
+
+function isValidWorkerInterfaceName(value: string) {
+  const cleaned = value.trim();
+  return Boolean(cleaned) && cleaned.length <= 80 && workerInterfaceNamePattern.test(cleaned);
+}
 
 function sshStatusLabel(status: string) {
   const labels: Record<string, string> = {
@@ -531,6 +544,7 @@ export function ServerManagementPanel() {
     setWorkerBootstrapForm({
       name: server.name || server.ip,
       ip: server.ip,
+      interfaceName: defaultWorkerInterfaceName(server.worker_interface_name),
       expiresInMinutes: "60",
     });
     setWorkerTokenResult(null);
@@ -601,6 +615,7 @@ export function ServerManagementPanel() {
   async function generateWorkerInstallCommand(role: WorkerRole) {
     const name = workerBootstrapForm.name.trim();
     const ip = workerBootstrapForm.ip.trim();
+    const interfaceName = workerBootstrapForm.interfaceName.trim();
     const expiresInMinutes = Number(workerBootstrapForm.expiresInMinutes);
     if (modalMode === "add" && !name) {
       setMessage("请填写服务器名称。");
@@ -612,6 +627,10 @@ export function ServerManagementPanel() {
     }
     if (!Number.isInteger(expiresInMinutes) || expiresInMinutes < 1 || expiresInMinutes > 10080) {
       setMessage("过期时间必须是 1 到 10080 分钟之间的整数。");
+      return;
+    }
+    if (!isValidWorkerInterfaceName(interfaceName)) {
+      setMessage("网卡不能为空，且只能包含字母、数字、点、下划线或短横线。");
       return;
     }
     setSubmitting(true);
@@ -629,6 +648,7 @@ export function ServerManagementPanel() {
                 name: name || selectedServer.name,
                 server_id: selectedServer.id,
                 expires_in_minutes: expiresInMinutes,
+                interface_name: interfaceName,
               },
               csrfToken,
             )
@@ -637,6 +657,7 @@ export function ServerManagementPanel() {
                 name,
                 ip,
                 expires_in_minutes: expiresInMinutes,
+                interface_name: interfaceName,
               },
               csrfToken,
             );
@@ -1544,13 +1565,22 @@ export function ServerManagementPanel() {
           />
         </label>
 
+        <label>
+          网卡
+          <input
+            value={workerBootstrapForm.interfaceName}
+            onChange={(event) => setWorkerBootstrapForm({ ...workerBootstrapForm, interfaceName: event.target.value })}
+            placeholder="例如：ens17、eth0、enp1s0"
+          />
+        </label>
+
         <div className="warning-box wide-field">
           <strong>Worker 第一版安装说明</strong>
           <span>当前安装命令会安装真实 liveline-worker，并写入 systemd 服务。</span>
           <span>Worker 第一版只做注册、心跳和基础状态上报，不创建节点、不修改 Xray、不新增监听端口。</span>
           <span>生成命令必须先配置 PUBLIC_CONSOLE_URL；主控公网地址未配置时，远程 VPS 无法通过 localhost 访问安装脚本。</span>
           <span>安装完成后可使用 journalctl -u liveline-worker -f 查看日志。</span>
-          <span>如果服务器网卡不是 eth0，请根据实际网卡名修改，例如 ens3、ens5、enp1s0。</span>
+          <span>安装命令会使用上方填写的网卡名，例如 ens17、eth0、enp1s0。</span>
         </div>
 
         <div className="modal-actions wide-field">

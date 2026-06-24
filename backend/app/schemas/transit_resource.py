@@ -9,6 +9,7 @@ PROTOCOL_HINTS = {"tcp", "udp", "tcp_udp", "haproxy_tcp", "socat", "unknown"}
 RESOURCE_STATUSES = {"active", "disabled", "pending_worker", "worker_online", "worker_offline"}
 TRANSIT_WORKER_INSTALL_COMMAND_GENERATION_CONFIRMATION = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE"
 HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+INTERFACE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 SENSITIVE_NOTE_MARKERS = (
     "PRIVATE KEY",
     "BEGIN OPENSSH",
@@ -48,6 +49,15 @@ def validate_host(value: str | None) -> str | None:
         raise ValueError("host 不能包含协议、路径或空白字符")
     if not HOST_RE.fullmatch(cleaned):
         raise ValueError("host 只能包含字母、数字、点、下划线、短横线或冒号")
+    return cleaned
+
+
+def validate_interface_name(value: str | None) -> str:
+    cleaned = (value or "eth0").strip()
+    if not cleaned:
+        raise ValueError("interface_name 不能为空")
+    if len(cleaned) > 80 or not INTERFACE_NAME_RE.fullmatch(cleaned):
+        raise ValueError("interface_name 只能包含字母、数字、点、下划线或短横线")
     return cleaned
 
 
@@ -213,6 +223,7 @@ class TransitResourceUpdate(BaseModel):
 class TransitWorkerInstallCommandGenerationRequest(BaseModel):
     confirmation: str = Field(min_length=1, max_length=120)
     expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
+    interface_name: str = Field(default="eth0", min_length=1, max_length=80)
 
     @field_validator("confirmation")
     @classmethod
@@ -221,3 +232,8 @@ class TransitWorkerInstallCommandGenerationRequest(BaseModel):
         if cleaned != TRANSIT_WORKER_INSTALL_COMMAND_GENERATION_CONFIRMATION:
             raise ValueError("confirmation 不匹配")
         return cleaned
+
+    @field_validator("interface_name")
+    @classmethod
+    def clean_interface_name(cls, value: str) -> str:
+        return validate_interface_name(value)

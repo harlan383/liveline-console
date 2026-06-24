@@ -37,6 +37,7 @@ from app.services.worker_binding import (
     latest_workers_by_server,
     serialize_worker_token_bootstrap,
     transit_display_status,
+    validate_worker_interface_name,
     worker_public_base_url,
     worker_public_url_error_response,
     worker_runtime_status,
@@ -59,6 +60,7 @@ class TransitWorkerBootstrapRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     ip: str = Field(min_length=1, max_length=45)
     expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
+    interface_name: str = Field(default="eth0", min_length=1, max_length=80)
 
     @field_validator("name", "ip")
     @classmethod
@@ -68,9 +70,20 @@ class TransitWorkerBootstrapRequest(BaseModel):
             raise ValueError("value cannot be empty")
         return cleaned
 
+    @field_validator("interface_name")
+    @classmethod
+    def clean_interface_name(cls, value: str) -> str:
+        return validate_worker_interface_name(value)
+
 
 class TransitWorkerBootstrapRegenerateRequest(BaseModel):
     expires_in_minutes: int = Field(default=60, ge=1, le=10_080)
+    interface_name: str = Field(default="eth0", min_length=1, max_length=80)
+
+    @field_validator("interface_name")
+    @classmethod
+    def clean_interface_name(cls, value: str) -> str:
+        return validate_worker_interface_name(value)
 
 
 def numeric_value(value: Decimal | None) -> float | None:
@@ -553,6 +566,7 @@ def create_transit_resource_worker_bootstrap(
             server_id=resource.id,
             admin_id=session.admin_id,
             expires_in_minutes=payload.expires_in_minutes,
+            interface_name=payload.interface_name,
         )
         record_audit(
             db,
@@ -639,6 +653,7 @@ def regenerate_transit_resource_worker_bootstrap(
             server_id=resource.id,
             admin_id=session.admin_id,
             expires_in_minutes=payload.expires_in_minutes,
+            interface_name=payload.interface_name,
         )
         record_audit(
             db,
@@ -731,6 +746,7 @@ def generate_transit_resource_worker_install_command(
             server_id=resource.id,
             admin_id=session.admin_id,
             expires_in_minutes=payload.expires_in_minutes,
+            interface_name=payload.interface_name,
         )
         record_audit(
             db,

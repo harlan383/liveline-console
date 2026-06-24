@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import re
 from urllib.parse import urlparse
 
 from sqlalchemy import or_, select
@@ -16,6 +17,7 @@ WORKER_PENDING_STATUS = "pending_worker"
 WORKER_ONLINE_STATUS = "worker_online"
 WORKER_OFFLINE_STATUS = "worker_offline"
 LOCAL_WORKER_INSTALL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+WORKER_INTERFACE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class WorkerPublicUrlError(ValueError):
@@ -68,10 +70,24 @@ def worker_public_url_error_response(exc: ValueError):
     )
 
 
-def build_worker_install_command(raw_token: str, role: str, base_url: str | None = None) -> str:
+def validate_worker_interface_name(interface_name: str | None) -> str:
+    cleaned = (interface_name or "eth0").strip()
+    if not cleaned:
+        raise ValueError("WORKER_INTERFACE_NAME_REQUIRED")
+    if len(cleaned) > 80 or not WORKER_INTERFACE_NAME_RE.fullmatch(cleaned):
+        raise ValueError("WORKER_INTERFACE_NAME_INVALID")
+    return cleaned
+
+
+def build_worker_install_command(
+    raw_token: str,
+    role: str,
+    base_url: str | None = None,
+    interface_name: str | None = None,
+) -> str:
     console_url = base_url or worker_public_base_url()
     setup_url = console_url + f"/worker_setup_script/{raw_token}"
-    return f"curl -s {setup_url} | bash -s eth0 {role}"
+    return f"curl -s {setup_url} | bash -s {validate_worker_interface_name(interface_name)} {role}"
 
 
 def create_bound_worker_token(
@@ -82,6 +98,7 @@ def create_bound_worker_token(
     server_id: str | None,
     admin_id: str | None,
     expires_in_minutes: int,
+    interface_name: str | None = None,
 ) -> tuple[WorkerToken, str, str]:
     base_url = worker_public_base_url()
     raw_token = new_token()
@@ -96,7 +113,7 @@ def create_bound_worker_token(
     )
     db.add(token)
     db.flush()
-    return token, raw_token, build_worker_install_command(raw_token, role, base_url)
+    return token, raw_token, build_worker_install_command(raw_token, role, base_url, interface_name)
 
 
 def serialize_worker_token_bootstrap(token: WorkerToken, raw_token: str, install_command: str) -> dict:
