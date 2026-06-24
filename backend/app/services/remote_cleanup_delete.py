@@ -18,7 +18,12 @@ from app.services.landing_node_create import (
     MANAGED_XRAY_SERVICE_PATH,
 )
 from app.services.worker_commands import create_worker_command, normalize_worker_command_result
-from app.services.worker_targeting import WorkerTargetError, resolve_command_target_worker
+from app.services.worker_targeting import (
+    WorkerTargetError,
+    minimum_worker_version_for_remote_cleanup_forwarding_methods,
+    resolve_command_target_worker,
+    worker_supports_remote_cleanup_forwarding_methods,
+)
 from app.services.worker_targeting import worker_supports_command_channel
 from app.services.worker_binding import worker_runtime_status
 
@@ -64,6 +69,7 @@ OFFLINE_LOCAL_REMOVE_BOUNDARY = [
     "no SSH or remote command",
     "no WorkerCommand created",
     "no remote service stop/delete/restart",
+    "remote HAProxy/socat services may still be running and ports may still be listening",
     "no firewall/security group mutation",
     "no nodes.share_link read or modification",
     "no transit_routes.share_link write",
@@ -120,6 +126,7 @@ def _cleanup_capable_online_worker_exists(
     role: str,
     server_id: str,
     command_type: str,
+    forwarding_methods: list[str] | None = None,
 ) -> bool:
     workers = db.scalars(
         select(Worker)
@@ -130,6 +137,10 @@ def _cleanup_capable_online_worker_exists(
         worker.status == "online"
         and worker_runtime_status(worker) == "online"
         and worker_supports_command_channel(worker, command_type)
+        and (
+            not forwarding_methods
+            or worker_supports_remote_cleanup_forwarding_methods(worker, forwarding_methods)
+        )
         for worker in workers
     )
 
@@ -140,12 +151,14 @@ def _assert_offline_local_remove_allowed(
     role: str,
     server_id: str,
     command_type: str,
+    forwarding_methods: list[str] | None = None,
 ) -> None:
     if _cleanup_capable_online_worker_exists(
         db,
         role=role,
         server_id=server_id,
         command_type=command_type,
+        forwarding_methods=forwarding_methods,
     ):
         raise RemoteCleanupError(
             "RESOURCE_HAS_ONLINE_WORKER_USE_NORMAL_DELETE",
@@ -183,7 +196,7 @@ def _offline_local_remove_result(
         "routes_marked_deleted": routes_marked_deleted,
         "workers_marked_deleted": workers_marked_deleted,
         "safety_boundary": OFFLINE_LOCAL_REMOVE_BOUNDARY,
-        "message": "已本地移除记录。由于 Worker 离线，未执行远程清理。",
+        "message": "已本地移除记录。由于 Worker 离线，未执行远程清理；远程 HAProxy/socat service 可能仍在运行，监听端口不会被释放。",
     }
 
 
@@ -232,6 +245,74 @@ def _route_socat_cleanup_plan(route: TransitRoute) -> dict[str, Any]:
         "service_name": route.service_name,
         "service_path": route.service_path,
     }
+
+
+def _route_haproxy_cleanup_plan(route: TransitRoute) -> dict[str, Any]:
+    if route.forwarding_method not in {"haproxy_tcp", "haproxy"}:
+        raise RemoteCleanupError("TRANSIT_ROUTE_METHOD_UNSUPPORTED", "本阶段只允许清理 HAProxy TCP 中转链路。")
+    if not route.listen_port:
+        raise RemoteCleanupError("TRANSIT_ROUTE_LISTEN_PORT_MISSING", "中转链路缺少监听端口，不能创建远程清理任务。")
+    expected_name = f"liveline-haproxy-{route.listen_port}.service"
+    expected_service_path = f"/etc/systemd/system/{expected_name}"
+    expected_config_path = f"/etc/haproxy/liveline/routes/liveline-haproxy-{route.listen_port}.cfg"
+    config_path = _transit_route_config_path(route)
+    if (
+        route.service_name != expected_name
+        or route.service_path != expected_service_path
+        or config_path != expected_config_path
+    ):
+        raise RemoteCleanupError(
+            "TRANSIT_ROUTE_SERVICE_NOT_LIVELINE",
+            "中转链路 service/config 不符合 LiveLine HAProxy 命名，不能自动远程清理。",
+        )
+    return {
+        "route_id": route.id,
+        "route_name": route.name,
+        "transit_resource_id": route.transit_resource_id,
+        "listen_port": route.listen_port,
+        "target_host": route.target_host,
+        "target_port": route.target_port,
+        "forwarding_method": "haproxy_tcp",
+        "service_name": route.service_name,
+        "service_path": route.service_path,
+        "config_path": config_path,
+    }
+
+
+def _transit_route_config_path(route: TransitRoute) -> str | None:
+    metadata = getattr(route, "metadata_json", None)
+    if isinstance(metadata, dict):
+        value = metadata.get("config_path")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    listen_port = getattr(route, "listen_port", None)
+    if listen_port:
+        return f"/etc/haproxy/liveline/routes/liveline-haproxy-{listen_port}.cfg"
+    return None
+
+
+def _route_cleanup_plan(route: TransitRoute) -> dict[str, Any]:
+    method = (route.forwarding_method or "").strip().lower().replace("-", "_")
+    if method == "socat":
+        return _route_socat_cleanup_plan(route)
+    if method in {"haproxy", "haproxy_tcp"}:
+        return _route_haproxy_cleanup_plan(route)
+    raise RemoteCleanupError(
+        "TRANSIT_ROUTE_METHOD_UNSUPPORTED",
+        f"暂不支持清理 forwarding_method={route.forwarding_method or 'unknown'} 的中转链路。",
+    )
+
+
+def _assert_worker_supports_route_cleanup(worker: Worker, routes: list[TransitRoute]) -> None:
+    methods = [(route.forwarding_method or "") for route in routes]
+    if worker_supports_remote_cleanup_forwarding_methods(worker, methods):
+        return
+    minimum_version = minimum_worker_version_for_remote_cleanup_forwarding_methods(methods)
+    raise RemoteCleanupError(
+        "WORKER_COMMAND_UNSUPPORTED",
+        f"当前在线 Worker 不支持该清理任务，请升级 liveline-worker 至 {minimum_version} 或更高版本。",
+        400,
+    )
 
 
 def _worker_self_cleanup_plan(worker: Worker) -> dict[str, Any]:
@@ -358,12 +439,13 @@ def create_transit_route_cleanup_command(db: Session, route: TransitRoute) -> tu
         server_id=route.transit_resource_id,
         command_type=CLEANUP_TRANSIT_ROUTE_COMMAND,
     )
+    _assert_worker_supports_route_cleanup(worker, [route])
     if _active_remote_cleanup_exists(db, server_id=route.transit_resource_id):
         raise RemoteCleanupError("REMOTE_CLEANUP_COMMAND_IN_FLIGHT", "当前已有该服务器的远程清理任务在执行。", 409)
     payload = _cleanup_command_payload(
         cleanup_type=CLEANUP_TRANSIT_ROUTE_COMMAND,
         target_id=route.id,
-        plans=[_route_socat_cleanup_plan(route)],
+        plans=[_route_cleanup_plan(route)],
     )
     command = create_worker_command(db, worker, CLEANUP_TRANSIT_ROUTE_COMMAND, payload)
     return command, worker
@@ -388,7 +470,8 @@ def create_transit_resource_cleanup_command(db: Session, resource: TransitResour
         .where(TransitRoute.deleted_at.is_(None))
         .order_by(TransitRoute.created_at.asc())
     ).all()
-    plans = [_route_socat_cleanup_plan(route) for route in routes]
+    _assert_worker_supports_route_cleanup(worker, routes)
+    plans = [_route_cleanup_plan(route) for route in routes]
     payload = _cleanup_command_payload(
         cleanup_type=CLEANUP_TRANSIT_RESOURCE_COMMAND,
         target_id=resource.id,
@@ -524,6 +607,7 @@ def offline_local_remove_transit_route(db: Session, route: TransitRoute) -> dict
         role="transit",
         server_id=route.transit_resource_id,
         command_type=CLEANUP_TRANSIT_ROUTE_COMMAND,
+        forwarding_methods=[route.forwarding_method or ""],
     )
     _mark_route_deleted(route)
     db.add(route)
@@ -540,17 +624,18 @@ def offline_local_remove_transit_resource(db: Session, resource: TransitResource
         raise RemoteCleanupError("TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。", 404)
     if resource.resource_type != "server":
         raise RemoteCleanupError("TRANSIT_RESOURCE_NOT_SERVER", "只允许 server 类型中转资源执行删除。")
-    _assert_offline_local_remove_allowed(
-        db,
-        role="transit",
-        server_id=resource.id,
-        command_type=CLEANUP_TRANSIT_RESOURCE_COMMAND,
-    )
     routes = db.scalars(
         select(TransitRoute)
         .where(TransitRoute.transit_resource_id == resource.id)
         .where(TransitRoute.deleted_at.is_(None))
     ).all()
+    _assert_offline_local_remove_allowed(
+        db,
+        role="transit",
+        server_id=resource.id,
+        command_type=CLEANUP_TRANSIT_RESOURCE_COMMAND,
+        forwarding_methods=[route.forwarding_method or "" for route in routes],
+    )
     for route in routes:
         _mark_route_deleted(route)
         db.add(route)

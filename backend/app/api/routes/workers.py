@@ -555,11 +555,14 @@ fi
 
 echo "LiveLine Worker install: installing liveline-worker for role=$ROLE interface=$INTERFACE_NAME"
 echo "LiveLine Worker install: this installs only the worker binary and systemd service."
-echo "LiveLine Worker install: it does not install Xray, socat, or gost; does not open ports; does not modify firewall rules."
+echo "LiveLine Worker install: it does not install Xray, socat, gost, or HAProxy; does not open ports; does not modify firewall rules, cloud firewalls, or cloud security groups."
+echo "LiveLine Worker install: HAProxy routes must still be created later through the protected LiveLine route flow."
 
-echo "LiveLine Worker install: preparing Worker sandbox writable directory /opt/liveline-xray."
+echo "LiveLine Worker install: preparing Worker sandbox writable directories."
 mkdir -p /opt/liveline-xray
 chmod 755 /opt/liveline-xray
+mkdir -p /etc/haproxy/liveline/routes /run/haproxy
+chmod 755 /etc/haproxy /etc/haproxy/liveline /etc/haproxy/liveline/routes /run/haproxy
 
 install -d -m 700 "$CONFIG_DIR"
 TMP_BINARY="$(mktemp)"
@@ -596,7 +599,7 @@ NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=read-only
 PrivateTmp=true
-ReadWritePaths=/opt/liveline-xray /etc/systemd/system /run/systemd
+ReadWritePaths=/opt/liveline-xray /etc/systemd/system /run/systemd /etc/haproxy /run/haproxy
 
 [Install]
 WantedBy=multi-user.target

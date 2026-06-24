@@ -1727,6 +1727,61 @@ func TestValidateCleanupSocatPlanRequiresLivelineService(t *testing.T) {
 	}
 }
 
+func TestValidateCleanupHaproxyPlanRequiresLivelineServiceAndConfig(t *testing.T) {
+	good := remoteCleanupPlan{
+		RouteID:          "route-1",
+		ListenPort:       23843,
+		TargetHost:       "64.90.13.19",
+		TargetPort:       27939,
+		ForwardingMethod: "haproxy_tcp",
+		ServiceName:      "liveline-haproxy-23843.service",
+		ServicePath:      "/etc/systemd/system/liveline-haproxy-23843.service",
+		ConfigPath:       "/etc/haproxy/liveline/routes/liveline-haproxy-23843.cfg",
+	}
+	if err := validateCleanupHaproxyPlan(good); err != nil {
+		t.Fatalf("validateCleanupHaproxyPlan(good) returned error: %v", err)
+	}
+
+	badConfig := good
+	badConfig.ConfigPath = "/etc/haproxy/haproxy.cfg"
+	if err := validateCleanupHaproxyPlan(badConfig); err == nil {
+		t.Fatal("validateCleanupHaproxyPlan accepted non-LiveLine config path")
+	}
+
+	badMethod := good
+	badMethod.ForwardingMethod = "socat"
+	if err := validateCleanupHaproxyPlan(badMethod); err == nil {
+		t.Fatal("validateCleanupHaproxyPlan accepted socat forwarding_method")
+	}
+}
+
+func TestHaproxyConfigMatchesCleanupPlan(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "liveline-haproxy-23843.cfg")
+	config := `frontend liveline_transit_23843
+    bind 0.0.0.0:23843
+    default_backend liveline_landing_23843
+
+backend liveline_landing_23843
+    server landing 64.90.13.19:27939 check
+`
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	plan := remoteCleanupPlan{
+		ListenPort: 23843,
+		TargetHost: "64.90.13.19",
+		TargetPort: 27939,
+	}
+	if !haproxyConfigMatchesCleanupPlan(configPath, plan) {
+		t.Fatal("haproxyConfigMatchesCleanupPlan rejected matching config")
+	}
+	plan.TargetPort = 443
+	if haproxyConfigMatchesCleanupPlan(configPath, plan) {
+		t.Fatal("haproxyConfigMatchesCleanupPlan accepted wrong target port")
+	}
+}
+
 func TestValidLiveLineXrayServiceName(t *testing.T) {
 	for _, service := range []string{"liveline-xray.service", "liveline-xray-27939.service", "liveline-xray-a71472c6f62c.service"} {
 		if !validLiveLineXrayServiceName(service) {

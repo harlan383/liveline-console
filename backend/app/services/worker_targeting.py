@@ -22,6 +22,8 @@ MIN_TRANSIT_ROUTE_HAPROXY_TCP_VERSION = "0.1.25-stage-3.3.137-hotfix-2"
 MIN_TRANSIT_ROUTE_HAPROXY_TCP_VERSION_KEY = (0, 1, 25, 3, 3, 137)
 MIN_REMOTE_CLEANUP_VERSION = "0.1.21-stage-3.3.97"
 MIN_REMOTE_CLEANUP_VERSION_KEY = (0, 1, 21, 3, 3, 97)
+MIN_HAPROXY_REMOTE_CLEANUP_VERSION = "0.1.28-stage-3.3.152-haproxy-cleanup-support"
+MIN_HAPROXY_REMOTE_CLEANUP_VERSION_KEY = (0, 1, 28, 3, 3, 152)
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-stage-(\d+)\.(\d+)\.(\d+)(?:-[A-Za-z0-9_.-]+)?)?$")
 REMOTE_CLEANUP_COMMAND_TYPES = {
     "cleanup_landing_node",
@@ -98,6 +100,32 @@ def worker_supports_transit_forwarding_method(worker: Worker | None, forwarding_
     return worker_supports_min_version(
         worker,
         minimum_worker_version_key_for_transit_forwarding_method(forwarding_method),
+    )
+
+
+def minimum_worker_version_for_remote_cleanup_forwarding_methods(methods: list[str] | set[str] | tuple[str, ...]) -> str:
+    normalized = {normalize_forwarding_method_for_version(method) for method in methods}
+    if normalized.intersection({"haproxy", "haproxy_tcp"}):
+        return MIN_HAPROXY_REMOTE_CLEANUP_VERSION
+    return MIN_REMOTE_CLEANUP_VERSION
+
+
+def minimum_worker_version_key_for_remote_cleanup_forwarding_methods(
+    methods: list[str] | set[str] | tuple[str, ...],
+) -> tuple[int, int, int, int, int, int]:
+    normalized = {normalize_forwarding_method_for_version(method) for method in methods}
+    if normalized.intersection({"haproxy", "haproxy_tcp"}):
+        return MIN_HAPROXY_REMOTE_CLEANUP_VERSION_KEY
+    return MIN_REMOTE_CLEANUP_VERSION_KEY
+
+
+def worker_supports_remote_cleanup_forwarding_methods(
+    worker: Worker | None,
+    methods: list[str] | set[str] | tuple[str, ...],
+) -> bool:
+    return worker_supports_min_version(
+        worker,
+        minimum_worker_version_key_for_remote_cleanup_forwarding_methods(methods),
     )
 
 
