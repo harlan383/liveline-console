@@ -1256,30 +1256,11 @@ export function TransitServersPanel() {
       <div className="status-row">
         <div>
           <h2>中转服务器</h2>
-          <p className="message">管理中转 VPS 草稿、Worker 接入状态和后续 HAProxy TCP 准备项；资源记录不等于真实线路。</p>
         </div>
         <button type="button" onClick={openAdd}>
           新增中转 VPS 草稿
         </button>
       </div>
-
-      <details className="warning-box collapsible-notice">
-        <summary className="collapsible-summary">
-          <strong>查看中转服务器安全说明</strong>
-          <span className="notice-toggle-text">
-            <span className="when-closed">查看说明</span>
-            <span className="when-open">收起说明</span>
-          </span>
-        </summary>
-        <div className="route-safety-body">
-          <ul className="route-safety-list">
-            <li>本页可保存 pending_worker 草稿资源，用于后续 Worker install approval。</li>
-            <li>新增草稿不会生成 Worker token，不会生成真实安装命令，不会连接远端。</li>
-            <li>旧 SSH/RQ 读取、安装 gost、安装 socat 入口已经下线。</li>
-            <li>不会创建 Worker command、不会创建中转链路、不会新增监听端口、不会修改防火墙或 cutover。</li>
-          </ul>
-        </div>
-      </details>
 
       <div className="server-table" aria-label="中转服务器管理表格">
         <div className="server-table-row server-table-head">
@@ -3252,7 +3233,6 @@ export function TransitRoutesPanel() {
       <div className="status-row">
         <div>
           <h2>中转链路</h2>
-          <p className="message">管理中转服务器到落地节点的转发线路。日常使用只需要新增线路、查看状态、临时导出客户端链接。</p>
         </div>
         <div className="server-actions">
           <button type="button" onClick={openCreateRouteModal}>
@@ -3263,24 +3243,6 @@ export function TransitRoutesPanel() {
           </button>
         </div>
       </div>
-
-      <details className="warning-box collapsible-notice">
-        <summary className="collapsible-summary">
-          <strong>查看中转链路安全边界</strong>
-          <span className="notice-toggle-text">
-            <span className="when-closed">查看说明</span>
-            <span className="when-open">收起说明</span>
-          </span>
-        </summary>
-        <div className="route-safety-body">
-          <ul className="route-safety-list">
-            <li>旧 POST /api/transit-routes SSH/RQ 创建入口已下线。</li>
-            <li>远程只读预检只创建 transit_readonly_preflight Worker command。</li>
-            <li>Worker create path 当前只允许 dry-run / approval-required，不创建真实监听。</li>
-            <li>不会修改防火墙、Xray、nodes.share_link，不导出完整客户端链接，不 cutover。</li>
-          </ul>
-        </div>
-      </details>
 
       {primaryActiveRoute ? (
         <div className="candidate-summary-grid transit-route-inline-panel">

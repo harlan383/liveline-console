@@ -1149,74 +1149,16 @@ export function ServerManagementPanel() {
     }
   }
 
-  const directNodeCount = servers.reduce((count, server) => count + server.nodes.length, 0);
-  const copyReadyNodeCount = servers.reduce(
-    (count, server) => count + server.nodes.filter((node) => node.share_link_present).length,
-    0,
-  );
-  const workerOnlineCount = servers.filter((server) => server.worker_online).length;
-  const activeServerCount = servers.filter((server) => server.display_status === "active" || server.display_status === "online").length;
-
   return (
     <section className="panel wide server-management-panel">
       <div className="server-management-header">
         <div>
           <h2>落地服务器</h2>
-          <p className="message">管理落地 VPS 和直连 Reality 节点。日常使用只需要查看状态、创建计划、复制客户端配置。</p>
         </div>
         <button type="button" onClick={openAddServer}>
           添加落地服务器
         </button>
       </div>
-
-      <div className="server-management-note">
-        完整节点链接默认隐藏；只有点击复制、临时查看或二维码时才会短暂导出。本页面不修改 `node.share_link`，不执行 cutover。
-      </div>
-
-      <div className="landing-status-strip" aria-label="落地服务器与直连节点状态摘要">
-        <div className="landing-status-card">
-          <span>落地服务器</span>
-          <strong>{servers.length}</strong>
-          <small>可用记录：{activeServerCount}</small>
-        </div>
-        <div className="landing-status-card">
-          <span>直连节点</span>
-          <strong>{directNodeCount}</strong>
-          <small>当前仅展示已支持的单 VPS / 单节点摘要</small>
-        </div>
-        <div className="landing-status-card">
-          <span>客户端配置</span>
-          <strong>{copyReadyNodeCount}</strong>
-          <small>可复制 / 导出</small>
-        </div>
-        <div className="landing-status-card">
-          <span>Worker 在线</span>
-          <strong>{workerOnlineCount}</strong>
-          <small>高级检查默认收起</small>
-        </div>
-      </div>
-
-      <details className="route-safety-guardrail collapsible-notice server-node-merge-notice" aria-label="节点合并说明">
-        <summary className="route-safety-summary">
-          <div className="route-safety-heading">
-            <span>安全提示</span>
-            <strong>查看节点合并说明</strong>
-          </div>
-          <span className="notice-toggle-text">
-            <span className="when-closed">查看说明</span>
-            <span className="when-open">收起说明</span>
-          </span>
-        </summary>
-        <div className="route-safety-body">
-          <ul className="route-safety-list">
-            <li>节点已合并到落地服务器页，节点属于某一台服务器。</li>
-            <li>左侧不再提供独立节点菜单，节点详情、复制链接和二维码从服务器下级节点行进入。</li>
-            <li>share_link 只在用户明确点击查看或复制时展示 / 复制，默认不暴露完整链接。</li>
-            <li>本阶段不修改 node.share_link、不创建真实节点、不新增监听端口、不执行正式 cutover。</li>
-            <li>后续新增或变更节点监听端口时，必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙是否放行对应 TCP 端口。</li>
-          </ul>
-        </div>
-      </details>
 
       <div className="server-table" aria-label="落地服务器管理表格">
         <div className="server-table-row server-table-head">

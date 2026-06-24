@@ -9,7 +9,6 @@ import {
   type TransitResourceData,
   type TransitResourceListResult,
 } from "@/lib/api";
-import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 
 const resourceTypeLabels: Record<string, string> = {
   server: "公网中转服务器",
@@ -26,10 +25,6 @@ const forwardingMethodLabels: Record<string, string> = {
   manual: "人工配置",
   unknown: "未知",
 };
-
-const currentFormalLink = "socat 18443";
-const currentFallbackLink = "gost 8443";
-const currentShareLinkState = "已指向 socat 18443";
 
 function displayValue(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "-" : String(value);
@@ -95,8 +90,7 @@ function previewForResource(
       "- LiveLine Console：后续阶段才会考虑落地侧配置。",
       "- Stage 3.2：不验证线路，不连接供应商，不连接落地 VPS，不配置 Xray。",
       "",
-      "未来链接结构预览：PREVIEW ONLY / NOT USABLE / 不生成正式 vless:// 链接。",
-      "当前正式链路和回退链路不会被拓扑预览修改。",
+      "未来链接结构预览：PREVIEW ONLY / NOT USABLE / 不生成正式客户端链接。",
     ].join("\n");
   }
 
@@ -111,8 +105,7 @@ function previewForResource(
       `- method: ${method}`,
       "",
       "注意：本阶段不安装 gost/nginx/socat，不配置 Xray dokodemo-door，不写防火墙或 iptables。",
-      "未来链接结构预览：PREVIEW ONLY / NOT USABLE / 不生成正式 vless:// 链接。",
-      "当前正式链路和回退链路不会被拓扑预览修改。",
+      "未来链接结构预览：PREVIEW ONLY / NOT USABLE / 不生成正式客户端链接。",
     ].join("\n");
   }
 
@@ -122,7 +115,6 @@ function previewForResource(
     "",
     "该资源类型需要后续阶段进一步确认转发责任边界和配置方式。",
     "Stage 3.2 只展示结构预览，不执行任何连接、测试或配置。",
-    "当前正式链路和回退链路不会被拓扑预览修改。",
   ].join("\n");
 }
 
@@ -190,30 +182,6 @@ export function TransitTopologyPreviewPanel() {
           刷新预览数据
         </button>
       </div>
-
-      <div className="warning-box">
-        <strong>PREVIEW ONLY / NOT USABLE</strong>
-        <span>拓扑预览只是浏览器里的本地草图，不是一条能直接导入客户端使用的线路。</span>
-        <span>本页面不会连接远端、不会写入配置、不会保存 route、不会创建真实转发。</span>
-        <span>本页面不会生成真实可用中转链接，也不会修改 node.share_link。</span>
-      </div>
-
-      <div className="topology-status-strip">
-        <div>
-          <span>当前正式链路</span>
-          <strong>{currentFormalLink}</strong>
-        </div>
-        <div>
-          <span>当前回退链路</span>
-          <strong>{currentFallbackLink}</strong>
-        </div>
-        <div>
-          <span>node.share_link</span>
-          <strong>{currentShareLinkState}</strong>
-        </div>
-        <p>拓扑预览不会修改以上状态，也不会读取或展示完整节点链接。</p>
-      </div>
-      <RouteSafetyGuardrails context="topology" />
 
       <div className="topology-preview-layout">
         <div className="form topology-preview-form">
@@ -333,16 +301,6 @@ export function TransitTopologyPreviewPanel() {
       <div className="topology-preview-output">
         <h3>配置预览</h3>
         <pre className="manual-commands">{configPreview}</pre>
-      </div>
-
-      <div className="warning-box">
-        <strong>安全边界</strong>
-        <div>server 公网中转不等于 IEPL / IPLC 专线。</div>
-        <div>预览不包含完整 share_link、Reality privateKey、SSH Key、SSH 密码或 notes 内容。</div>
-        <div>本页面不会执行 SSH、不会创建远程转发、不会新增监听端口、不会修改防火墙。</div>
-        <div>本页面不会关闭 gost 8443，也不会让 socat 接管 8443。</div>
-        <div>没有执行按钮、测试连接按钮、安装转发工具按钮或二维码。</div>
-        <div>以后如果新增或变更监听端口，必须同步检查云服务器安全组 / 云防火墙 / 服务器防火墙是否放行对应 TCP 端口。</div>
       </div>
 
       <p className="message">{message}</p>

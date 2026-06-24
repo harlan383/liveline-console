@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 
 import { LoginScreen } from "@/components/LoginScreen";
-import { RouteSafetyGuardrails } from "@/components/RouteSafetyGuardrails";
 import { ServerManagementPanel } from "@/components/ServerManagementPanel";
 import { SystemStatus } from "@/components/SystemStatus";
 import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
@@ -28,57 +27,41 @@ const panels: Array<{
   id: PanelId;
   label: string;
   title: string;
-  description: string;
-  eyebrow: string;
 }> = [
   {
     id: "dashboard",
     label: "总览",
     title: "搭建网络总览",
-    eyebrow: "本地控制台",
-    description: "查看落地、直连节点、中转 Worker、中转链路和安全边界状态。",
   },
   {
     id: "transitRoutes",
     label: "中转服务器",
     title: "中转服务器",
-    eyebrow: "中转资源",
-    description: "管理中转 VPS 资源；资源记录不等于真实线路，转发关系请到“中转链路”页面配置。",
   },
   {
     id: "servers",
     label: "落地服务器",
     title: "落地服务器",
-    eyebrow: "VPS 与节点",
-    description: "管理落地服务器记录和下级节点；节点链接只按需查看或复制。",
   },
   {
     id: "transitLinks",
     label: "中转链路",
     title: "中转链路",
-    eyebrow: "转发关系",
-    description: "配置中转服务器到落地节点的转发关系；本地规划不等于远程执行或正式 cutover。",
   },
   {
     id: "tasks",
     label: "任务中心",
     title: "任务中心",
-    eyebrow: "执行记录",
-    description: "查看任务状态、进度、失败摘要和脱敏后的任务结果。",
   },
   {
     id: "diagnostics",
     label: "诊断工具",
     title: "诊断工具",
-    eyebrow: "预览与健康检查",
-    description: "查看本地 health、拓扑预览和诊断边界；不连接远端。",
   },
   {
     id: "settings",
     label: "设置",
     title: "设置",
-    eyebrow: "本地安全基线",
-    description: "查看本地长期使用边界、正式链路保护和后续阶段规则。",
   },
 ];
 
@@ -172,12 +155,6 @@ export function AppShell() {
             <div className="stage">本地运维控制台</div>
           </div>
         </div>
-        <div className="sidebar-status">
-          <span>中转候选</span>
-          <strong>socat 23843</strong>
-          <span>直连节点</span>
-          <strong>保留</strong>
-        </div>
         <nav className="nav">
           {panels.map((panel) => (
             <button
@@ -196,24 +173,15 @@ export function AppShell() {
       <section className="main">
         <header className="topbar">
           <div>
-            <span className="page-eyebrow">{activePanelMeta.eyebrow}</span>
             <h1>{activePanelMeta.title}</h1>
-            <p>{activePanelMeta.description}</p>
           </div>
           <div className="topbar-actions">
-            <div className="topbar-status" aria-label="当前链路状态">
-              <span className="ops-badge success">中转候选 socat 23843</span>
-              <span className="ops-badge warning">直连节点保留</span>
-              <span className="ops-badge muted">未 cutover</span>
-            </div>
             <span className="admin-badge">已登录：{currentAdmin.username}</span>
             <button className="ghost-button" type="button" onClick={handleLogout}>
               退出登录
             </button>
           </div>
         </header>
-
-        <RouteSafetyGuardrails />
 
         <div className="grid">
           {activePanel === "dashboard" ? <DashboardPanel onNavigate={setActivePanel} /> : null}
@@ -273,10 +241,6 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
     transitRouteDetail: "正在读取中转链路。",
     health: "读取中",
     recentTask: "无任务",
-    safetyNodeShareLink: "未被中转流程改写",
-    safetyRouteShareLink: "未写入",
-    safetyCutover: "未切换",
-    safetyOriginalNode: "保留",
     noticeItems: ["正在读取本地网络搭建状态。"],
   });
   const [message, setMessage] = useState("正在读取本地总览。");
@@ -365,10 +329,6 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         : "暂无 active 中转链路。",
       health: healthOk ? "正常" : "需检查",
       recentTask: latestTask ? `${latestTask.task_type} / ${taskStatusLabel(latestTask.status)}` : "无任务",
-      safetyNodeShareLink: "未被中转流程改写",
-      safetyRouteShareLink: routeShareLinkWritten ? "已写入，需复核" : "未写入",
-      safetyCutover: "未切换",
-      safetyOriginalNode: "保留",
       noticeItems,
     });
     setMessage("总览已刷新。");
@@ -382,12 +342,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
     <section className="dashboard-panel wide">
       <div className="dashboard-hero">
         <div>
-          <span className="page-eyebrow">网络搭建状态</span>
           <h2>搭建网络状态总览</h2>
-          <p>
-            一眼查看落地服务器、直连节点、中转 Worker 和中转链路状态。总览只读取本地 API，
-            不执行远程命令，也不会显示完整节点链接或修改 `nodes.share_link`。
-          </p>
         </div>
         <button className="secondary" type="button" onClick={() => void loadDashboard()}>
           刷新总览
@@ -419,7 +374,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         <OverviewStatusCard
           detail={`${summary.transitRouteEntry} -> ${summary.transitRouteTarget}`}
           label="中转链路"
-          status="未 cutover"
+          status={summary.transitRoute}
           tone={summary.transitRoute === "active" ? "success" : "warning"}
           value={summary.transitRoute}
         />
@@ -430,9 +385,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           <div className="status-row">
             <div>
               <h2>当前可用链路</h2>
-              <p className="message">只显示 IP、端口、状态和用途；不显示完整客户端链接。</p>
             </div>
-            <span className="pill ok">摘要</span>
           </div>
           <div className="overview-link-grid">
             <div className="overview-link-card">
@@ -447,22 +400,6 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
               </strong>
               <small>状态：{summary.transitRouteDetail}；用于手动导入客户端测试。</small>
             </div>
-          </div>
-        </section>
-
-        <section className="panel overview-section">
-          <div className="status-row">
-            <div>
-              <h2>安全状态</h2>
-              <p className="message">当前系统只用于搭建和导出测试配置，不自动替换原节点。</p>
-            </div>
-            <span className="pill muted">只读摘要</span>
-          </div>
-          <div className="overview-safety-grid">
-            <span>nodes.share_link：{summary.safetyNodeShareLink}</span>
-            <span>transit_routes.share_link：{summary.safetyRouteShareLink}</span>
-            <span>cutover：{summary.safetyCutover}</span>
-            <span>原直连节点：{summary.safetyOriginalNode}</span>
           </div>
         </section>
 
@@ -486,9 +423,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           <div className="status-row">
             <div>
               <h2>下一步</h2>
-              <p className="message">总览页只做导航，不放执行按钮，避免误操作。</p>
             </div>
-            <span className="pill muted">导航</span>
           </div>
           <div className="overview-next-actions">
             <button className="secondary" type="button" onClick={() => onNavigate("servers")}>
@@ -501,7 +436,6 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
               去中转链路
             </button>
           </div>
-          <p className="message">需要排查问题时，后续进入诊断中心；当前阶段暂不展开完整排障模块。</p>
         </section>
       </div>
     </section>
@@ -539,9 +473,7 @@ function SettingsPanel() {
       <div className="status-row">
         <div>
           <h2>本地控制台设置与安全基线</h2>
-          <p className="message">当前只记录本地使用边界；这里不会修改后端配置、链路或数据库。</p>
         </div>
-        <span className="pill muted">仅本地</span>
       </div>
       <div className="settings-grid">
         <div className="settings-card">
@@ -561,7 +493,6 @@ function SettingsPanel() {
           <span>当前阶段不是正式 cutover；修改 node.share_link 必须单独审批。</span>
         </div>
       </div>
-      <RouteSafetyGuardrails />
     </section>
   );
 }
