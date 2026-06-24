@@ -332,7 +332,6 @@ export function ServerManagementPanel() {
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
   const [latestWorkerCommandByServerId, setLatestWorkerCommandByServerId] = useState<Record<string, WorkerCommandData>>({});
   const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
-  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [selectedNodeForDelete, setSelectedNodeForDelete] = useState<ServerNodeSummary | null>(null);
   const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
@@ -387,7 +386,6 @@ export function ServerManagementPanel() {
     setNodeCreateError(null);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
-    setDeleteConfirmText("");
     setDeleteMode("remote_cleanup");
     setSelectedNodeForDelete(null);
   }
@@ -433,7 +431,6 @@ export function ServerManagementPanel() {
 
   function openDelete(server: VpsServerData) {
     setSelectedServer(server);
-    setDeleteConfirmText("");
     setDeleteMode(server.worker_online ? "remote_cleanup" : "offline_local_remove");
     setModalMode("delete");
   }
@@ -441,7 +438,6 @@ export function ServerManagementPanel() {
   function openDeleteNode(server: VpsServerData, node: ServerNodeSummary) {
     setSelectedServer(server);
     setSelectedNodeForDelete(node);
-    setDeleteConfirmText("");
     setDeleteMode(server.worker_online ? "remote_cleanup" : "offline_local_remove");
     setModalMode("deleteNode");
   }
@@ -1067,7 +1063,7 @@ export function ServerManagementPanel() {
 
   async function submitDelete() {
     const requiredConfirmText = requiredDeleteConfirmText(deleteMode);
-    if (!selectedServer || deleteConfirmText !== requiredConfirmText) {
+    if (!selectedServer) {
       return;
     }
     setSubmitting(true);
@@ -1083,7 +1079,6 @@ export function ServerManagementPanel() {
       if (!result.success) {
         if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
           setDeleteMode("offline_local_remove");
-          setDeleteConfirmText("");
           setMessage(result.message);
           return;
         }
@@ -1109,7 +1104,7 @@ export function ServerManagementPanel() {
 
   async function submitDeleteNode() {
     const requiredConfirmText = requiredDeleteConfirmText(deleteMode);
-    if (!selectedNodeForDelete || deleteConfirmText !== requiredConfirmText) {
+    if (!selectedNodeForDelete) {
       return;
     }
     setSubmitting(true);
@@ -1125,7 +1120,6 @@ export function ServerManagementPanel() {
       if (!result.success) {
         if (result.error_code === "REMOTE_CLEANUP_UNAVAILABLE" && isOfflineLocalRemoveOffer(result.data)) {
           setDeleteMode("offline_local_remove");
-          setDeleteConfirmText("");
           setMessage(result.message);
           return;
         }
@@ -1313,8 +1307,8 @@ export function ServerManagementPanel() {
     const titleMap: Record<Exclude<ModalMode, null>, string> = {
       add: "添加落地服务器",
       edit: "编辑落地服务器",
-      delete: "远程清理并删除落地服务器",
-      deleteNode: "远程清理并删除节点",
+      delete: "确认删除",
+      deleteNode: "确认删除",
       nodePlan: "创建直连节点",
       workerCommand: "重新生成 Worker 安装命令",
     };
@@ -1500,48 +1494,19 @@ export function ServerManagementPanel() {
       return null;
     }
     const isOfflineLocalRemove = deleteMode === "offline_local_remove";
-    const requiredConfirmText = requiredDeleteConfirmText(deleteMode);
     return (
       <div className="delete-confirm">
-        <div className="failure-box">
-          <strong>{isOfflineLocalRemove ? "离线本地移除确认" : "真实远程清理"}</strong>
-          {isOfflineLocalRemove ? (
-            <>
-              <span>当前落地服务器对应的 Worker 离线，系统无法远程清理 Xray 或 Worker。</span>
-              <span>此操作只会本地软删除落地服务器、下级节点和关联中转链路记录；不会连接远程服务器。</span>
-              <span>远程 Xray 不会停止，已导入客户端的节点可能仍可继续使用。</span>
-            </>
-          ) : (
-            <>
-              <span>这会真实清理该落地服务器下所有节点的 Xray 服务，并清理 landing Worker。</span>
-              <span>该 VPS 将不再被 LiveLine Console 纳管。清理成功后，节点记录和落地服务器记录会被软删除。</span>
-              <span>不会修改云安全组、云防火墙或服务器防火墙。</span>
-            </>
-          )}
-        </div>
+        <p>确认删除该落地服务器？</p>
         <div className="server-delete-target">
           {selectedServer.name} / {selectedServer.ip} / 下级节点 {selectedServer.nodes.length} 个
         </div>
-        <div className="delete-safety-grid">
-          <span>远程清理是否会执行</span>
-          <strong>{isOfflineLocalRemove ? "否" : "是"}</strong>
-          <span>是否会创建 Worker command</span>
-          <strong>{isOfflineLocalRemove ? "否" : "是"}</strong>
-          <span>是否会 cutover</span>
-          <strong>否</strong>
-          <span>是否会修改 share_link</span>
-          <strong>否</strong>
-        </div>
-        <label className="safe-delete-input">
-          输入 {requiredConfirmText} 后才能{isOfflineLocalRemove ? "本地移除记录" : "创建远程清理任务"}
-          <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} placeholder={requiredConfirmText} />
-        </label>
+        <p className="message">删除方式：{isOfflineLocalRemove ? "离线本地移除" : "远程清理删除"}</p>
         <div className="modal-actions">
-          <button className="danger" disabled={submitting || deleteConfirmText !== requiredConfirmText} type="button" onClick={() => void submitDelete()}>
-            {isOfflineLocalRemove ? "确认本地移除" : "确认远程清理并删除"}
-          </button>
           <button className="secondary" type="button" onClick={closeModal}>
             取消
+          </button>
+          <button className="danger" disabled={submitting} type="button" onClick={() => void submitDelete()}>
+            删除
           </button>
         </div>
       </div>
@@ -1553,47 +1518,19 @@ export function ServerManagementPanel() {
       return null;
     }
     const isOfflineLocalRemove = deleteMode === "offline_local_remove";
-    const requiredConfirmText = requiredDeleteConfirmText(deleteMode);
     return (
       <div className="delete-confirm">
-        <div className="failure-box">
-          <strong>{isOfflineLocalRemove ? "离线本地移除确认" : "真实远程清理"}</strong>
-          {isOfflineLocalRemove ? (
-            <>
-              <span>当前节点所属 landing Worker 离线，系统无法远程清理该节点的 Xray 配置。</span>
-              <span>此操作只会从控制台移除节点记录，不会远程删除 Xray 配置。</span>
-              <span>远程 Xray 不会停止，客户端可能仍能继续使用该节点。</span>
-            </>
-          ) : (
-            <>
-              <span>这会真实停止并删除该节点的远程 Xray 服务，客户端已导入的该节点会失效。</span>
-              <span>清理成功后，系统记录会被软删除。不会导出、打印或修改完整节点链接。</span>
-            </>
-          )}
-        </div>
+        <p>确认删除该节点？</p>
         <div className="server-delete-target">
           {selectedNodeForDelete.name} / {nodeEntryLabel(selectedNodeForDelete, selectedServer.ip)}
         </div>
-        <div className="delete-safety-grid">
-          <span>远程清理是否会执行</span>
-          <strong>{isOfflineLocalRemove ? "否" : "是"}</strong>
-          <span>是否会创建 Worker command</span>
-          <strong>{isOfflineLocalRemove ? "否" : "是"}</strong>
-          <span>是否会 cutover</span>
-          <strong>否</strong>
-          <span>是否会修改 share_link</span>
-          <strong>否</strong>
-        </div>
-        <label className="safe-delete-input">
-          输入 {requiredConfirmText} 后才能{isOfflineLocalRemove ? "本地移除记录" : "创建远程清理任务"}
-          <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} placeholder={requiredConfirmText} />
-        </label>
+        <p className="message">删除方式：{isOfflineLocalRemove ? "离线本地移除" : "远程清理删除"}</p>
         <div className="modal-actions">
-          <button className="danger" disabled={submitting || deleteConfirmText !== requiredConfirmText} type="button" onClick={() => void submitDeleteNode()}>
-            {isOfflineLocalRemove ? "确认本地移除" : "确认远程清理并删除"}
-          </button>
           <button className="secondary" type="button" onClick={closeModal}>
             取消
+          </button>
+          <button className="danger" disabled={submitting} type="button" onClick={() => void submitDeleteNode()}>
+            删除
           </button>
         </div>
       </div>
