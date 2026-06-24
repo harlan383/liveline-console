@@ -14,8 +14,6 @@ import {
   createWorkerCommand,
   exportTransitRouteCandidate,
   generateTransitWorkerInstallCommand,
-  getTransitWorkerAcceptance,
-  getTransitWorkerUpgradeAcceptance,
   getWorkerCommand,
   getTransitRouteCandidateSummary,
   listWorkerCommands,
@@ -43,8 +41,6 @@ import {
   type TransitHaproxyRouteCreateDryRunResult,
   type TransitHaproxyRouteCreateFinalApprovalResult,
   type TransitHaproxyRouteCreateRealExecutionResult,
-  type TransitWorkerAcceptanceResult,
-  type TransitWorkerUpgradeAcceptanceResult,
   type TransitWorkerInstallCommandGenerationResult,
   type TransitRouteWorkerCreateExecuteResponse,
   type TransitRouteData,
@@ -241,10 +237,7 @@ function SafeDeleteModal({
 
 const requiredTransitWorkerVersion = "0.1.25-stage-3.3.137-hotfix-2";
 const transitWorkerBinaryChecksum = "fbc2e240bbb8cd64962e5151752cf410951673efadae704d192ca83f2ab89d2b";
-const transitWorkerPublicControllerUrl = "http://my-con.golirong.xyz:8200";
-const transitWorkerPlaceholderToken = "<generated-in-later-stage>";
-const transitWorkerInstallCommandApprovalConfirmText = "CONFIRM_GENERATE_WORKER_INSTALL_COMMAND_LATER";
-const transitWorkerRealCommandApprovalConfirmText = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE";
+const transitWorkerInstallCommandConfirmText = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE";
 
 const emptyTransitResourceDraftForm: TransitResourceDraftFormState = {
   name: "",
@@ -454,272 +447,6 @@ function buildTransitResourceDraftNotes(form: TransitResourceDraftFormState) {
   return lines.join("\n");
 }
 
-function noteValue(resource: TransitResourceData, label: string) {
-  const notes = resource.notes ?? "";
-  const prefix = `${label}:`;
-  const line = notes
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .find((value) => value.toLowerCase().startsWith(prefix.toLowerCase()));
-  if (!line) {
-    return null;
-  }
-  const value = line.slice(prefix.length).trim();
-  return value || null;
-}
-
-function plannedInterfaceForResource(resource: TransitResourceData) {
-  return resource.worker_interface_name ?? noteValue(resource, "Planned interface") ?? "待确认";
-}
-
-function protocolIntentForResource(resource: TransitResourceData) {
-  const fromNotes = noteValue(resource, "Preferred forwarding");
-  return protocolHintLabel(fromNotes ?? resource.protocol_hint);
-}
-
-function sshSummaryForResource(resource: TransitResourceData) {
-  if (!resource.has_ssh) {
-    return "未记录 SSH 管理元信息";
-  }
-  const host = resource.ssh_host ?? "待确认";
-  const port = resource.ssh_port ?? 22;
-  const username = resource.ssh_username ?? "root";
-  return `${username}@${host}:${port}`;
-}
-
-function transitWorkerInstallPlaceholderCommand() {
-  return [
-    `curl -fsSL ${transitWorkerPublicControllerUrl}/worker/install.sh | \\`,
-    "  sudo bash -s -- \\",
-    `  --controller-url ${transitWorkerPublicControllerUrl} \\`,
-    `  --worker-token ${transitWorkerPlaceholderToken} \\`,
-    "  --role transit",
-  ].join("\n");
-}
-
-function transitWorkerApprovalChecklist(resource: TransitResourceData) {
-  return [
-    "Stage 3.3.130 Worker install approval preview",
-    "",
-    `Resource: ${resource.name}`,
-    `Status: ${resource.status}`,
-    `Entry host: ${resource.entry_host ?? "待确认"}`,
-    `SSH: ${sshSummaryForResource(resource)}`,
-    `Entry region: ${resource.entry_region ?? "待确认"}`,
-    `Exit region: ${resource.exit_region ?? "待确认"}`,
-    `Planned interface: ${plannedInterfaceForResource(resource)}`,
-    `Protocol intent: ${protocolIntentForResource(resource)}`,
-    `Required Worker version: ${requiredTransitWorkerVersion}`,
-    `Worker binary checksum: ${transitWorkerBinaryChecksum}`,
-    `Public controller URL: ${transitWorkerPublicControllerUrl}`,
-    "",
-    "Placeholder command only, not executable in this stage:",
-    transitWorkerInstallPlaceholderCommand(),
-    "",
-    "Go / No-Go checks:",
-    "- Public controller backend health returns 200.",
-    "- Worker binary local/public checksum match.",
-    "- New VPS can access the public controller URL.",
-    "- New VPS has root or sudo, systemd, and curl.",
-    "- Command must use the public controller URL, not localhost or 127.0.0.1.",
-    "- Do not put SSH private keys, passwords, Worker tokens, or secrets in notes, README, PR, or chat.",
-    "",
-    "Stage 3.3.130 confirmations:",
-    "- No Worker token generated.",
-    "- No real install command generated.",
-    "- No Worker installed.",
-    "- Real installation requires a later independent approval stage.",
-  ].join("\n");
-}
-
-function transitWorkerCommandGenerationApprovalChecklist(resource: TransitResourceData) {
-  return [
-    "Stage 3.3.131 Worker install command generation approval",
-    "",
-    `Resource: ${resource.name}`,
-    `Status: ${resource.status}`,
-    `Entry host: ${resource.entry_host ?? "待补充"}`,
-    `SSH: ${sshSummaryForResource(resource)}`,
-    `Entry region: ${resource.entry_region ?? "待确认"}`,
-    `Exit region: ${resource.exit_region ?? "待确认"}`,
-    `Planned interface: ${plannedInterfaceForResource(resource)}`,
-    `Protocol intent: ${protocolIntentForResource(resource)}`,
-    `Required Worker version: ${requiredTransitWorkerVersion}`,
-    `Worker binary checksum: ${transitWorkerBinaryChecksum}`,
-    `Public controller URL: ${transitWorkerPublicControllerUrl}`,
-    "",
-    "Approval requirements:",
-    "- Generate one-time Worker token only in a later approved stage.",
-    "- Generate install command only in a later approved stage.",
-    "- Do not execute SSH or remote command in this approval stage.",
-    "- Do not store token in docs, README, PR, logs, chat, or notes.",
-    "- Use public controller URL, not localhost or 127.0.0.1.",
-    "- Confirm the real VPS can access the public controller.",
-    "- Confirm root/sudo, systemd, and curl are available.",
-    "",
-    "Typed confirmation required later:",
-    transitWorkerInstallCommandApprovalConfirmText,
-    "",
-    "Placeholder token:",
-    transitWorkerPlaceholderToken,
-    "",
-    "Placeholder command only, not executable in this stage:",
-    transitWorkerInstallPlaceholderCommand(),
-  ].join("\n");
-}
-
-function transitWorkerInstallDryRunRows(resource: TransitResourceData) {
-  return [
-    ["mode", "dry_run"],
-    ["resource_id", resource.id],
-    ["resource_name", resource.name],
-    ["resource_status", resource.status],
-    ["role", "transit"],
-    ["controller_url", transitWorkerPublicControllerUrl],
-    ["target_worker_version", requiredTransitWorkerVersion],
-    ["worker_binary_checksum", transitWorkerBinaryChecksum],
-    ["token_status", "not_generated"],
-    ["install_command_status", "placeholder_only"],
-    ["remote_execution", "disabled"],
-    ["worker_command_created", "false"],
-  ] as const;
-}
-
-function transitWorkerInstallDryRunChecks(resource: TransitResourceData, typedConfirmed: boolean) {
-  const controllerUrlIsPublic =
-    /^https?:\/\//.test(transitWorkerPublicControllerUrl) &&
-    !/localhost|127\.0\.0\.1/.test(transitWorkerPublicControllerUrl);
-  return [
-    ["typed confirmation", typedConfirmed ? "通过" : "未通过", typedConfirmed],
-    [
-      "resource status 是否 pending_worker",
-      resource.status === "pending_worker" ? "通过" : `未通过：${resource.status}`,
-      resource.status === "pending_worker",
-    ],
-    ["entry_host 是否存在", resource.entry_host ? "通过" : "待补充", Boolean(resource.entry_host)],
-    [
-      "SSH metadata 是否完整或待补充",
-      resource.has_ssh ? `完整或待确认：${sshSummaryForResource(resource)}` : "待补充或后续确认",
-      true,
-    ],
-    ["controller_url 是否公网 URL", controllerUrlIsPublic ? "通过" : "未通过", controllerUrlIsPublic],
-    [
-      "placeholder token 是否仍为 <generated-in-later-stage>",
-      transitWorkerPlaceholderToken === "<generated-in-later-stage>" ? "通过" : "未通过",
-      transitWorkerPlaceholderToken === "<generated-in-later-stage>",
-    ],
-    ["是否禁止 localhost / 127.0.0.1", controllerUrlIsPublic ? "通过" : "未通过", controllerUrlIsPublic],
-    ["是否禁止真实 token 输出", "通过：real token output forbidden", true],
-  ] as const;
-}
-
-function transitWorkerInstallDryRunResultText(resource: TransitResourceData, typedConfirmed: boolean) {
-  const rows = transitWorkerInstallDryRunRows(resource).map(([label, value]) => `${label}: ${value}`);
-  const checks = transitWorkerInstallDryRunChecks(resource, typedConfirmed).map(([label, value]) => `${label}: ${value}`);
-  return [
-    "Stage 3.3.132 Worker install command generation dry-run",
-    "",
-    ...rows,
-    "",
-    "dry-run checks:",
-    ...checks,
-    "",
-    "placeholder command template only:",
-    transitWorkerInstallPlaceholderCommand(),
-    "",
-    "Safety:",
-    "- no Worker token generated",
-    "- no real install command generated",
-    "- no Worker install performed",
-    "- no Worker command created",
-    "- no SSH or remote command executed",
-  ].join("\n");
-}
-
-function transitWorkerRealCommandApprovalRows(resource: TransitResourceData) {
-  return [
-    ["当前资源名称", resource.name],
-    ["当前资源状态", resource.status],
-    ["entry_host", resource.entry_host ?? "待确认"],
-    ["SSH host / port / username", sshSummaryForResource(resource)],
-    ["入口地区 / 出口地区", `${resource.entry_region ?? "待确认"} / ${resource.exit_region ?? "待确认"}`],
-    ["计划网卡", plannedInterfaceForResource(resource)],
-    ["协议意图", protocolIntentForResource(resource)],
-    ["公网主控 URL", transitWorkerPublicControllerUrl],
-    ["目标 Worker 版本", requiredTransitWorkerVersion],
-    ["Worker binary checksum", transitWorkerBinaryChecksum],
-    ["真实 token 生成", "仍未执行"],
-    ["真实 install command 生成", "仍未执行"],
-    ["远程安装", "仍未执行"],
-  ] as const;
-}
-
-function transitWorkerRealCommandReadinessChecks(resource: TransitResourceData) {
-  const controllerUrlIsPublic =
-    /^https?:\/\//.test(transitWorkerPublicControllerUrl) &&
-    !/localhost|127\.0\.0\.1/.test(transitWorkerPublicControllerUrl);
-  return [
-    ["测试 VPS 已真实存在", "需人工确认"],
-    ["测试 VPS 公网 IP / 域名已确认", resource.entry_host ? `已填写：${resource.entry_host}` : "待确认"],
-    ["SSH host / port / username 已确认", resource.has_ssh ? sshSummaryForResource(resource) : "待补充或后续确认"],
-    ["root 或 sudo 权限已确认", "需人工确认"],
-    ["systemd 已确认", "需人工确认"],
-    ["curl 已确认", "需人工确认"],
-    ["测试 VPS 能访问公网主控", "需人工确认"],
-    ["安装命令必须使用公网主控 URL", controllerUrlIsPublic ? "通过" : "未通过"],
-    ["禁止 localhost / 127.0.0.1", controllerUrlIsPublic ? "通过" : "未通过"],
-    ["真实 token 不得写入 README / docs / PR / chat / logs / notes", "必须遵守"],
-    ["真实安装仍必须在后续独立阶段执行", "必须遵守"],
-  ] as const;
-}
-
-function transitWorkerRealCommandApprovalPackage(resource: TransitResourceData, typedConfirmed: boolean) {
-  return [
-    "Stage 3.3.133 Real Worker install command generation approval",
-    "",
-    "Resource:",
-    `Name: ${resource.name}`,
-    `Status: ${resource.status}`,
-    `Entry host: ${resource.entry_host ?? "待确认"}`,
-    `SSH: ${sshSummaryForResource(resource)}`,
-    `Entry region: ${resource.entry_region ?? "待确认"}`,
-    `Exit region: ${resource.exit_region ?? "待确认"}`,
-    `Planned interface: ${plannedInterfaceForResource(resource)}`,
-    `Protocol intent: ${protocolIntentForResource(resource)}`,
-    `Required Worker version: ${requiredTransitWorkerVersion}`,
-    `Worker binary checksum: ${transitWorkerBinaryChecksum}`,
-    `Public controller URL: ${transitWorkerPublicControllerUrl}`,
-    "",
-    "Real VPS readiness:",
-    "- Test VPS exists.",
-    "- SSH host / port / username confirmed.",
-    "- root/sudo confirmed.",
-    "- systemd confirmed.",
-    "- curl confirmed.",
-    "- VPS can access public controller.",
-    "- command must use public controller URL.",
-    "- no localhost / 127.0.0.1.",
-    "- token must not be stored in docs, README, PR, logs, chat, or notes.",
-    "",
-    "Typed confirmation required:",
-    transitWorkerRealCommandApprovalConfirmText,
-    "",
-    `Typed confirmation status: ${typedConfirmed ? "passed" : "not_passed"}`,
-    "",
-    "Token status:",
-    "not_generated",
-    "",
-    "Install command status:",
-    "not_generated",
-    "",
-    "Remote execution:",
-    "disabled",
-    "",
-    "Next stage required:",
-    "Generate one-time Worker token / install command only after explicit approval.",
-  ].join("\n");
-}
-
 function transitResourcePayloadFromForm(
   form: TransitResourceDraftFormState,
   status = "pending_worker",
@@ -820,7 +547,7 @@ async function copyText(value: string) {
 export function TransitServersPanel() {
   const [resources, setResources] = useState<TransitResourceData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("中转服务器页面可保存待安装 Worker 的草稿资源；不会生成 Worker token 或执行远程安装。");
+  const [message, setMessage] = useState("中转服务器列表正在加载。");
   const [modalMode, setModalMode] = useState<"add" | "edit" | "delete" | null>(null);
   const [selectedResource, setSelectedResource] = useState<TransitResourceData | null>(null);
   const [draftForm, setDraftForm] = useState<TransitResourceDraftFormState>(emptyTransitResourceDraftForm);
@@ -828,22 +555,10 @@ export function TransitServersPanel() {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [approvalPreviewResource, setApprovalPreviewResource] = useState<TransitResourceData | null>(null);
-  const [approvalPreviewCopied, setApprovalPreviewCopied] = useState(false);
-  const [commandApprovalConfirmText, setCommandApprovalConfirmText] = useState("");
-  const [commandApprovalCopied, setCommandApprovalCopied] = useState(false);
-  const [commandDryRunCopied, setCommandDryRunCopied] = useState(false);
-  const [placeholderCommandCopied, setPlaceholderCommandCopied] = useState(false);
-  const [realCommandApprovalConfirmText, setRealCommandApprovalConfirmText] = useState("");
-  const [realCommandApprovalCopied, setRealCommandApprovalCopied] = useState(false);
   const [workerInstallCommandResult, setWorkerInstallCommandResult] =
     useState<TransitWorkerInstallCommandGenerationResult | null>(null);
   const [workerInstallCommandCopied, setWorkerInstallCommandCopied] = useState(false);
   const [workerInstallCommandGenerating, setWorkerInstallCommandGenerating] = useState(false);
-  const [workerAcceptanceResult, setWorkerAcceptanceResult] = useState<TransitWorkerAcceptanceResult | null>(null);
-  const [workerAcceptanceLoading, setWorkerAcceptanceLoading] = useState(false);
-  const [workerUpgradeAcceptanceResult, setWorkerUpgradeAcceptanceResult] =
-    useState<TransitWorkerUpgradeAcceptanceResult | null>(null);
-  const [workerUpgradeAcceptanceLoading, setWorkerUpgradeAcceptanceLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -934,20 +649,9 @@ export function TransitServersPanel() {
 
   function closeApprovalPreview() {
     setApprovalPreviewResource(null);
-    setApprovalPreviewCopied(false);
-    setCommandApprovalConfirmText("");
-    setCommandApprovalCopied(false);
-    setCommandDryRunCopied(false);
-    setPlaceholderCommandCopied(false);
-    setRealCommandApprovalConfirmText("");
-    setRealCommandApprovalCopied(false);
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
-    setWorkerAcceptanceResult(null);
-    setWorkerAcceptanceLoading(false);
-    setWorkerUpgradeAcceptanceResult(null);
-    setWorkerUpgradeAcceptanceLoading(false);
   }
 
   function openAdd() {
@@ -969,93 +673,18 @@ export function TransitServersPanel() {
     setModalMode("delete");
   }
 
-  function openWorkerInstallApprovalPreview(resource: TransitResourceData) {
+  async function openWorkerInstallApprovalPreview(resource: TransitResourceData) {
     setApprovalPreviewResource(resource);
-    setApprovalPreviewCopied(false);
-    setCommandApprovalConfirmText("");
-    setCommandApprovalCopied(false);
-    setCommandDryRunCopied(false);
-    setPlaceholderCommandCopied(false);
-    setRealCommandApprovalConfirmText("");
-    setRealCommandApprovalCopied(false);
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
-    setWorkerAcceptanceResult(null);
-    setWorkerAcceptanceLoading(false);
-    setWorkerUpgradeAcceptanceResult(null);
-    setWorkerUpgradeAcceptanceLoading(false);
-  }
-
-  async function copyWorkerInstallApprovalChecklist(resource: TransitResourceData) {
-    try {
-      await copyText(transitWorkerApprovalChecklist(resource));
-      setApprovalPreviewCopied(true);
-      setMessage("Worker 安装审批清单已复制；内容不包含真实 token 或密钥。");
-    } catch (error) {
-      setApprovalPreviewCopied(false);
-      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制审批清单失败。");
-    }
-  }
-
-  async function copyWorkerCommandGenerationApprovalPackage(resource: TransitResourceData) {
-    try {
-      await copyText(transitWorkerCommandGenerationApprovalChecklist(resource));
-      setCommandApprovalCopied(true);
-      setMessage("生成命令审批包已复制；内容只包含占位 token 和安全检查。");
-    } catch (error) {
-      setCommandApprovalCopied(false);
-      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制生成命令审批包失败。");
-    }
-  }
-
-  async function copyWorkerInstallDryRunResult(resource: TransitResourceData) {
-    try {
-      await copyText(transitWorkerInstallDryRunResultText(resource, commandApprovalConfirmed));
-      setCommandDryRunCopied(true);
-      setMessage("Worker install command dry-run 结果已复制；内容只包含占位 token 和检查结果。");
-    } catch (error) {
-      setCommandDryRunCopied(false);
-      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制 dry-run 结果失败。");
-    }
-  }
-
-  async function copyWorkerInstallPlaceholderCommand() {
-    try {
-      await copyText(transitWorkerInstallPlaceholderCommand());
-      setPlaceholderCommandCopied(true);
-      setMessage("占位命令模板已复制；仍不是可执行真实安装命令。");
-    } catch (error) {
-      setPlaceholderCommandCopied(false);
-      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制占位命令模板失败。");
-    }
-  }
-
-  async function copyWorkerRealCommandApprovalPackage(resource: TransitResourceData) {
-    const typedConfirmed = realCommandApprovalConfirmText === transitWorkerRealCommandApprovalConfirmText;
-    try {
-      await copyText(transitWorkerRealCommandApprovalPackage(resource, typedConfirmed));
-      setRealCommandApprovalCopied(true);
-      setMessage("真实生成命令最终审批包已复制；内容不包含真实 token 或真实安装命令。");
-    } catch (error) {
-      setRealCommandApprovalCopied(false);
-      setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制真实生成命令最终审批包失败。");
-    }
-  }
-
-  async function submitWorkerInstallCommandGeneration(resource: TransitResourceData) {
-    if (resource.status !== "pending_worker" || realCommandApprovalConfirmText !== transitWorkerRealCommandApprovalConfirmText) {
-      setMessage("请先完成真实生成命令最终审批。");
-      return;
-    }
     setWorkerInstallCommandGenerating(true);
-    setWorkerInstallCommandCopied(false);
     try {
       const csrfToken = await ensureCsrfToken();
       const result = await generateTransitWorkerInstallCommand(
         resource.id,
         {
-          confirmation: transitWorkerRealCommandApprovalConfirmText,
+          confirmation: transitWorkerInstallCommandConfirmText,
           expires_in_minutes: 60,
         },
         csrfToken,
@@ -1066,7 +695,7 @@ export function TransitServersPanel() {
         return;
       }
       setWorkerInstallCommandResult(result.data);
-      setMessage("一次性 Worker 安装命令已生成；请只在当前页面复制，不要写入 README/docs/PR/chat/logs。");
+      setMessage("Worker 安装命令已生成。");
     } catch (error) {
       setWorkerInstallCommandResult(null);
       setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
@@ -1086,44 +715,6 @@ export function TransitServersPanel() {
     } catch (error) {
       setWorkerInstallCommandCopied(false);
       setMessage(error instanceof Error ? `复制失败：${error.message}` : "复制安装命令失败。");
-    }
-  }
-
-  async function refreshWorkerAcceptance(resource: TransitResourceData) {
-    setWorkerAcceptanceLoading(true);
-    try {
-      const result = await getTransitWorkerAcceptance(resource.id);
-      if (!result.success) {
-        setWorkerAcceptanceResult(null);
-        setMessage(`${result.error_code}: ${result.message}`);
-        return;
-      }
-      setWorkerAcceptanceResult(result.data);
-      setMessage(result.data.accepted ? "Worker 手动安装验收通过。" : result.data.next_action);
-    } catch (error) {
-      setWorkerAcceptanceResult(null);
-      setMessage(error instanceof Error ? error.message : "读取 Worker 验收状态失败。");
-    } finally {
-      setWorkerAcceptanceLoading(false);
-    }
-  }
-
-  async function refreshWorkerUpgradeAcceptance(resource: TransitResourceData) {
-    setWorkerUpgradeAcceptanceLoading(true);
-    try {
-      const result = await getTransitWorkerUpgradeAcceptance(resource.id);
-      if (!result.success) {
-        setWorkerUpgradeAcceptanceResult(null);
-        setMessage(`${result.error_code}: ${result.message}`);
-        return;
-      }
-      setWorkerUpgradeAcceptanceResult(result.data);
-      setMessage(result.data.acceptance_passed ? "Transit Worker 升级验收通过。" : result.data.next_action);
-    } catch (error) {
-      setWorkerUpgradeAcceptanceResult(null);
-      setMessage(error instanceof Error ? error.message : "读取 Transit Worker 升级验收状态失败。");
-    } finally {
-      setWorkerUpgradeAcceptanceLoading(false);
     }
   }
 
@@ -1248,9 +839,6 @@ export function TransitServersPanel() {
     }
   }
 
-  const commandApprovalConfirmed = commandApprovalConfirmText === transitWorkerInstallCommandApprovalConfirmText;
-  const realCommandApprovalConfirmed = realCommandApprovalConfirmText === transitWorkerRealCommandApprovalConfirmText;
-
   return (
     <section className="panel wide">
       <div className="status-row">
@@ -1276,10 +864,6 @@ export function TransitServersPanel() {
           ? resources.map((resource) => {
               const commands = resource.worker_id ? workerCommandsByWorkerId[resource.worker_id] ?? [] : [];
               const pendingWorkerDraft = resource.status === "pending_worker" && !resource.worker_online;
-              const canOpenWorkerAcceptance =
-                pendingWorkerDraft ||
-                Boolean(resource.worker_id) ||
-                ["online", "worker_online", "worker_offline"].includes(resource.display_status);
               return (
                 <div className="server-table-group" key={resource.id}>
                   <div className="server-table-row">
@@ -1290,9 +874,9 @@ export function TransitServersPanel() {
                       {displayStatusLabel(resource.display_status)}
                     </span>
                     <div className="server-actions">
-                      {canOpenWorkerAcceptance ? (
-                        <button className="secondary" type="button" onClick={() => openWorkerInstallApprovalPreview(resource)}>
-                          {pendingWorkerDraft ? "查看 Worker 安装 / 验收" : "Worker 验收"}
+                      {pendingWorkerDraft ? (
+                        <button className="secondary" type="button" onClick={() => void openWorkerInstallApprovalPreview(resource)}>
+                          安装 Worker
                         </button>
                       ) : null}
                       <button className="secondary" type="button" onClick={() => openEdit(resource)}>
@@ -1373,496 +957,35 @@ export function TransitServersPanel() {
             className="modal-card transit-worker-approval-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="Worker 安装审批预览"
+            aria-label="安装 Worker"
           >
             <div className="modal-header">
-              <h3>Worker 安装审批预览</h3>
+              <h3>安装 Worker</h3>
               <button className="ghost-button" type="button" onClick={closeApprovalPreview}>
-                关闭预览
+                关闭
               </button>
             </div>
-            <div className="worker-bootstrap-intro">
-              <strong>Worker 安装审批与只读验收</strong>
-              <span>
-                这里展示安装前审批、一次性命令生成入口，以及用户手动安装后的 heartbeat 验收。刷新验收状态只读，不会 SSH、不会安装 Worker、不会创建 Worker command。
-              </span>
-            </div>
-            <div className="transit-worker-approval-grid">
-              <span>资源名称</span>
-              <strong>{approvalPreviewResource.name}</strong>
-              <span>资源状态</span>
-              <strong>{approvalPreviewResource.status}</strong>
-              <span>入口地址</span>
-              <strong>{approvalPreviewResource.entry_host ?? "待确认"}</strong>
-              <span>SSH 元信息</span>
-              <strong>{sshSummaryForResource(approvalPreviewResource)}</strong>
-              <span>入口地区</span>
-              <strong>{approvalPreviewResource.entry_region ?? "待确认"}</strong>
-              <span>出口地区</span>
-              <strong>{approvalPreviewResource.exit_region ?? "待确认"}</strong>
-              <span>计划网卡</span>
-              <strong>{plannedInterfaceForResource(approvalPreviewResource)}</strong>
-              <span>协议意图</span>
-              <strong>{protocolIntentForResource(approvalPreviewResource)}</strong>
-              <span>目标 Worker 版本</span>
-              <strong>{requiredTransitWorkerVersion}</strong>
-              <span>Worker binary checksum</span>
-              <strong>{transitWorkerBinaryChecksum}</strong>
-              <span>公网主控 URL</span>
-              <strong>{transitWorkerPublicControllerUrl}</strong>
-            </div>
-            <div className="transit-worker-approval-section worker-acceptance-panel">
-              <strong>手动安装与心跳验收</strong>
-              <span>
-                先在 Stage 3.3.134 生成一次性 Worker 安装命令，再由用户手动复制到真实测试中转 VPS 执行。不要在公网主控 VPS
-                执行该命令，也不要把命令写入 README / docs / PR / chat / logs / notes。执行完成后点击刷新。
-              </span>
-              <div className="worker-install-real-approval-grid">
-                <span>当前资源名称</span>
-                <strong>{approvalPreviewResource.name}</strong>
-                <span>当前资源状态</span>
-                <strong>{approvalPreviewResource.status}</strong>
-                <span>期望 Worker role</span>
-                <strong>transit</strong>
-                <span>期望 Worker version</span>
-                <strong>{requiredTransitWorkerVersion}</strong>
-                <span>是否发现 Worker</span>
-                <strong className={workerAcceptanceResult?.worker_found ? "approval-state-ok" : "approval-state-warn"}>
-                  {workerAcceptanceResult ? (workerAcceptanceResult.worker_found ? "是" : "否") : "待刷新"}
-                </strong>
-                <span>Worker 在线状态</span>
-                <strong className={workerAcceptanceResult?.heartbeat_ok ? "approval-state-ok" : "approval-state-warn"}>
-                  {workerAcceptanceResult ? displayStatusLabel(workerAcceptanceResult.worker_status ?? "unknown") : "待刷新"}
-                </strong>
-                <span>Worker hostname</span>
-                <strong>{workerAcceptanceResult?.worker_hostname || "待刷新"}</strong>
-                <span>Worker interface_name</span>
-                <strong>{workerAcceptanceResult?.worker_interface_name || "待刷新"}</strong>
-                <span>Worker version</span>
-                <strong className={workerAcceptanceResult?.version_ok ? "approval-state-ok" : "approval-state-warn"}>
-                  {workerAcceptanceResult?.worker_version || "待刷新"}
-                </strong>
-                <span>最后心跳时间</span>
-                <strong>{formatTime(workerAcceptanceResult?.worker_last_heartbeat_at ?? null)}</strong>
-                <span>绑定是否正确</span>
-                <strong className={workerAcceptanceResult?.server_binding_ok ? "approval-state-ok" : "approval-state-warn"}>
-                  {workerAcceptanceResult ? (workerAcceptanceResult.server_binding_ok ? "是" : "否") : "待刷新"}
-                </strong>
-                <span>验收结论</span>
-                <strong className={workerAcceptanceResult?.accepted ? "approval-state-ok" : "approval-state-warn"}>
-                  {workerAcceptanceResult ? (workerAcceptanceResult.accepted ? "通过" : "未完成") : "待刷新"}
-                </strong>
-              </div>
-              <div className={`approval-gate-status ${workerAcceptanceResult?.accepted ? "ok" : "warn"}`}>
-                {workerAcceptanceResult
-                  ? workerAcceptanceResult.summary
-                  : "等待用户在真实测试中转 VPS 手动执行安装命令，然后刷新 Worker 验收状态。"}
-              </div>
-              {workerAcceptanceResult ? <p className="message">下一步：{workerAcceptanceResult.next_action}</p> : null}
-              {workerAcceptanceResult ? (
-                <div className="worker-acceptance-checks">
-                  {workerAcceptanceResult.checks.map((check) => (
-                    <div className="worker-acceptance-check-row" key={check.id}>
-                      <span className={check.passed ? "approval-state-ok" : "approval-state-warn"}>
-                        {check.passed ? "通过" : "待处理"}
-                      </span>
-                      <strong>{check.label}</strong>
-                      <small>{check.detail}</small>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <ul className="dry-run-safety-list">
-                <li>本按钮不会 SSH。</li>
-                <li>本按钮不会安装 Worker。</li>
-                <li>本按钮不会创建 Worker command。</li>
-                <li>本按钮不会创建 HAProxy route。</li>
-                <li>本按钮不会修改防火墙。</li>
-              </ul>
-              <div className="dry-run-actions">
-                <button
-                  className="secondary"
-                  type="button"
-                  disabled={workerAcceptanceLoading}
-                  onClick={() => void refreshWorkerAcceptance(approvalPreviewResource)}
-                >
-                  {workerAcceptanceLoading ? "刷新中..." : "刷新 Worker 验收状态"}
-                </button>
-              </div>
-              {workerAcceptanceResult?.accepted ? (
-                <p className="approval-copy-status">Worker 手动安装验收通过：role / binding / version / heartbeat 均满足要求。</p>
-              ) : null}
-            </div>
-            <div className="transit-worker-approval-section worker-acceptance-panel">
-              <strong>Stage 3.3.137-hotfix-3：Transit Worker 升级验收</strong>
-              <span>
-                HAProxy TCP dry-run 需要 transit Worker 升级到要求版本。这里仅读取当前 Worker 版本和 heartbeat，不生成 token、不生成安装命令、不创建
-                Worker command，也不执行远程升级。
-              </span>
-              <div className="worker-install-real-approval-grid">
-                <span>资源</span>
-                <strong>{approvalPreviewResource.name}</strong>
-                <span>当前 Worker 状态</span>
-                <strong className={workerUpgradeAcceptanceResult?.heartbeat_ok ? "approval-state-ok" : "approval-state-warn"}>
-                  {workerUpgradeAcceptanceResult ? displayStatusLabel(workerUpgradeAcceptanceResult.worker_status ?? "unknown") : "待刷新"}
-                </strong>
-                <span>当前 Worker version</span>
-                <strong className={workerUpgradeAcceptanceResult?.version_ok ? "approval-state-ok" : "approval-state-warn"}>
-                  {workerUpgradeAcceptanceResult?.current_worker_version || "待刷新"}
-                </strong>
-                <span>要求 Worker version</span>
-                <strong>{workerUpgradeAcceptanceResult?.required_worker_version || requiredTransitWorkerVersion}</strong>
-                <span>bundled binary checksum</span>
-                <strong>{workerUpgradeAcceptanceResult?.required_worker_checksum || transitWorkerBinaryChecksum}</strong>
-                <span>是否需要升级</span>
-                <strong className={workerUpgradeAcceptanceResult?.upgrade_required ? "approval-state-warn" : "approval-state-ok"}>
-                  {workerUpgradeAcceptanceResult ? (workerUpgradeAcceptanceResult.upgrade_required ? "需要升级" : "不需要") : "待刷新"}
-                </strong>
-                <span>验收状态</span>
-                <strong className={workerUpgradeAcceptanceResult?.acceptance_passed ? "approval-state-ok" : "approval-state-warn"}>
-                  {workerUpgradeAcceptanceResult ? (workerUpgradeAcceptanceResult.acceptance_passed ? "通过" : "阻塞") : "待刷新"}
-                </strong>
-              </div>
-              <div className={`approval-gate-status ${workerUpgradeAcceptanceResult?.acceptance_passed ? "ok" : "warn"}`}>
-                {workerUpgradeAcceptanceResult
-                  ? workerUpgradeAcceptanceResult.summary
-                  : "请刷新 Transit Worker 升级验收。未满足最低版本前，不要重新生成 Stage 3.3.137 HAProxy route dry-run。"}
-              </div>
-              {workerUpgradeAcceptanceResult?.blocked_reason ? (
-                <p className="message">阻塞原因：{workerUpgradeAcceptanceResult.blocked_reason}</p>
-              ) : null}
-              {workerUpgradeAcceptanceResult ? <p className="message">下一步：{workerUpgradeAcceptanceResult.next_action}</p> : null}
-              {workerUpgradeAcceptanceResult ? (
-                <div className="worker-acceptance-checks">
-                  {workerUpgradeAcceptanceResult.checks.map((check) => (
-                    <div className="worker-acceptance-check-row" key={check.id}>
-                      <span className={check.passed ? "approval-state-ok" : "approval-state-warn"}>
-                        {check.passed ? "通过" : "待处理"}
-                      </span>
-                      <strong>{check.label}</strong>
-                      <small>{check.detail}</small>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <ul className="dry-run-safety-list">
-                <li>本验收不会生成 Worker token 或 install command。</li>
-                <li>本验收不会 SSH、不会安装或重启远端 Worker。</li>
-                <li>本验收不会创建 Worker command 或真实 execution command。</li>
-                <li>本验收不会创建 HAProxy route、TransitRoute active record 或绑定 23843。</li>
-                <li>本验收不会读取 / 写入 share_link，也不会 cutover。</li>
-              </ul>
-              <div className="transit-worker-approval-section">
-                <strong>Stage 3.3.137-hotfix-4：手动升级 runbook</strong>
-                <span>
-                  这是手动升级 Worker 的准备阶段。系统不会远程执行任何命令；升级需要用户在 transit VPS 上手动完成。
-                  升级完成后刷新验收，看到 Worker version 满足要求后，才能重新执行 Stage 3.3.137 dry-run。
-                </span>
-                <div className="worker-install-real-approval-grid">
-                  <span>目标资源</span>
-                  <strong>{approvalPreviewResource.name}</strong>
-                  <span>当前 Worker version</span>
-                  <strong>{workerUpgradeAcceptanceResult?.current_worker_version || approvalPreviewResource.worker_version || "待刷新"}</strong>
-                  <span>目标 Worker version</span>
-                  <strong>{workerUpgradeAcceptanceResult?.required_worker_version || requiredTransitWorkerVersion}</strong>
-                  <span>bundled binary checksum</span>
-                  <strong>{workerUpgradeAcceptanceResult?.required_worker_checksum || transitWorkerBinaryChecksum}</strong>
-                </div>
-                <ol className="dry-run-safety-list">
-                  <li>在公网主控确认 bundled Worker binary 已是目标版本，并记录 checksum。</li>
-                  <li>由用户自行登录 transit VPS，先备份旧的 liveline-worker binary。</li>
-                  <li>由用户手动把目标版本 binary 放到 `/usr/local/bin/liveline-worker`，并保留可执行权限。</li>
-                  <li>由用户手动重启远端 `liveline-worker.service`，等待 heartbeat 回到 online。</li>
-                  <li>回到本页面点击“刷新 Worker 升级验收”，确认版本满足要求。</li>
-                  <li>验收通过后，再回到 Stage 3.3.137 重新生成 HAProxy route dry-run。</li>
-                </ol>
-                <ul className="dry-run-safety-list">
-                  <li>本 runbook 不生成 Worker token。</li>
-                  <li>本 runbook 不生成完整 install command。</li>
-                  <li>本 runbook 不自动安装或重启远端 Worker。</li>
-                  <li>本 runbook 不创建 Worker command、HAProxy route 或 TransitRoute active record。</li>
-                </ul>
-                <details className="node-create-safety-details">
-                  <summary>Stage 3.3.137-hotfix-5：手动升级命令审核</summary>
-                  <div className="worker-install-dry-run">
-                    <strong>A. 公网主控 VPS 执行：确认 bundled binary</strong>
-                    <span>以下是只读核对命令，用于确认公网主控仓库内 binary 版本和 checksum；不生成 token，不连接 transit VPS。</span>
-                    <pre className="worker-install-placeholder-command">{`cd /opt/liveline-console
-sha256sum backend/worker-binaries/liveline-worker-linux-amd64
-chmod +x backend/worker-binaries/liveline-worker-linux-amd64
-./backend/worker-binaries/liveline-worker-linux-amd64 version`}</pre>
-                    <strong>B. transit VPS 手动执行：替换本地 Worker binary</strong>
-                    <span>
-                      这是用户手动执行模板，不是系统生成的 SSH 命令。`/tmp/liveline-worker-linux-amd64`
-                      只是用户手动上传到 transit VPS 后的临时路径，LiveLine Console 不上传文件、不远程执行。
-                    </span>
-                    <pre className="worker-install-placeholder-command">{`sudo systemctl stop liveline-worker.service
-sudo cp /usr/local/bin/liveline-worker /usr/local/bin/liveline-worker.bak.$(date +%Y%m%d%H%M%S)
-sudo install -m 0755 /tmp/liveline-worker-linux-amd64 /usr/local/bin/liveline-worker
-/usr/local/bin/liveline-worker version
-sudo systemctl start liveline-worker.service
-sudo systemctl status liveline-worker.service --no-pager -l`}</pre>
-                    <strong>C. 升级后验收：只查 Worker 状态</strong>
-                    <span>优先在页面点击“刷新 Worker 升级验收”。如需数据库只读核对，只查询 Worker 版本和 heartbeat，不查询 token、secret 或 share_link。</span>
-                    <pre className="worker-install-placeholder-command">{`cd /opt/liveline-console
-docker compose exec -T postgres psql -U livelines -d livelines -c "
-SELECT id, role, status, server_id, hostname, interface_name, worker_version, last_heartbeat_at
-FROM workers
-WHERE server_id = '80ec346d-3ac1-402e-ab09-33cb404ca81c'
-ORDER BY last_heartbeat_at DESC NULLS LAST, created_at DESC
-LIMIT 5;
-"`}</pre>
-                    <ul className="dry-run-safety-list">
-                      <li>验收通过条件：role=transit，heartbeat online，interface_name=eth0。</li>
-                      <li>server_id 必须是 80ec346d-3ac1-402e-ab09-33cb404ca81c。</li>
-                      <li>worker_version 必须满足 {requiredTransitWorkerVersion} 或更高。</li>
-                      <li>通过后才能回到 Stage 3.3.137 重新生成 HAProxy route dry-run。</li>
-                    </ul>
-                  </div>
-                </details>
-              </div>
-              <div className="dry-run-actions">
-                <button
-                  className="secondary"
-                  type="button"
-                  disabled={workerUpgradeAcceptanceLoading}
-                  onClick={() => void refreshWorkerUpgradeAcceptance(approvalPreviewResource)}
-                >
-                  {workerUpgradeAcceptanceLoading ? "刷新中..." : "刷新 Worker 升级验收"}
-                </button>
-              </div>
-            </div>
-            <div className="transit-worker-approval-section">
-              <strong>占位安装命令模板</strong>
-              <span>这不是本阶段可执行命令；`worker-token` 是后续独立阶段生成的占位符。</span>
-              <pre className="worker-install-placeholder-command">{transitWorkerInstallPlaceholderCommand()}</pre>
-            </div>
-            <div className="transit-worker-approval-section">
-              <strong>Go / No-Go 检查</strong>
-              <ul>
-                <li>公网主控 backend health 返回 200。</li>
-                <li>Worker binary 本地 / 公网文件 checksum 一致。</li>
-                <li>新 VPS 可以访问公网主控 URL。</li>
-                <li>新 VPS 具备 root 或 sudo、systemd、curl。</li>
-                <li>安装命令必须使用公网主控 URL，不能使用 localhost 或 127.0.0.1。</li>
-                <li>不要把 SSH 私钥、密码、Worker token 或 secret 写入 notes、README、PR 或聊天。</li>
-              </ul>
-            </div>
-            <div className="transit-worker-approval-section command-generation-gate">
-              <strong>生成命令前审批门</strong>
-              <span>
-                这里展示生成一次性 Worker token / install command 前需要确认的条件。仅输入确认不会生成；只有点击生成按钮才会调用受保护 API。
-              </span>
-              <div className="transit-worker-approval-requirements" aria-label="生成命令前审批要求">
-                <span>资源状态必须是 pending_worker</span>
-                <strong className={approvalPreviewResource.status === "pending_worker" ? "approval-state-ok" : "approval-state-warn"}>
-                  {approvalPreviewResource.status === "pending_worker" ? "满足" : "需调整"}
-                </strong>
-                <span>资源必须有 entry_host</span>
-                <strong className={approvalPreviewResource.entry_host ? "approval-state-ok" : "approval-state-warn"}>
-                  {approvalPreviewResource.entry_host ? approvalPreviewResource.entry_host : "待补充"}
-                </strong>
-                <span>SSH host / port / username</span>
-                <strong className={approvalPreviewResource.has_ssh ? "approval-state-ok" : "approval-state-warn"}>
-                  {approvalPreviewResource.has_ssh ? sshSummaryForResource(approvalPreviewResource) : "待补充或后续确认"}
-                </strong>
-                <span>真实命令使用公网主控 URL</span>
-                <strong className="approval-state-ok">{transitWorkerPublicControllerUrl}</strong>
-                <span>一次性 Worker token 生成时机</span>
-                <strong className="approval-state-warn">仅后续独立审批阶段</strong>
-              </div>
-              <label className="command-approval-confirm">
-                <span>模拟 typed confirmation。本阶段输入后也不会生成 token 或真实命令。</span>
-                <input
-                  value={commandApprovalConfirmText}
-                  onChange={(event) => {
-                    setCommandApprovalConfirmText(event.target.value);
-                    setCommandApprovalCopied(false);
-                    setCommandDryRunCopied(false);
-                    setPlaceholderCommandCopied(false);
-                    setRealCommandApprovalConfirmText("");
-                    setRealCommandApprovalCopied(false);
-                    setWorkerInstallCommandResult(null);
-                    setWorkerInstallCommandCopied(false);
-                  }}
-                  placeholder={transitWorkerInstallCommandApprovalConfirmText}
-                />
-              </label>
-              <div className={`approval-gate-status ${commandApprovalConfirmed ? "ok" : "warn"}`}>
-                {commandApprovalConfirmed
-                  ? "审批门 UI 已确认；仍需最终确认并点击生成按钮才会生成命令。"
-                  : `请输入 ${transitWorkerInstallCommandApprovalConfirmText} 以模拟后续审批确认。`}
-              </div>
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => void copyWorkerCommandGenerationApprovalPackage(approvalPreviewResource)}
-              >
-                复制生成命令审批包
-              </button>
-              {commandApprovalCopied ? <p className="approval-copy-status">生成命令审批包已复制，只包含占位 token。</p> : null}
-              {commandApprovalConfirmed ? (
-                <div className="worker-install-dry-run" aria-label="生成命令 dry-run 结果">
-                  <strong>生成命令 dry-run 结果</strong>
-                  <ul className="dry-run-safety-list">
-                    <li>这是 dry-run，不会生成 Worker token。</li>
-                    <li>这是 dry-run，不会生成真实 install command。</li>
-                    <li>这是 dry-run，不会安装 Worker。</li>
-                    <li>这是 dry-run，不会创建 Worker command。</li>
-                    <li>这是 dry-run，不会 SSH / 远程执行。</li>
-                  </ul>
-                  <div className="worker-install-dry-run-grid">
-                    {transitWorkerInstallDryRunRows(approvalPreviewResource).map(([label, value]) => (
-                      <Fragment key={label}>
-                        <span>{label}</span>
-                        <strong>{value}</strong>
-                      </Fragment>
-                    ))}
-                  </div>
-                  <div className="worker-install-dry-run-checks">
-                    {transitWorkerInstallDryRunChecks(approvalPreviewResource, commandApprovalConfirmed).map(([label, value, passed]) => (
-                      <Fragment key={label}>
-                        <span>{label}</span>
-                        <strong className={passed ? "approval-state-ok" : "approval-state-warn"}>{value}</strong>
-                      </Fragment>
-                    ))}
-                  </div>
-                  <div className="transit-worker-approval-section dry-run-command-template">
-                    <strong>占位命令模板</strong>
-                    <span>
-                      这不是可执行真实安装命令。<code>{transitWorkerPlaceholderToken}</code> 仍是占位符。
-                    </span>
-                    <pre className="worker-install-placeholder-command">{transitWorkerInstallPlaceholderCommand()}</pre>
-                  </div>
-                  <div className="dry-run-actions">
-                    <button className="secondary" type="button" onClick={() => void copyWorkerInstallDryRunResult(approvalPreviewResource)}>
-                      复制 dry-run 结果
+            <div className="worker-install-command-result" aria-label="Worker 安装命令">
+              <span>请在中转 VPS 上执行以下命令：</span>
+              {workerInstallCommandGenerating ? <p className="message">正在生成安装命令...</p> : null}
+              {workerInstallCommandResult ? (
+                <>
+                  <pre className="worker-install-placeholder-command">{workerInstallCommandResult.install_command}</pre>
+                  <div className="modal-actions">
+                    <button className="secondary" type="button" onClick={() => void copyGeneratedWorkerInstallCommand()}>
+                      复制命令
                     </button>
-                    <button className="secondary" type="button" onClick={() => void copyWorkerInstallPlaceholderCommand()}>
-                      复制占位命令模板
+                    <button type="button" onClick={closeApprovalPreview}>
+                      关闭
                     </button>
                   </div>
-                  {commandDryRunCopied ? <p className="approval-copy-status">dry-run 结果已复制；不包含真实 token。</p> : null}
-                  {placeholderCommandCopied ? <p className="approval-copy-status">占位命令模板已复制；仍不可直接执行。</p> : null}
-                </div>
+                  {workerInstallCommandCopied ? <p className="approval-copy-status">安装命令已复制。</p> : null}
+                </>
               ) : null}
-              {commandApprovalConfirmed && approvalPreviewResource.status === "pending_worker" ? (
-                <div className="worker-install-real-approval" aria-label="真实生成命令最终审批">
-                  <strong>真实生成命令最终审批</strong>
-                  <span>
-                    这里仅确认下一阶段生成一次性 Worker token / install command 前的真实 VPS 条件。本阶段输入确认后仍不会生成
-                    token，不会生成真实 install command，不会创建 Worker command，也不会 SSH 或远程执行。
-                  </span>
-                  <div className="worker-install-real-approval-grid">
-                    {transitWorkerRealCommandApprovalRows(approvalPreviewResource).map(([label, value]) => (
-                      <Fragment key={label}>
-                        <span>{label}</span>
-                        <strong>{value}</strong>
-                      </Fragment>
-                    ))}
-                  </div>
-                  <div className="worker-install-real-approval-checks">
-                    {transitWorkerRealCommandReadinessChecks(approvalPreviewResource).map(([label, value]) => (
-                      <Fragment key={label}>
-                        <span>{label}</span>
-                        <strong>{value}</strong>
-                      </Fragment>
-                    ))}
-                  </div>
-                  <label className="command-approval-confirm">
-                    <span>最终 typed confirmation。输入后不会自动生成命令，只有点击生成按钮才会调用受保护 API。</span>
-                    <input
-                      value={realCommandApprovalConfirmText}
-                      onChange={(event) => {
-                        setRealCommandApprovalConfirmText(event.target.value);
-                        setRealCommandApprovalCopied(false);
-                        setWorkerInstallCommandResult(null);
-                        setWorkerInstallCommandCopied(false);
-                      }}
-                      placeholder={transitWorkerRealCommandApprovalConfirmText}
-                    />
-                  </label>
-                  <div className={`approval-gate-status ${realCommandApprovalConfirmed ? "ok" : "warn"}`}>
-                    {realCommandApprovalConfirmed
-                      ? "最终审批门已通过。点击生成按钮才会生成一次性 Worker token / install command。"
-                      : "尚未确认进入真实命令生成阶段。"}
-                  </div>
-                  <ul className="dry-run-safety-list">
-                    <li>仅输入最终确认不会生成 Worker token。</li>
-                    <li>点击生成按钮后，只生成一次性 token / install command。</li>
-                    <li>本阶段不会安装 Worker。</li>
-                    <li>本阶段不会 SSH 或远程执行。</li>
-                  </ul>
-                  <div className="dry-run-actions">
-                    <button className="secondary" type="button" onClick={() => void copyWorkerRealCommandApprovalPackage(approvalPreviewResource)}>
-                      复制真实生成命令最终审批包
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!realCommandApprovalConfirmed || workerInstallCommandGenerating}
-                      onClick={() => void submitWorkerInstallCommandGeneration(approvalPreviewResource)}
-                    >
-                      {workerInstallCommandGenerating ? "生成中..." : "生成一次性 Worker 安装命令"}
-                    </button>
-                  </div>
-                  <p className="message">只生成命令，不安装 Worker，不 SSH，不创建 Worker command。</p>
-                  {realCommandApprovalCopied ? (
-                    <p className="approval-copy-status">真实生成命令最终审批包已复制；不包含真实 token 或真实安装命令。</p>
-                  ) : null}
-                  {workerInstallCommandResult ? (
-                    <div className="worker-install-command-result" aria-label="一次性 Worker 安装命令已生成">
-                      <strong>一次性 Worker 安装命令已生成</strong>
-                      <div className="worker-install-real-approval-grid">
-                        <span>资源名</span>
-                        <strong>{workerInstallCommandResult.resource.name}</strong>
-                        <span>资源状态</span>
-                        <strong>{workerInstallCommandResult.resource.status}</strong>
-                        <span>controller_url</span>
-                        <strong>{workerInstallCommandResult.controller_url}</strong>
-                        <span>role</span>
-                        <strong>{workerInstallCommandResult.role}</strong>
-                        <span>token 过期时间</span>
-                        <strong>{formatTime(workerInstallCommandResult.expires_at)}</strong>
-                      </div>
-                      <div className="approval-gate-status warn">
-                        该命令包含一次性 token，只显示一次。不要保存到 README / docs / PR / chat / logs。不要在未确认真实 VPS 前执行。
-                        下一阶段才进行手动安装验收。
-                      </div>
-                      <pre className="worker-install-placeholder-command">{workerInstallCommandResult.install_command}</pre>
-                      <div className="dry-run-actions">
-                        <button className="secondary" type="button" onClick={() => void copyGeneratedWorkerInstallCommand()}>
-                          复制安装命令
-                        </button>
-                      </div>
-                      {workerInstallCommandCopied ? (
-                        <p className="approval-copy-status">安装命令已复制；请只在真实测试 VPS 的手动安装阶段使用。</p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+              {!workerInstallCommandGenerating && !workerInstallCommandResult ? (
+                <p className="message">安装命令未生成，请关闭后重试。</p>
               ) : null}
             </div>
-            <div className="transit-worker-approval-section">
-              <strong>Stage 3.3.134 执行边界确认</strong>
-              <ul>
-                <li>我确认本阶段只生成一次性 Worker token / install command。</li>
-                <li>我确认本阶段不自动安装 Worker。</li>
-                <li>我确认本阶段不执行 SSH / 远程命令。</li>
-                <li>我确认本阶段不创建 Worker command。</li>
-                <li>我确认本阶段不创建 HAProxy route。</li>
-                <li>我确认生成的命令只在当前页面复制使用，不写入 README / docs / PR / chat / logs / notes。</li>
-                <li>真实 Worker 安装与心跳验收必须在后续独立阶段执行。</li>
-              </ul>
-            </div>
-            <div className="modal-actions">
-              <button className="secondary" type="button" onClick={closeApprovalPreview}>
-                关闭预览
-              </button>
-              <button type="button" onClick={() => void copyWorkerInstallApprovalChecklist(approvalPreviewResource)}>
-                复制审批清单
-              </button>
-            </div>
-            {approvalPreviewCopied ? <p className="approval-copy-status">审批清单已复制，不包含真实 token 或密钥。</p> : null}
           </div>
         </div>
       ) : null}
