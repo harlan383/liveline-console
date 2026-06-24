@@ -2634,6 +2634,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.139 New transit HAProxy route create real execution | Add protected real-execution Worker command entry after succeeded HAProxy dry-run and final approval; no deployment, direct route creation, listener binding, firewall mutation, cutover, or share-link mutation |
 | Stage 3.3.152 HAProxy parity cleanup and Worker install | Support HAProxy TCP route cleanup, mixed socat/HAProxy transit-resource cleanup, Worker install HAProxy write paths, and active-route UI parity; no real delete, route creation, firewall mutation, cutover, or share-link mutation |
 | Stage 3.3.153 HAProxy create result persist parity | Persist successful HAProxy TCP real-create results as active transit routes while preserving socat behavior; no real create, delete, Worker command, cutover, firewall mutation, or share-link mutation |
+| Stage 3.3.163 HAProxy delete cleanup risk runbook | Document pre-delete snapshots, remote cleanup risks, failure branches, and recovery plan before any destructive HAProxy 23843 cleanup test |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |
