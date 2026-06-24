@@ -229,6 +229,8 @@ const transitCreateTerminalStatuses = new Set(["succeeded", "failed", "cancelled
 const cleanupCommandTerminalStatuses = new Set(["succeeded", "failed", "cancelled", "timeout", "expired"]);
 const cleanupCommandPollIntervalMs = 2000;
 const cleanupCommandMaxPolls = 30;
+const workerInstallPollIntervalMs = 3000;
+const workerInstallMaxPolls = 60;
 const workerCommandNotFoundRetryMs = 30_000;
 
 const transitRouteCreateProgressLabels: Record<TransitRouteCreateStep, string> = {
@@ -479,6 +481,20 @@ function isPlanningSelectableTransitResource(resource: TransitResourceData) {
   );
 }
 
+function isTransitResourceWorkerOnline(resource: TransitResourceData) {
+  const displayStatus = resource.display_status ?? "";
+  const workerDisplayStatus = resource.worker_display_status ?? "";
+  return (
+    resource.worker_online ||
+    resource.worker_heartbeat_status === "online" ||
+    displayStatus === "online" ||
+    displayStatus === "worker_online" ||
+    workerDisplayStatus === "online" ||
+    workerDisplayStatus === "worker_online" ||
+    Boolean(resource.worker_id && resource.worker_last_heartbeat_at && !resource.worker_is_heartbeat_stale)
+  );
+}
+
 function targetPortForNode(node: NodeData | null) {
   return typeof node?.port === "number" ? node.port : 0;
 }
@@ -516,6 +532,9 @@ export function TransitServersPanel() {
     useState<TransitWorkerInstallCommandGenerationResult | null>(null);
   const [workerInstallCommandCopied, setWorkerInstallCommandCopied] = useState(false);
   const [workerInstallCommandGenerating, setWorkerInstallCommandGenerating] = useState(false);
+  const [workerInstallHeartbeatMessage, setWorkerInstallHeartbeatMessage] = useState("");
+  const workerInstallPollTimeoutRef = useRef<number | null>(null);
+  const workerInstallPollingResourceIdRef = useRef<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadResources() {
@@ -524,7 +543,7 @@ export function TransitServersPanel() {
     if (!result.success) {
       setMessage(`${result.error_code}: ${result.message}`);
       setLoading(false);
-      return;
+      return [];
     }
     setResources(result.data.resources);
     await Promise.all(
@@ -534,6 +553,7 @@ export function TransitServersPanel() {
     );
     setMessage("中转服务器列表已刷新。");
     setLoading(false);
+    return result.data.resources;
   }
 
   async function loadWorkerCommands(workerId: string) {
@@ -592,8 +612,62 @@ export function TransitServersPanel() {
     setMessage("清理任务仍在执行，中转服务器列表已再次刷新；请稍后查看任务中心或再次刷新。");
   }
 
+  function clearWorkerInstallPolling() {
+    if (workerInstallPollTimeoutRef.current !== null) {
+      window.clearTimeout(workerInstallPollTimeoutRef.current);
+      workerInstallPollTimeoutRef.current = null;
+    }
+    workerInstallPollingResourceIdRef.current = null;
+  }
+
+  async function pollTransitWorkerInstallHeartbeat(resourceId: string, attempt = 0) {
+    if (workerInstallPollingResourceIdRef.current !== resourceId) {
+      return;
+    }
+
+    const result = await apiFetch<TransitResourceListResult>("/api/transit-resources?resource_type=server");
+    if (result.success) {
+      setResources(result.data.resources);
+      const resource = result.data.resources.find((item) => item.id === resourceId);
+      if (resource?.worker_id) {
+        await loadWorkerCommands(resource.worker_id);
+      }
+      if (resource && isTransitResourceWorkerOnline(resource)) {
+        clearWorkerInstallPolling();
+        setWorkerInstallHeartbeatMessage("已检测到 Worker 在线。");
+        setMessage("已检测到 Worker 在线，中转服务器列表已自动刷新。");
+        return;
+      }
+    }
+
+    if (attempt + 1 >= workerInstallMaxPolls) {
+      clearWorkerInstallPolling();
+      await loadResources();
+      const timeoutMessage = "未检测到 Worker 上线，请检查安装命令是否执行成功、curl 是否可用、systemd 是否正常、VPS 是否能访问主控 backend。";
+      setWorkerInstallHeartbeatMessage(timeoutMessage);
+      setMessage(timeoutMessage);
+      return;
+    }
+
+    setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+    workerInstallPollTimeoutRef.current = window.setTimeout(() => {
+      void pollTransitWorkerInstallHeartbeat(resourceId, attempt + 1);
+    }, workerInstallPollIntervalMs);
+  }
+
+  function startTransitWorkerInstallPolling(resourceId: string) {
+    clearWorkerInstallPolling();
+    workerInstallPollingResourceIdRef.current = resourceId;
+    setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+    setMessage("Worker 安装命令已生成，正在等待 Worker 注册和 heartbeat。");
+    void pollTransitWorkerInstallHeartbeat(resourceId);
+  }
+
   useEffect(() => {
     void loadResources();
+    return () => {
+      clearWorkerInstallPolling();
+    };
   }, []);
 
   function closeModal() {
@@ -633,6 +707,8 @@ export function TransitServersPanel() {
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
+    setWorkerInstallHeartbeatMessage("");
+    clearWorkerInstallPolling();
     setWorkerInstallCommandGenerating(true);
     try {
       const csrfToken = await ensureCsrfToken();
@@ -650,7 +726,7 @@ export function TransitServersPanel() {
         return;
       }
       setWorkerInstallCommandResult(result.data);
-      setMessage("Worker 安装命令已生成。");
+      startTransitWorkerInstallPolling(result.data.resource.id);
     } catch (error) {
       setWorkerInstallCommandResult(null);
       setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
@@ -932,6 +1008,7 @@ export function TransitServersPanel() {
               {!workerInstallCommandGenerating && !workerInstallCommandResult ? (
                 <p className="message">安装命令未生成，请关闭后重试。</p>
               ) : null}
+              {workerInstallHeartbeatMessage ? <p className="message">{workerInstallHeartbeatMessage}</p> : null}
             </div>
           </div>
         </div>
