@@ -10,7 +10,7 @@ from app.models.transit_resource import TransitResource
 from app.models.vps_server import VpsServer
 from app.models.worker import Worker, WorkerToken
 from app.schemas.common import error_response
-from app.schemas.workers import OFFLINE_THRESHOLD_SECONDS
+from app.schemas.workers import HEARTBEAT_STALE_THRESHOLD_SECONDS, OFFLINE_THRESHOLD_SECONDS
 
 WORKER_PENDING_STATUS = "pending_worker"
 WORKER_ONLINE_STATUS = "worker_online"
@@ -119,6 +119,49 @@ def worker_runtime_status(worker: Worker, current_time: datetime | None = None) 
     return "online"
 
 
+def worker_heartbeat_age_seconds(worker: Worker | None, current_time: datetime | None = None) -> int | None:
+    if not worker or not worker.last_heartbeat_at:
+        return None
+    reference_time = current_time or now_utc()
+    heartbeat_at = worker.last_heartbeat_at
+    if heartbeat_at.tzinfo is None and reference_time.tzinfo is not None:
+        heartbeat_at = heartbeat_at.replace(tzinfo=reference_time.tzinfo)
+    age_seconds = int((reference_time - heartbeat_at).total_seconds())
+    return max(age_seconds, 0)
+
+
+def worker_heartbeat_status(worker: Worker | None, current_time: datetime | None = None) -> str:
+    if not worker:
+        return "unknown"
+    if worker.status == "deleted":
+        return "deleted"
+    age_seconds = worker_heartbeat_age_seconds(worker, current_time=current_time)
+    if age_seconds is None:
+        return "unknown"
+    if worker.status == "online" and age_seconds <= HEARTBEAT_STALE_THRESHOLD_SECONDS:
+        return "online"
+    if age_seconds > HEARTBEAT_STALE_THRESHOLD_SECONDS or worker.status == "offline":
+        return "stale"
+    return "unknown"
+
+
+def worker_heartbeat_summary_fields(worker: Worker | None, current_time: datetime | None = None) -> dict:
+    if not worker:
+        return {
+            "worker_heartbeat_status": None,
+            "worker_heartbeat_age_seconds": None,
+            "worker_is_heartbeat_stale": False,
+            "worker_display_status": None,
+        }
+    heartbeat_status = worker_heartbeat_status(worker, current_time=current_time)
+    return {
+        "worker_heartbeat_status": heartbeat_status,
+        "worker_heartbeat_age_seconds": worker_heartbeat_age_seconds(worker, current_time=current_time),
+        "worker_is_heartbeat_stale": heartbeat_status == "stale",
+        "worker_display_status": heartbeat_status,
+    }
+
+
 def latest_worker_for_server(db: Session, *, role: str, server_id: str) -> Worker | None:
     return db.scalar(
         select(Worker)
@@ -146,6 +189,7 @@ def latest_workers_by_server(db: Session, *, role: str, server_ids: list[str]) -
 
 def worker_summary_fields(worker: Worker | None) -> dict:
     status = worker_runtime_status(worker) if worker else None
+    heartbeat_fields = worker_heartbeat_summary_fields(worker)
     return {
         "worker_id": worker.id if worker else None,
         "worker_status": status,
@@ -154,17 +198,18 @@ def worker_summary_fields(worker: Worker | None) -> dict:
         "worker_interface_name": worker.interface_name if worker else None,
         "worker_version": worker.worker_version if worker else None,
         "worker_last_heartbeat_at": worker.last_heartbeat_at.isoformat() if worker and worker.last_heartbeat_at else None,
-        "worker_online": status == "online",
+        **heartbeat_fields,
+        "worker_online": status == "online" and heartbeat_fields["worker_heartbeat_status"] == "online",
     }
 
 
 def vps_display_status(vps: VpsServer, worker: Worker | None) -> str:
     if worker:
-        status = worker_runtime_status(worker)
-        if status == "online":
+        heartbeat_status = worker_heartbeat_status(worker)
+        if heartbeat_status == "online":
             return "online"
-        if status == "offline":
-            return "offline"
+        if heartbeat_status in {"stale", "deleted"}:
+            return heartbeat_status
     if vps.status == WORKER_PENDING_STATUS:
         return WORKER_PENDING_STATUS
     if vps.status == WORKER_ONLINE_STATUS:
@@ -178,11 +223,11 @@ def vps_display_status(vps: VpsServer, worker: Worker | None) -> str:
 
 def transit_display_status(resource: TransitResource, worker: Worker | None) -> str:
     if worker:
-        status = worker_runtime_status(worker)
-        if status == "online":
+        heartbeat_status = worker_heartbeat_status(worker)
+        if heartbeat_status == "online":
             return "online"
-        if status == "offline":
-            return "offline"
+        if heartbeat_status in {"stale", "deleted"}:
+            return heartbeat_status
     if resource.status == WORKER_PENDING_STATUS:
         return WORKER_PENDING_STATUS
     if resource.status == WORKER_ONLINE_STATUS:

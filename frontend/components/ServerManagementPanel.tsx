@@ -168,9 +168,11 @@ function displayStatusLabel(status: string) {
   const labels: Record<string, string> = {
     pending_worker: "待接入",
     online: "在线",
+    stale: "心跳过期 / 离线",
     offline: "离线",
     unchecked: "未检测",
     disabled: "已停用",
+    deleted: "已删除",
   };
   return labels[status] ?? sshStatusLabel(status);
 }
@@ -179,7 +181,7 @@ function statusClass(status: string) {
   if (status === "online" || status === "active" || status === "success" || status === "worker_online") {
     return "ok";
   }
-  if (status === "offline" || status === "deleted" || status === "failed" || status === "worker_offline") {
+  if (status === "offline" || status === "stale" || status === "deleted" || status === "failed" || status === "worker_offline") {
     return "bad";
   }
   if (status === "unchecked" || status === "pending" || status === "pending_worker") {
@@ -1213,7 +1215,12 @@ export function ServerManagementPanel() {
                 </div>
                 {server.connection_mode === "worker" ? (
                   <div className="server-row-worker">
-                    Worker：{server.worker_status ? displayStatusLabel(server.worker_status) : "未注册"}；主机名：
+                    Worker：
+                    {server.worker_display_status
+                      ? displayStatusLabel(server.worker_display_status)
+                      : server.worker_status
+                        ? displayStatusLabel(server.worker_status)
+                        : "未注册"}；主机名：
                     {server.worker_hostname || "暂无"}；网卡：{server.worker_interface_name || "暂无"}；最后心跳：
                     {formatTime(server.worker_last_heartbeat_at)}
                     {renderRecentWorkerCommand(latestWorkerCommandForServer(server))}
