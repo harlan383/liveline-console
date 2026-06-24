@@ -2602,7 +2602,7 @@ export function TransitRoutesPanel() {
     setCandidateExportModalOpen(true);
     setCandidateExport(null);
     setCandidateCopyFallbackRequired(false);
-    setCandidateMessage("临时导出只用于手动导入测试；不会写入数据库、修改 nodes.share_link 或 cutover。");
+    setCandidateMessage("临时导出客户端链接只用于复制测试；不会保存到数据库、覆盖原节点链接或切换正式线路。");
   }
 
   function openDeleteRoute(routeId: string) {
@@ -2700,7 +2700,7 @@ export function TransitRoutesPanel() {
       return;
     }
     setCandidateLoading(true);
-    setCandidateMessage("正在临时导出候选测试配置；不会写入数据库或执行 cutover。");
+    setCandidateMessage("正在临时生成客户端链接；不会写入数据库、修改 nodes.share_link 或执行 cutover。");
     try {
       const csrfToken = await ensureCsrfToken();
       const result = await exportTransitRouteCandidate(
@@ -2715,7 +2715,7 @@ export function TransitRoutesPanel() {
         csrfToken,
       );
       if (!result.success) {
-        setCandidateMessage(`${result.error_code}: ${result.message}`);
+        setCandidateMessage(`${result.error_code}: ${result.message}。未生成临时链接，未修改任何线路配置。`);
         return;
       }
       const route = routes.find((item) => item.id === routeId) ?? primaryActiveRoute ?? null;
@@ -2743,9 +2743,10 @@ export function TransitRoutesPanel() {
         cutover_status: result.data.cutover_status,
         safety_boundary: result.data.safety_boundary,
       });
-      setCandidateMessage("候选测试配置已临时导出；完整链接仅保存在本次响应内，请只用于手动导入测试。");
+      setCandidateMessage("临时客户端链接已生成；完整链接仅保存在本次响应内，请只用于手动导入测试。");
     } catch (error) {
-      setCandidateMessage(error instanceof Error ? error.message : "临时导出候选测试配置失败。");
+      const message = error instanceof Error ? error.message : "临时导出客户端链接失败。";
+      setCandidateMessage(`${message} 未生成临时链接，未修改任何线路配置。`);
     } finally {
       setCandidateLoading(false);
     }
@@ -3135,7 +3136,7 @@ export function TransitRoutesPanel() {
       <div className="status-row">
         <div>
           <h2>中转链路</h2>
-          <p className="message">管理中转服务器到落地节点的转发线路。日常使用只需要新增线路、查看状态、临时导出测试配置。</p>
+          <p className="message">管理中转服务器到落地节点的转发线路。日常使用只需要新增线路、查看状态、临时导出客户端链接。</p>
         </div>
         <div className="server-actions">
           <button type="button" onClick={openCreateRouteModal}>
@@ -3229,7 +3230,7 @@ export function TransitRoutesPanel() {
                         查看摘要
                       </button>
                       <button className="secondary compact" disabled={candidateLoading} type="button" onClick={() => openCandidateExportModal(route.id)}>
-                        临时导出
+                        临时导出客户端链接
                       </button>
                       <button
                         className="secondary compact ghost-action"
@@ -3851,8 +3852,8 @@ export function TransitRoutesPanel() {
           <div className="modal-card transit-route-export-modal transit-export-modal">
             <div className="modal-header">
               <div>
-                <h3>临时导出测试配置</h3>
-                <p className="message">仅用于手动导入客户端测试；不会写入数据库，不会修改 nodes.share_link，不会 cutover。</p>
+                <h3>临时导出客户端链接</h3>
+                <p className="message">基于当前落地节点配置临时生成经中转访问的客户端链接。此操作不会保存到数据库，不会覆盖原节点链接，也不会切换正式线路。</p>
               </div>
               <button className="secondary" type="button" onClick={closeCandidateExportModal}>
                 关闭
@@ -3874,20 +3875,22 @@ export function TransitRoutesPanel() {
 
             <div className="transit-export-safety-notice">
               <strong>安全说明</strong>
-              <span>仅用于手动导入客户端测试。</span>
-              <span>不会写入数据库。</span>
-              <span>不会修改 `nodes.share_link`。</span>
-              <span>不会 cutover。</span>
+              <span>这是临时链接，仅用于复制测试；刷新页面后不会作为正式 share_link 保存。</span>
+              <span>不会写入 `transit_routes.share_link`。</span>
+              <span>不会修改或覆盖 `nodes.share_link`。</span>
+              <span>不会创建、删除或修改中转链路。</span>
+              <span>不会触发 Worker command，不会 cutover。</span>
               <span>原直连节点仍保留。</span>
             </div>
 
             {candidateExport ? (
               <div className="candidate-export-result transit-export-result">
-                <strong>临时测试配置已生成</strong>
+                <strong>临时客户端链接已生成</strong>
                 <span>名称：{candidateExport.candidate_name}</span>
                 <span>服务器：{candidateExport.server}</span>
                 <span>端口：{candidateExport.port}</span>
                 <span>协议：{candidateExport.protocol} / {candidateExport.security} / {candidateExport.network}</span>
+                <span>保存状态：未写入数据库 / 未切换正式线路</span>
                 <span>masked link：{candidateExport.masked_candidate_link}</span>
                 <button
                   className="secondary"
@@ -3896,18 +3899,18 @@ export function TransitRoutesPanel() {
                     try {
                       await copyText(candidateExport.candidate_link);
                       setCandidateCopyFallbackRequired(false);
-                      setCandidateMessage("完整候选链接已复制。请妥善保存，仅用于手动导入测试，不要公开分享。");
+                      setCandidateMessage("临时链接已复制。请妥善保存，仅用于手动导入测试，不要公开分享。");
                     } catch {
                       setCandidateCopyFallbackRequired(true);
                       setCandidateMessage("当前 HTTP 环境不支持自动复制，请使用下方文本框手动复制。");
                     }
                   }}
                 >
-                  复制完整候选链接
+                  复制临时链接
                 </button>
                 {candidateCopyFallbackRequired ? (
                   <label className="candidate-manual-copy transit-export-manual-copy">
-                    手动复制完整候选链接
+                    手动复制临时链接
                     <textarea
                       readOnly
                       value={candidateExport.candidate_link}
@@ -3916,7 +3919,7 @@ export function TransitRoutesPanel() {
                     />
                   </label>
                 ) : null}
-                <p className="message">只用于手动导入测试；不代表正式切换，也没有写入 `nodes.share_link`。</p>
+                <p className="message">只用于手动导入测试；没有写入 `transit_routes.share_link`，没有覆盖 `nodes.share_link`，也没有 cutover。</p>
               </div>
             ) : null}
 

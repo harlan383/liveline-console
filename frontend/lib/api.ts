@@ -245,6 +245,8 @@ export type TransitRouteCandidateExportResult = {
   uuid_present: boolean;
   masked_candidate_link: string;
   candidate_link: string;
+  export_mode?: "transient" | string;
+  persistence?: "not_saved" | string;
   warning: string;
   cutover_status: string;
   database_write_performed: boolean;
