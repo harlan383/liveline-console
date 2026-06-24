@@ -3930,7 +3930,7 @@ export function TransitRoutesPanel() {
                 {candidateExport ? "关闭" : "取消"}
               </button>
               <button disabled={candidateLoading || !candidateExportRoute} type="button" onClick={() => void exportCandidateConfig(candidateExportRouteId)}>
-                {candidateLoading ? "生成中" : candidateExport ? "重新生成" : "生成测试配置"}
+                {candidateLoading ? "生成中" : candidateExport ? "重新生成" : "生成临时链接"}
               </button>
             </div>
           </div>
