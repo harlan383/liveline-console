@@ -275,6 +275,9 @@ const approvedTransitRouteName = "hk-socat-live-23843";
 const approvedTransitListenPort = 23843;
 const approvedTransitRealCreateStage = "Stage 3.3.73d-transit-route-real-create-code-path";
 const transitCreateTerminalStatuses = new Set(["succeeded", "failed", "cancelled", "expired"]);
+const cleanupCommandTerminalStatuses = new Set(["succeeded", "failed", "cancelled", "timeout", "expired"]);
+const cleanupCommandPollIntervalMs = 2000;
+const cleanupCommandMaxPolls = 30;
 const workerCommandNotFoundRetryMs = 30_000;
 
 const transitRouteCreateProgressLabels: Record<TransitRouteCreateStep, string> = {
@@ -382,6 +385,9 @@ function displayStatusLabel(status: string | null | undefined) {
     failed: "失败",
     running: "执行中",
     pending: "等待中",
+    cancelled: "已取消",
+    timeout: "超时",
+    expired: "已过期",
   };
   return labels[status ?? ""] ?? status ?? "未知";
 }
@@ -878,6 +884,42 @@ export function TransitServersPanel() {
     });
   }
 
+  async function refreshWhenResourceCleanupCommandCompletes(command?: WorkerCommandData | null) {
+    if (!command?.id) {
+      return;
+    }
+
+    let latestCommand: WorkerCommandData | null = command;
+
+    for (let attempt = 0; attempt < cleanupCommandMaxPolls; attempt += 1) {
+      await sleep(cleanupCommandPollIntervalMs);
+      const result = await getWorkerCommand(command.id);
+      if (result.success) {
+        latestCommand = result.data;
+        if (cleanupCommandTerminalStatuses.has(result.data.status)) {
+          const workerId = result.data.target_worker_id || result.data.worker_id;
+          await loadResources();
+          if (workerId) {
+            await loadWorkerCommands(workerId);
+          }
+          setMessage(
+            result.data.status === "succeeded"
+              ? "清理任务已完成，中转服务器列表已自动刷新。"
+              : `清理任务已进入终态：${displayStatusLabel(result.data.status)}。列表已自动刷新，请查看最近命令详情。`,
+          );
+          return;
+        }
+      }
+    }
+
+    await loadResources();
+    const workerId = latestCommand?.target_worker_id || latestCommand?.worker_id;
+    if (workerId) {
+      await loadWorkerCommands(workerId);
+    }
+    setMessage("清理任务仍在执行，中转服务器列表已再次刷新；请稍后查看任务中心或再次刷新。");
+  }
+
   useEffect(() => {
     void loadResources();
   }, []);
@@ -1198,6 +1240,7 @@ export function TransitServersPanel() {
       closeModal();
       await loadResources();
       scheduleResourceRefresh(result.data.command);
+      void refreshWhenResourceCleanupCommandCompletes(result.data.command);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除中转服务器失败。");
     } finally {
@@ -2159,6 +2202,38 @@ export function TransitRoutesPanel() {
     });
   }
 
+  async function refreshWhenRouteCleanupCommandCompletes(command?: WorkerCommandData | null) {
+    if (!command?.id) {
+      return;
+    }
+
+    let latestCommand: WorkerCommandData | null = command;
+
+    for (let attempt = 0; attempt < cleanupCommandMaxPolls; attempt += 1) {
+      await sleep(cleanupCommandPollIntervalMs);
+      const result = await getWorkerCommand(command.id);
+      if (result.success) {
+        latestCommand = result.data;
+        if (cleanupCommandTerminalStatuses.has(result.data.status)) {
+          await loadData();
+          setMessage(
+            result.data.status === "succeeded"
+              ? "清理任务已完成，中转链路列表已自动刷新。"
+              : `清理任务已进入终态：${displayStatusLabel(result.data.status)}。列表已自动刷新，请查看任务中心。`,
+          );
+          return;
+        }
+      }
+    }
+
+    await loadData();
+    setMessage(
+      latestCommand
+        ? "清理任务仍在执行，中转链路列表已再次刷新；请稍后查看任务中心或再次刷新。"
+        : "清理任务状态暂不可读，中转链路列表已再次刷新；请稍后查看任务中心。",
+    );
+  }
+
   useEffect(() => {
     void loadData();
   }, []);
@@ -2696,6 +2771,7 @@ export function TransitRoutesPanel() {
       setCandidateExport(null);
       await loadData();
       scheduleRouteDataRefresh();
+      void refreshWhenRouteCleanupCommandCompletes(result.data.command);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除中转链路失败。");
     } finally {

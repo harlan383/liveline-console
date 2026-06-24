@@ -11,6 +11,7 @@ import {
   createVpsWorkerBootstrap,
   createWorkerToken,
   exportNodeShareLink,
+  getWorkerCommand,
   listWorkerCommands,
   OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT,
   remoteCleanupDeleteNode,
@@ -144,6 +145,9 @@ const NODE_CREATE_PROGRESS_LABELS: Record<string, string> = {
 };
 
 const NODE_CREATE_TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired", "cancelled"]);
+const CLEANUP_COMMAND_TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "timeout", "expired"]);
+const CLEANUP_COMMAND_POLL_INTERVAL_MS = 2000;
+const CLEANUP_COMMAND_MAX_POLLS = 30;
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -238,6 +242,7 @@ function workerCommandStatusLabel(status: string) {
     failed: "失败",
     expired: "已过期",
     cancelled: "已取消",
+    timeout: "超时",
   };
   return labels[status] ?? status;
 }
@@ -570,6 +575,46 @@ export function ServerManagementPanel() {
         }
       }, delay);
     });
+  }
+
+  async function refreshWhenCleanupCommandCompletes(command?: WorkerCommandData | null, serverId?: string | null) {
+    if (!command?.id) {
+      return;
+    }
+
+    let latestCommand: WorkerCommandData | null = command;
+    const commandServerId = serverId ?? command.server_id ?? undefined;
+
+    for (let attempt = 0; attempt < CLEANUP_COMMAND_MAX_POLLS; attempt += 1) {
+      await sleep(CLEANUP_COMMAND_POLL_INTERVAL_MS);
+      const result = await getWorkerCommand(command.id);
+      if (result.success) {
+        latestCommand = result.data;
+        if (commandServerId) {
+          setLatestWorkerCommandByServerId((current) => ({ ...current, [commandServerId]: result.data }));
+        }
+        if (CLEANUP_COMMAND_TERMINAL_STATUSES.has(result.data.status)) {
+          const workerId = result.data.target_worker_id || result.data.worker_id;
+          await loadServers();
+          if (workerId) {
+            await loadWorkerCommands(workerId, commandServerId);
+          }
+          setMessage(
+            result.data.status === "succeeded"
+              ? "清理任务已完成，服务器和节点列表已自动刷新。"
+              : `清理任务已进入终态：${workerCommandStatusLabel(result.data.status)}。列表已自动刷新，请查看最近命令详情。`,
+          );
+          return;
+        }
+      }
+    }
+
+    await loadServers();
+    const workerId = latestCommand?.target_worker_id || latestCommand?.worker_id;
+    if (workerId) {
+      await loadWorkerCommands(workerId, commandServerId);
+    }
+    setMessage("清理任务仍在执行，列表已再次刷新；请稍后查看任务中心或再次刷新。");
   }
 
   async function runWorkerCheck(server: VpsServerData) {
@@ -1054,6 +1099,7 @@ export function ServerManagementPanel() {
       closeModal();
       await loadServers();
       scheduleServerRefresh(result.data.command, selectedServer.id);
+      void refreshWhenCleanupCommandCompletes(result.data.command, selectedServer.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除服务器失败。");
     } finally {
@@ -1095,6 +1141,7 @@ export function ServerManagementPanel() {
       closeModal();
       await loadServers();
       scheduleServerRefresh(result.data.command, selectedServer?.id);
+      void refreshWhenCleanupCommandCompletes(result.data.command, selectedServer?.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除节点失败。");
     } finally {
