@@ -303,6 +303,32 @@ function transitRouteCreateProgressLabel(step: TransitRouteCreateStep, method: T
   return transitRouteCreateProgressLabels[step];
 }
 
+function findTransitPortConflictRoute(
+  routes: TransitRouteData[],
+  transitResourceId: string | null | undefined,
+  listenPort: number | null,
+) {
+  if (!transitResourceId || listenPort === null) {
+    return null;
+  }
+  return (
+    routes.find(
+      (route) =>
+        route.transit_resource_id === transitResourceId &&
+        route.listen_port === listenPort &&
+        !route.deleted_at &&
+        ["active", "creating"].includes(route.status),
+    ) ?? null
+  );
+}
+
+function duplicateTransitPortMessage(method: TransitCreateForwardingMethod, listenPort: number, route: TransitRouteData) {
+  if (method === "haproxy_tcp") {
+    return `该中转服务器的端口 ${listenPort} 已存在可用中转链路：${route.name}。请直接使用现有链路的临时导出，或先远程清理删除旧链路后再创建。`;
+  }
+  return `该中转服务器的端口 ${listenPort} 已存在中转链路：${route.name}。请直接使用现有链路，或先远程清理删除旧链路后再创建。`;
+}
+
 const emptyRouteCreateForm: TransitRouteCreateFormState = {
   routeName: approvedTransitRouteName,
   transitResourceId: "",
@@ -2024,6 +2050,11 @@ export function TransitRoutesPanel() {
   const targetPort = targetPortForNode(selectedNode);
   const createListenPort = parsePort(createForm.listenPort);
   const createTargetPort = targetPortForNode(createNode);
+  const createPortConflictRoute = findTransitPortConflictRoute(routes, createResource?.id, createListenPort);
+  const createPortConflictMessage =
+    createListenPort !== null && createPortConflictRoute
+      ? duplicateTransitPortMessage(createForm.forwardingMethod, createListenPort, createPortConflictRoute)
+      : "";
   const createReady =
     Boolean(createForm.routeName.trim()) &&
     Boolean(createResource) &&
@@ -2031,6 +2062,7 @@ export function TransitRoutesPanel() {
     createListenPort !== null &&
     createTargetPort > 0 &&
     createForm.firewallConfirmed &&
+    !createPortConflictRoute &&
     createStep !== "preflight_create" &&
     createStep !== "preflight_running" &&
     createStep !== "command_create" &&
@@ -2263,6 +2295,12 @@ export function TransitRoutesPanel() {
     }
     if (!createForm.firewallConfirmed) {
       setCreateError("请先确认中转监听端口已在云安全组、云防火墙和服务器本机防火墙放行。");
+      return;
+    }
+    const conflictRoute = findTransitPortConflictRoute(routes, createResource.id, createListenPort);
+    if (conflictRoute) {
+      setCreateError(duplicateTransitPortMessage(createForm.forwardingMethod, createListenPort, conflictRoute));
+      setMessage("检测到同一中转服务器已有相同监听端口的 active/creating 链路，已阻止创建流程。");
       return;
     }
 
@@ -3971,6 +4009,7 @@ export function TransitRoutesPanel() {
                     placeholder={String(approvedTransitListenPort)}
                   />
                   <small>新增或变更中转监听端口时，必须自行确认云安全组 / 云防火墙 / 服务器本机防火墙已放行对应 TCP 端口。</small>
+                  {createPortConflictMessage ? <small className="form-field-error">{createPortConflictMessage}</small> : null}
                 </label>
                 <label>
                   转发方式

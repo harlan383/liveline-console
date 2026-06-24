@@ -1952,6 +1952,13 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.form-field-error {
+  color: var(--danger);
+  display: block;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
 .node-create-result {
   margin-top: 4px;
 }
