@@ -148,7 +148,7 @@ def persist_successful_transit_route_create_result(
     for code, passed in checks.items():
         if not passed:
             raise TransitRouteCreateResultError(code, "Worker 返回结果与审批参数不一致。")
-    result_config_path = _result_string(normalized, "config_path")
+    result_config_path = _result_string(normalized, "config_path") or _result_string(result, "config_path")
     if expected_config_path and result_config_path and result_config_path != expected_config_path:
         raise TransitRouteCreateResultError("CONFIG_PATH_APPROVAL_MISMATCH", "Worker 返回 HAProxy 配置路径与审批参数不一致。")
 
