@@ -188,27 +188,11 @@ export function TaskHistoryPanel() {
       <div className="status-row">
         <div>
           <h2>本地任务记录</h2>
-          <p className="message">查看已有任务状态、失败摘要和脱敏后的结果数据；本区域不会创建或触发新任务。</p>
         </div>
         <button className="secondary" disabled={loading} type="button" onClick={() => void loadTasks()}>
           刷新任务记录
         </button>
       </div>
-
-      <details className="warning-box collapsible-notice">
-        <summary className="collapsible-summary">
-          <strong>查看任务记录安全提示</strong>
-          <span className="notice-toggle-text">
-            <span className="when-closed">查看说明</span>
-            <span className="when-open">收起说明</span>
-          </span>
-        </summary>
-        <div className="collapsible-body">
-          <span>任务记录只用于本地排查。</span>
-          <span>不要把包含敏感信息的原始日志复制到外部，也不要把完整节点链接、SSH Key、密码或 token 发给 Codex / ChatGPT。</span>
-          <span>本页面会对任务结果和原始输出做基础脱敏；如需真实原始输出，应只在本机安全环境中查看。</span>
-        </div>
-      </details>
 
       {tasks.length === 0 ? (
         <div className="empty">暂无任务记录。执行已授权的本地流程后，任务摘要会显示在这里。</div>
