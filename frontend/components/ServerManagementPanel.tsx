@@ -148,6 +148,8 @@ const NODE_CREATE_TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired",
 const CLEANUP_COMMAND_TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "timeout", "expired"]);
 const CLEANUP_COMMAND_POLL_INTERVAL_MS = 2000;
 const CLEANUP_COMMAND_MAX_POLLS = 30;
+const WORKER_INSTALL_POLL_INTERVAL_MS = 3000;
+const WORKER_INSTALL_MAX_POLLS = 60;
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -195,6 +197,21 @@ function statusClass(status: string) {
     return "warn";
   }
   return "muted";
+}
+
+function isVpsServerWorkerOnline(server: VpsServerData) {
+  const displayStatus = server.display_status ?? "";
+  const workerDisplayStatus = server.worker_display_status ?? "";
+  return (
+    server.worker_online ||
+    server.worker_heartbeat_status === "online" ||
+    displayStatus === "online" ||
+    displayStatus === "worker_online" ||
+    displayStatus === "active" ||
+    workerDisplayStatus === "online" ||
+    workerDisplayStatus === "worker_online" ||
+    Boolean(server.worker_id && server.worker_last_heartbeat_at && !server.worker_is_heartbeat_stale)
+  );
 }
 
 function nodeStatusLabel(status: string | undefined | null) {
@@ -329,6 +346,7 @@ export function ServerManagementPanel() {
   const [nodeCreateError, setNodeCreateError] = useState<string | null>(null);
   const [workerBootstrapForm, setWorkerBootstrapForm] = useState<WorkerBootstrapFormState>(emptyWorkerBootstrapForm);
   const [workerTokenResult, setWorkerTokenResult] = useState<WorkerTokenCreateResult | null>(null);
+  const [workerInstallHeartbeatMessage, setWorkerInstallHeartbeatMessage] = useState("");
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
   const [latestWorkerCommandByServerId, setLatestWorkerCommandByServerId] = useState<Record<string, WorkerCommandData>>({});
   const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
@@ -340,6 +358,8 @@ export function ServerManagementPanel() {
   const [showNodeQrCode, setShowNodeQrCode] = useState(false);
   const [exportedNodeShareLink, setExportedNodeShareLink] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const workerInstallPollTimeoutRef = useRef<number | null>(null);
+  const workerInstallPollingServerIdRef = useRef<string | null>(null);
 
   async function ensureCsrfToken() {
     const csrf = await apiFetch<CsrfResult>("/api/auth/csrf");
@@ -369,11 +389,67 @@ export function ServerManagementPanel() {
     return [];
   }
 
+  function clearWorkerInstallPolling() {
+    if (workerInstallPollTimeoutRef.current !== null) {
+      window.clearTimeout(workerInstallPollTimeoutRef.current);
+      workerInstallPollTimeoutRef.current = null;
+    }
+    workerInstallPollingServerIdRef.current = null;
+  }
+
+  async function pollWorkerInstallHeartbeat(serverId: string, attempt = 0) {
+    if (workerInstallPollingServerIdRef.current !== serverId) {
+      return;
+    }
+
+    const result = await apiFetch<VpsServerListResult>("/api/vps");
+    if (result.success) {
+      setServers(result.data.servers);
+      const server = result.data.servers.find((item) => item.id === serverId);
+      if (server?.worker_id) {
+        await loadWorkerCommands(server.worker_id, server.id);
+      }
+      if (server && isVpsServerWorkerOnline(server)) {
+        clearWorkerInstallPolling();
+        setWorkerInstallHeartbeatMessage("已检测到 Worker 在线。");
+        setMessage("已检测到 Worker 在线，落地服务器列表已自动刷新。");
+        return;
+      }
+    }
+
+    if (attempt + 1 >= WORKER_INSTALL_MAX_POLLS) {
+      clearWorkerInstallPolling();
+      await loadServers();
+      const timeoutMessage = "未检测到 Worker 上线，请检查安装命令是否执行成功、curl 是否可用、systemd 是否正常、VPS 是否能访问主控 backend。";
+      setWorkerInstallHeartbeatMessage(timeoutMessage);
+      setMessage(timeoutMessage);
+      return;
+    }
+
+    setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+    workerInstallPollTimeoutRef.current = window.setTimeout(() => {
+      void pollWorkerInstallHeartbeat(serverId, attempt + 1);
+    }, WORKER_INSTALL_POLL_INTERVAL_MS);
+  }
+
+  function startWorkerInstallPolling(serverId: string) {
+    clearWorkerInstallPolling();
+    workerInstallPollingServerIdRef.current = serverId;
+    setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+    setMessage("Worker 安装命令已生成，正在等待 Worker 注册和 heartbeat。");
+    void pollWorkerInstallHeartbeat(serverId);
+  }
+
   useEffect(() => {
     void loadServers();
+    return () => {
+      clearWorkerInstallPolling();
+    };
   }, []);
 
   function closeModal() {
+    // Keep Worker heartbeat polling alive after the modal closes; it stops on
+    // online, timeout, unmount, or when a new install command replaces it.
     setModalMode(null);
     setSelectedServer(null);
     setServerForm(emptyServerForm);
@@ -386,6 +462,7 @@ export function ServerManagementPanel() {
     setNodeCreateError(null);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
+    setWorkerInstallHeartbeatMessage("");
     setDeleteMode("remote_cleanup");
     setSelectedNodeForDelete(null);
   }
@@ -401,6 +478,7 @@ export function ServerManagementPanel() {
     setServerForm(emptyServerForm);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
+    setWorkerInstallHeartbeatMessage("");
     setSelectedServer(null);
     setModalMode("add");
   }
@@ -413,6 +491,7 @@ export function ServerManagementPanel() {
       expiresInMinutes: "60",
     });
     setWorkerTokenResult(null);
+    setWorkerInstallHeartbeatMessage("");
     setModalMode("workerCommand");
   }
 
@@ -494,6 +573,8 @@ export function ServerManagementPanel() {
     }
     setSubmitting(true);
     setWorkerTokenResult(null);
+    setWorkerInstallHeartbeatMessage("");
+    clearWorkerInstallPolling();
     setMessage(modalMode === "add" ? "正在保存落地服务器并生成一次性 Worker 安装命令。" : "正在重新生成一次性 Worker 安装命令。");
     try {
       const csrfToken = await ensureCsrfToken();
@@ -521,13 +602,14 @@ export function ServerManagementPanel() {
         return;
       }
       const tokenResult = "token" in result.data ? result.data.token : result.data;
+      const targetServerId = "server" in result.data ? result.data.server.id : tokenResult.server_id ?? selectedServer?.id ?? null;
       setWorkerTokenResult(tokenResult);
-      setMessage(
-        modalMode === "add"
-          ? "落地服务器已保存为待接入，Worker 安装命令已生成。请在 VPS 上先确认能访问主控地址。"
-          : "Worker 安装命令已重新生成。请在 VPS 上先确认能访问主控地址。",
-      );
       await loadServers();
+      if (targetServerId) {
+        startWorkerInstallPolling(targetServerId);
+      } else {
+        setMessage("Worker 安装命令已生成，请在 VPS 上执行后手动刷新列表查看上线状态。");
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
     } finally {
@@ -1441,6 +1523,7 @@ export function ServerManagementPanel() {
             <p className="message">
               请在 VPS 上先确认能访问主控地址。明文 token 只出现在这条一次性安装命令中。不要把命令写入 README、阶段文档、终端日志或 Git。
             </p>
+            {workerInstallHeartbeatMessage ? <p className="message">{workerInstallHeartbeatMessage}</p> : null}
           </div>
         ) : (
           <p className="message wide-field">点击“生成安装命令”后，这里会显示一次性 curl | bash 命令和 token 过期时间。</p>
