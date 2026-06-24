@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.27-stage-3.3.150-haproxy-real-create-hotfix"
+const workerVersion = "0.1.28-stage-3.3.152-haproxy-cleanup-support"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -615,6 +615,7 @@ type remoteCleanupPlan struct {
 	ForwardingMethod  string
 	ServiceName       string
 	ServicePath       string
+	ConfigPath        string
 }
 
 type workerSelfCleanupPlan struct {
@@ -667,7 +668,7 @@ func executeRemoteCleanupCommand(cfg config, hostname string, command workerComm
 		}
 	case "cleanup_transit_route", "cleanup_transit_resource":
 		for _, plan := range request.Plans {
-			item, err := cleanupSocatRoutePlan(plan)
+			item, err := cleanupTransitRoutePlan(plan)
 			items = append(items, item)
 			if err != nil {
 				return remoteCleanupFailureResult(cfg, hostname, request, items, err), err
@@ -773,6 +774,7 @@ func parseRemoteCleanupPlans(value any) []remoteCleanupPlan {
 			ForwardingMethod:   stringPayload(source, "forwarding_method"),
 			ServiceName:        stringPayload(source, "service_name"),
 			ServicePath:        stringPayload(source, "service_path"),
+			ConfigPath:         stringPayload(source, "config_path"),
 		})
 	}
 	return plans
@@ -859,6 +861,83 @@ func cleanupSocatRoutePlan(plan remoteCleanupPlan) (map[string]any, error) {
 	return item, nil
 }
 
+func cleanupTransitRoutePlan(plan remoteCleanupPlan) (map[string]any, error) {
+	method := strings.TrimSpace(strings.ToLower(strings.ReplaceAll(plan.ForwardingMethod, "-", "_")))
+	switch method {
+	case "socat":
+		return cleanupSocatRoutePlan(plan)
+	case "haproxy", "haproxy_tcp":
+		plan.ForwardingMethod = transitHaproxyForwardingMethod
+		return cleanupHaproxyRoutePlan(plan)
+	default:
+		return map[string]any{
+			"type":              "transit_route",
+			"id":                plan.RouteID,
+			"service_name":      plan.ServiceName,
+			"port":              plan.ListenPort,
+			"forwarding_method": plan.ForwardingMethod,
+			"status":            "failed",
+			"detail":            "unsupported transit route forwarding_method for cleanup",
+		}, fmt.Errorf("cleanup_transit_route unsupported forwarding_method %q", plan.ForwardingMethod)
+	}
+}
+
+func cleanupHaproxyRoutePlan(plan remoteCleanupPlan) (map[string]any, error) {
+	item := map[string]any{
+		"type":              "transit_route",
+		"id":                plan.RouteID,
+		"service_name":      plan.ServiceName,
+		"config_path":       plan.ConfigPath,
+		"port":              plan.ListenPort,
+		"forwarding_method": transitHaproxyForwardingMethod,
+		"status":            "failed",
+	}
+	if err := validateCleanupHaproxyPlan(plan); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	unit, err := runCommand(15*time.Second, "systemctl", "cat", plan.ServiceName)
+	if err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if !haproxyServiceUnitMatchesCleanupPlan(unit, plan) {
+		err := errors.New("HAProxy service unit does not match approved LiveLine route")
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if !haproxyConfigMatchesCleanupPlan(plan.ConfigPath, plan) {
+		err := errors.New("HAProxy config does not match approved LiveLine bind/target")
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if _, err := runCommand(45*time.Second, "systemctl", "disable", "--now", plan.ServiceName); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if err := removeFixedFile(plan.ServicePath); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	if err := removeFixedFile(plan.ConfigPath); err != nil {
+		item["detail"] = err.Error()
+		return item, err
+	}
+	_, _ = runCommand(30*time.Second, "systemctl", "daemon-reload")
+	_, _ = runCommand(15*time.Second, "systemctl", "reset-failed", plan.ServiceName)
+	if portListening(plan.ListenPort) {
+		err := fmt.Errorf("TCP port %d is still listening after HAProxy cleanup", plan.ListenPort)
+		item["detail"] = err.Error()
+		return item, err
+	}
+	item["status"] = "succeeded"
+	item["service_removed"] = true
+	item["config_removed"] = true
+	item["port_stopped"] = true
+	item["detail"] = "LiveLine HAProxy service/config were stopped, disabled, removed, and verified not listening."
+	return item, nil
+}
+
 func validateCleanupSocatPlan(plan remoteCleanupPlan) error {
 	if plan.ForwardingMethod != "socat" {
 		return errors.New("cleanup_transit_route only supports socat forwarding_method")
@@ -875,6 +954,67 @@ func validateCleanupSocatPlan(plan remoteCleanupPlan) error {
 		return errors.New("cleanup_transit_route service_path does not match approved LiveLine socat path")
 	}
 	return nil
+}
+
+func validateCleanupHaproxyPlan(plan remoteCleanupPlan) error {
+	if normalizeTransitHaproxyForwardingMethod(plan.ForwardingMethod) != transitHaproxyForwardingMethod {
+		return errors.New("cleanup_transit_route HAProxy cleanup requires forwarding_method=haproxy_tcp")
+	}
+	if !validTCPPort(plan.ListenPort) || !validTCPPort(plan.TargetPort) {
+		return errors.New("cleanup_transit_route HAProxy ports must be valid TCP ports")
+	}
+	if !safeDialTargetHost(plan.TargetHost) {
+		return errors.New("cleanup_transit_route HAProxy target_host is invalid")
+	}
+	expectedName := transitHaproxyServiceNameForPort(plan.ListenPort)
+	expectedServicePath := transitHaproxyServicePathForPort(plan.ListenPort)
+	expectedConfigPath := transitHaproxyConfigPathForPort(plan.ListenPort)
+	if plan.ServiceName != expectedName || !livelineHaproxyServiceNameRE.MatchString(plan.ServiceName) {
+		return errors.New("cleanup_transit_route service_name is not an approved LiveLine HAProxy service")
+	}
+	if plan.ServicePath != expectedServicePath || !safeTransitHaproxyServicePath(plan.ServicePath, plan.ListenPort) {
+		return errors.New("cleanup_transit_route service_path does not match approved LiveLine HAProxy path")
+	}
+	if plan.ConfigPath != expectedConfigPath || !safeTransitHaproxyConfigPath(plan.ConfigPath, plan.ListenPort) {
+		return errors.New("cleanup_transit_route config_path does not match approved LiveLine HAProxy path")
+	}
+	return nil
+}
+
+func haproxyServiceUnitMatchesCleanupPlan(unit string, plan remoteCleanupPlan) bool {
+	lowered := strings.ToLower(unit)
+	if !strings.Contains(lowered, "liveline haproxy tcp transit route") && !strings.Contains(lowered, "liveline-haproxy") {
+		return false
+	}
+	if !strings.Contains(unit, plan.ConfigPath) {
+		return false
+	}
+	return strings.Contains(unit, "haproxy") && strings.Contains(unit, "-f")
+}
+
+func haproxyConfigMatchesCleanupPlan(configPath string, plan remoteCleanupPlan) bool {
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	text := string(content)
+	bindOptions := []string{
+		fmt.Sprintf("bind 0.0.0.0:%d", plan.ListenPort),
+		fmt.Sprintf("bind *:%d", plan.ListenPort),
+		fmt.Sprintf("bind :%d", plan.ListenPort),
+	}
+	bindMatches := false
+	for _, option := range bindOptions {
+		if strings.Contains(text, option) {
+			bindMatches = true
+			break
+		}
+	}
+	target := fmt.Sprintf("%s:%d", plan.TargetHost, plan.TargetPort)
+	return bindMatches &&
+		strings.Contains(text, target) &&
+		strings.Contains(text, fmt.Sprintf("frontend liveline_transit_%d", plan.ListenPort)) &&
+		strings.Contains(text, fmt.Sprintf("backend liveline_landing_%d", plan.ListenPort))
 }
 
 func cleanupXrayNodePlan(plan remoteCleanupPlan) (map[string]any, error) {

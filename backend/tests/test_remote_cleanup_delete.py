@@ -105,6 +105,22 @@ def route(route_id="route-1", resource_id="resource-1"):
     )
 
 
+def haproxy_route(route_id="haproxy-route-1", resource_id="resource-1"):
+    return TransitRoute(
+        id=route_id,
+        name="haproxy-tcp-23843",
+        transit_resource_id=resource_id,
+        node_id="node-1",
+        listen_port=23843,
+        target_host="64.90.13.19",
+        target_port=27939,
+        forwarding_method="haproxy_tcp",
+        service_name="liveline-haproxy-23843.service",
+        service_path="/etc/systemd/system/liveline-haproxy-23843.service",
+        status="active",
+    )
+
+
 def worker_command(command_type, status, server_id="server-1"):
     return WorkerCommand(
         id=f"{command_type}-{status}",
@@ -161,6 +177,32 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
         self.assertEqual(command.command_type, "cleanup_transit_route")
         self.assertEqual(command.payload_json["plans"][0]["service_name"], "liveline-socat-23843.service")
 
+    def test_create_haproxy_transit_route_cleanup_command_requires_new_worker_and_config_path(self):
+        target_worker = worker("transit", "resource-1")
+        target_worker.worker_version = "0.1.28-stage-3.3.152-haproxy-cleanup-support"
+        db = FakeDb()
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            command, _ = cleanup.create_transit_route_cleanup_command(db, haproxy_route())
+
+        plan = command.payload_json["plans"][0]
+        self.assertEqual(command.command_type, "cleanup_transit_route")
+        self.assertEqual(plan["forwarding_method"], "haproxy_tcp")
+        self.assertEqual(plan["service_name"], "liveline-haproxy-23843.service")
+        self.assertEqual(plan["service_path"], "/etc/systemd/system/liveline-haproxy-23843.service")
+        self.assertEqual(plan["config_path"], "/etc/haproxy/liveline/routes/liveline-haproxy-23843.cfg")
+
+    def test_haproxy_transit_route_cleanup_rejects_old_worker(self):
+        target_worker = worker("transit", "resource-1")
+        target_worker.worker_version = "0.1.21-stage-3.3.97"
+        db = FakeDb()
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            with self.assertRaises(cleanup.RemoteCleanupError) as raised:
+                cleanup.create_transit_route_cleanup_command(db, haproxy_route())
+
+        self.assertEqual(raised.exception.code, "WORKER_COMMAND_UNSUPPORTED")
+
     def test_create_transit_resource_cleanup_command_includes_routes(self):
         target_worker = worker("transit", "resource-1")
         resource = TransitResource(id="resource-1", name="hk", resource_type="server", status="active")
@@ -173,6 +215,19 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
         self.assertEqual(len(command.payload_json["plans"]), 2)
         self.assertTrue(command.payload_json["cleanup_worker"])
         self.assertEqual(target_worker.status, "cleanup_pending")
+
+    def test_create_transit_resource_cleanup_command_supports_mixed_socat_haproxy_routes(self):
+        target_worker = worker("transit", "resource-1")
+        target_worker.worker_version = "0.1.28-stage-3.3.152-haproxy-cleanup-support"
+        resource = TransitResource(id="resource-1", name="hk", resource_type="server", status="active")
+        db = FakeDb(scalars=[[route("route-1"), haproxy_route("route-2")]])
+        target = SimpleNamespace(worker=target_worker)
+        with patch.object(cleanup, "resolve_command_target_worker", return_value=target):
+            command, _ = cleanup.create_transit_resource_cleanup_command(db, resource)
+
+        methods = [plan["forwarding_method"] for plan in command.payload_json["plans"]]
+        self.assertEqual(methods, ["socat", "haproxy_tcp"])
+        self.assertEqual(command.payload_json["plans"][1]["config_path"], "/etc/haproxy/liveline/routes/liveline-haproxy-23843.cfg")
 
     def test_create_cleanup_rejects_missing_worker(self):
         db = FakeDb()
@@ -271,7 +326,7 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
             token_hash="hash",
             expires_at=cleanup._now(),
         )
-        db = FakeDb(scalars=[[stale_worker], [existing_route], [stale_worker], [token]])
+        db = FakeDb(scalars=[[existing_route], [stale_worker], [stale_worker], [token]])
 
         result = cleanup.offline_local_remove_transit_resource(db, resource)
 
@@ -281,6 +336,19 @@ class RemoteCleanupDeleteTests(unittest.TestCase):
         self.assertIsNotNone(resource.deleted_at)
         self.assertEqual(existing_route.status, "deleted")
         self.assertEqual(stale_worker.status, "deleted")
+        self.assertFalse(any(isinstance(item, WorkerCommand) for item in db.added))
+
+    def test_offline_local_remove_haproxy_route_allows_online_old_worker_without_cleanup_support(self):
+        existing_route = haproxy_route()
+        old_worker = online_worker("transit", "resource-1")
+        old_worker.worker_version = "0.1.21-stage-3.3.97"
+        db = FakeDb(scalars=[[old_worker]])
+
+        result = cleanup.offline_local_remove_transit_route(db, existing_route)
+
+        self.assertEqual(result["delete_mode"], "offline_local_remove")
+        self.assertTrue(result["route_marked_deleted"])
+        self.assertEqual(existing_route.status, "deleted")
         self.assertFalse(any(isinstance(item, WorkerCommand) for item in db.added))
 
     def test_transit_route_cleanup_rejects_non_liveline_service_name(self):

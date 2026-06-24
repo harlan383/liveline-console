@@ -150,6 +150,7 @@ function requiredDeleteConfirmText(mode: DeleteFlowMode) {
 function SafeDeleteModal({
   title,
   description,
+  offlineDescription,
   targetLabel,
   mode,
   confirmText,
@@ -160,6 +161,7 @@ function SafeDeleteModal({
 }: {
   title: string;
   description: ReactNode;
+  offlineDescription?: ReactNode;
   targetLabel: string;
   mode: DeleteFlowMode;
   confirmText: string;
@@ -182,11 +184,13 @@ function SafeDeleteModal({
         <div className="failure-box safe-delete-warning">
           <strong>{isOfflineLocalRemove ? "仅本地移除记录" : "真实远程清理"}</strong>
           {isOfflineLocalRemove ? (
-            <>
-              <span>当前资源对应的 Worker 离线，系统无法远程清理该服务器上的服务。</span>
-              <span>如果该资源已到期、无法登录、已释放，或你确认不再使用，可以只从 LiveLine Console 本地移除记录。</span>
-              <span>此操作不会连接远程服务器，不会停止远程服务，不会修改防火墙，不会 cutover。</span>
-            </>
+            offlineDescription ?? (
+              <>
+                <span>当前资源对应的 Worker 离线，系统无法远程清理该服务器上的服务。</span>
+                <span>如果该资源已到期、无法登录、已释放，或你确认不再使用，可以只从 LiveLine Console 本地移除记录。</span>
+                <span>此操作不会连接远程服务器，不会停止远程服务，不会修改防火墙，不会 cutover。</span>
+              </>
+            )
           ) : (
             <span>{description}</span>
           )}
@@ -282,6 +286,11 @@ function forwardingMethodLabel(method: string | null | undefined) {
   return method || "-";
 }
 
+function isHaproxyForwardingMethod(method: string | null | undefined) {
+  const cleaned = (method || "").trim().toLowerCase().replaceAll("-", "_");
+  return cleaned === "haproxy" || cleaned === "haproxy_tcp";
+}
+
 function defaultTransitRouteName(method: TransitCreateForwardingMethod, listenPort: string) {
   const cleanedPort = listenPort.trim() || String(approvedTransitListenPort);
   return method === "haproxy_tcp" ? `haproxy-tcp-${cleanedPort}` : approvedTransitRouteName;
@@ -302,8 +311,6 @@ const emptyRouteCreateForm: TransitRouteCreateFormState = {
   forwardingMethod: "socat",
   firewallConfirmed: false,
 };
-
-const approvedCandidateRouteId = "d10d3dcc-679f-4f85-ae37-9e5dfa37e6af";
 
 function statusClass(status: string) {
   if (["active", "online", "worker_online", "succeeded", "success", "passed"].includes(status)) {
@@ -2003,8 +2010,8 @@ export function TransitRoutesPanel() {
 
   const selectableResources = useMemo(() => resources.filter(isPlanningSelectableTransitResource), [resources]);
   const activeNodes = useMemo(() => nodes.filter((node) => node.status === "active"), [nodes]);
-  const approvedCandidateRoute = useMemo(
-    () => routes.find((route) => route.id === approvedCandidateRouteId) ?? null,
+  const primaryActiveRoute = useMemo(
+    () => routes.find((route) => route.status === "active" && !route.deleted_at) ?? routes.find((route) => !route.deleted_at) ?? null,
     [routes],
   );
   const candidateExportRoute = routes.find((route) => route.id === candidateExportRouteId) ?? null;
@@ -2555,10 +2562,15 @@ export function TransitRoutesPanel() {
   }
 
   function openDeleteRoute(routeId: string) {
+    const route = routes.find((item) => item.id === routeId);
     setDeleteRouteId(routeId);
     setDeleteRouteConfirmText("");
     setDeleteRouteMode("remote_cleanup");
-    setMessage("删除中转链路只会删除系统记录；不会停止中转服务或关闭端口。");
+    setMessage(
+      isHaproxyForwardingMethod(route?.forwarding_method)
+        ? "HAProxy 中转链路删除可创建受控远程清理任务；离线本地移除不会停止 HAProxy service 或释放监听端口。"
+        : "中转链路删除可创建受控远程清理任务；离线本地移除不会停止远程服务或释放监听端口。",
+    );
   }
 
   function closeDeleteRouteModal() {
@@ -2615,7 +2627,11 @@ export function TransitRoutesPanel() {
     setCandidateMessage("候选链路摘要尚未加载；不会自动导出完整测试配置。");
   }
 
-  async function loadCandidateSummary(routeId = approvedCandidateRoute?.id ?? approvedCandidateRouteId) {
+  async function loadCandidateSummary(routeId = primaryActiveRoute?.id ?? "") {
+    if (!routeId) {
+      setCandidateMessage("暂无可读取摘要的 active 中转链路。");
+      return;
+    }
     selectCandidateRoute(routeId);
     setCandidateLoading(true);
     setCandidateMessage("正在读取候选链路安全摘要；不会读取或导出完整 nodes.share_link。");
@@ -2658,7 +2674,7 @@ export function TransitRoutesPanel() {
         setCandidateMessage(`${result.error_code}: ${result.message}`);
         return;
       }
-      const route = routes.find((item) => item.id === routeId) ?? approvedCandidateRoute ?? null;
+      const route = routes.find((item) => item.id === routeId) ?? primaryActiveRoute ?? null;
       setCandidateExport(result.data);
       setCandidateCopyFallbackRequired(false);
       setCandidateSummary((current) => current?.route_id === routeId ? current : {
@@ -3104,6 +3120,27 @@ export function TransitRoutesPanel() {
           </ul>
         </div>
       </details>
+
+      {primaryActiveRoute ? (
+        <div className="candidate-summary-grid transit-route-inline-panel">
+          <span>当前 active 链路</span>
+          <strong>{primaryActiveRoute.name}</strong>
+          <span>入口</span>
+          <strong>{routeEntry(primaryActiveRoute)}</strong>
+          <span>转发方式</span>
+          <strong>{forwardingMethodLabel(primaryActiveRoute.forwarding_method)}</strong>
+          <span>监听端口</span>
+          <strong>{primaryActiveRoute.listen_port}</strong>
+          <span>SHARE_LINK</span>
+          <strong>{routeHasShareLink(primaryActiveRoute) ? "已写入" : "未写入"}</strong>
+          <span>CUTOVER</span>
+          <strong>{routeCutoverStatusLabel(primaryActiveRoute.id)}</strong>
+        </div>
+      ) : (
+        <div className="transit-route-inline-panel">
+          <p className="message">暂无 active 中转链路。新增链路弹窗只在本地生成配置预览，真实创建仍需受保护流程。</p>
+        </div>
+      )}
 
       <div className="transit-route-table-scroll">
         <div className="server-table transit-route-table" aria-label="中转链路列表">
@@ -3735,10 +3772,32 @@ export function TransitRoutesPanel() {
           onConfirmTextChange={setDeleteRouteConfirmText}
           onConfirm={() => void submitDeleteRoute()}
           description={
-            <>
-              这会真实停止并删除该中转链路对应的中转服务，入口端口会失效。清理成功后，中转链路记录会被软删除。
-              不会修改防火墙、云安全组、云防火墙，也不会 cutover。
-            </>
+            isHaproxyForwardingMethod(deleteRoute.forwarding_method) ? (
+              <>
+                这会创建受控 Worker cleanup command，远程清理该中转链路对应的 HAProxy service 和配置文件。清理成功后，中转链路记录会被软删除。
+                不会修改防火墙、云安全组、云防火墙，也不会 cutover。
+              </>
+            ) : (
+              <>
+                这会创建受控 Worker cleanup command，远程清理该中转链路对应的中转服务。清理成功后，中转链路记录会被软删除。
+                不会修改防火墙、云安全组、云防火墙，也不会 cutover。
+              </>
+            )
+          }
+          offlineDescription={
+            isHaproxyForwardingMethod(deleteRoute.forwarding_method) ? (
+              <>
+                <span>当前资源对应的 Worker 离线，系统无法远程清理该服务器上的 HAProxy service 或配置文件。</span>
+                <span>如果该资源已到期、无法登录、已释放，或你确认不再使用，可以只从 LiveLine Console 本地移除记录。</span>
+                <span>此操作不会连接远程服务器，不会停止远程 HAProxy service，不会删除 HAProxy 配置，也不会释放监听端口。</span>
+              </>
+            ) : (
+              <>
+                <span>当前资源对应的 Worker 离线，系统无法远程清理该服务器上的中转服务。</span>
+                <span>如果该资源已到期、无法登录、已释放，或你确认不再使用，可以只从 LiveLine Console 本地移除记录。</span>
+                <span>此操作不会连接远程服务器，不会停止远程服务，不会释放监听端口，不会修改防火墙，不会 cutover。</span>
+              </>
+            )
           }
         />
       ) : null}
