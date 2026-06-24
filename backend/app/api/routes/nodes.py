@@ -11,6 +11,7 @@ from app.models.node import Node
 from app.schemas.common import error_response, success_response
 from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
+from app.services.node_display import build_node_display_fields
 from app.services.redaction import mask_identifier, mask_share_link
 from app.services.remote_cleanup_delete import (
     RemoteCleanupError,
@@ -31,6 +32,7 @@ class NodeShareLinkExportRequest(BaseModel):
 def serialize_node(node: Node, *, include_share_link: bool = False) -> dict:
     vps = node.vps
     has_share_link = bool(node.share_link)
+    display_fields = build_node_display_fields(node.service_status, node.connectivity_status)
     data = {
         "id": node.id,
         "vps_id": node.vps_id,
@@ -44,6 +46,7 @@ def serialize_node(node: Node, *, include_share_link: bool = False) -> dict:
         "status": node.status,
         "service_status": node.service_status,
         "connectivity_status": node.connectivity_status,
+        **display_fields,
         "uuid": None,
         "uuid_present": bool(node.uuid),
         "masked_uuid": mask_identifier(node.uuid),

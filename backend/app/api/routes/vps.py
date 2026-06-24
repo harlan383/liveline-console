@@ -16,6 +16,7 @@ from app.services.landing_node_create import (
     create_landing_node_create_command,
 )
 from app.services.landing_node_plan import build_landing_node_plan
+from app.services.node_display import build_node_display_fields
 from app.services.worker_binding import (
     WORKER_PENDING_STATUS,
     WorkerPublicUrlError,
@@ -101,6 +102,7 @@ def notes_has_sensitive_text(notes: str | None) -> bool:
 
 
 def serialize_vps_node(node, *, vps_ip: str) -> dict:
+    display_fields = build_node_display_fields(node.service_status, node.connectivity_status)
     return {
         "id": node.id,
         "name": node.node_name,
@@ -109,6 +111,9 @@ def serialize_vps_node(node, *, vps_ip: str) -> dict:
         "port": node.xray_port,
         "protocol": f"{node.protocol.upper()} {node.security.capitalize()}".strip(),
         "status": node.status,
+        "service_status": node.service_status,
+        "connectivity_status": node.connectivity_status,
+        **display_fields,
         "share_link_present": bool(node.share_link),
         "created_at": node.created_at.isoformat() if node.created_at else None,
     }

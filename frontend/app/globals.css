@@ -989,6 +989,14 @@ textarea {
   margin-top: 5px;
 }
 
+.node-health-status {
+  color: #d6b46a;
+  display: block;
+  font-size: 13px;
+  font-weight: 800;
+  margin-top: 5px;
+}
+
 .node-meta-line {
   color: var(--muted);
   display: block;
