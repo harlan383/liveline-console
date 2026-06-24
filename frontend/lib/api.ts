@@ -67,6 +67,10 @@ export type NodeData = {
   status: string;
   service_status: string | null;
   connectivity_status: string | null;
+  service_display_label?: string | null;
+  connectivity_display_status?: string | null;
+  connectivity_display_label?: string | null;
+  node_health_summary?: string | null;
   uuid: string | null;
   uuid_present?: boolean;
   masked_uuid?: string | null;
@@ -623,6 +627,12 @@ export type VpsServerNodeSummary = {
   port: number | null;
   protocol: string;
   status: string;
+  service_status?: string | null;
+  connectivity_status?: string | null;
+  service_display_label?: string | null;
+  connectivity_display_status?: string | null;
+  connectivity_display_label?: string | null;
+  node_health_summary?: string | null;
   share_link_present: boolean;
   created_at: string | null;
 };

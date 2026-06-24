@@ -187,6 +187,9 @@ function statusClass(status: string) {
   if (status === "unchecked" || status === "pending" || status === "pending_worker") {
     return "warn";
   }
+  if (status === "not_checked") {
+    return "warn";
+  }
   return "muted";
 }
 
@@ -200,6 +203,7 @@ function nodeStatusLabel(status: string | undefined | null) {
     success: "成功",
     completed: "成功",
     failed: "失败",
+    not_checked: "未检测",
     cancelled: "已取消",
     timeout: "超时",
     unknown: "未知",
@@ -252,6 +256,14 @@ function nodeEntryLabel(node: ServerNodeSummary, serverIp: string) {
 
 function nodeProtocolSummary(node: ServerNodeSummary) {
   return node.protocol === "vless" ? "vless / reality / tcp" : node.protocol;
+}
+
+function nodeConnectivityLabel(node: ServerNodeSummary | NodeData) {
+  return node.connectivity_display_label ?? nodeStatusLabel(node.connectivity_status);
+}
+
+function nodeHealthSummary(node: ServerNodeSummary | NodeData) {
+  return node.node_health_summary ?? nodeConnectivityLabel(node);
 }
 
 function stringValue(value: unknown) {
@@ -1239,6 +1251,7 @@ export function ServerManagementPanel() {
                         <span className="node-config-status">配置：{node.share_link_present ? "可复制" : "未生成"}</span>
                         <span>
                           <span className={`pill ${statusClass(node.status)}`}>{nodeStatusLabel(node.status)}</span>
+                          <small className="node-health-status">{nodeHealthSummary(node)}</small>
                           <small className="node-share-status">share_link：{node.share_link_present ? "已生成" : "未生成"}</small>
                         </span>
                         <span className="server-actions">
@@ -1850,7 +1863,9 @@ export function ServerManagementPanel() {
             <span>状态</span>
             <strong>{nodeStatusLabel(selectedNodeDetail.status)}</strong>
             <span>服务状态</span>
-            <strong>{selectedNodeDetail.service_status ?? "-"}</strong>
+            <strong>{selectedNodeDetail.service_display_label ?? selectedNodeDetail.service_status ?? "-"}</strong>
+            <span>连接状态</span>
+            <strong>{nodeConnectivityLabel(selectedNodeDetail)}</strong>
             <span>share_link 状态</span>
             <strong>
               {shareLinkAvailable
