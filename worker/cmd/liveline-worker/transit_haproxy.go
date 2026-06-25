@@ -14,11 +14,13 @@ import (
 const transitHaproxyForwardingMethod = "haproxy_tcp"
 const transitHaproxyServicePrefix = "liveline-haproxy"
 const transitHaproxyConfigDir = "/etc/haproxy/liveline/routes"
+const haproxyInstallOutputTailLimit = 8000
 
 var livelineHaproxyServiceNameRE = regexp.MustCompile(`^liveline-haproxy-[0-9]+\.service$`)
 var findHaproxyBinaryForCreate = findHaproxyBinary
 var lookPathForHaproxyInstall = exec.LookPath
 var runHaproxyInstallCommand = runCommand
+var runHaproxyInstallCommandWithEnv = runCommandWithEnv
 
 type transitHaproxyCreateArtifacts struct {
 	ConfigWritten   bool
@@ -72,7 +74,7 @@ func findHaproxyBinary() (string, error) {
 func ensureHaproxyInstalledForCreate() (string, bool, error) {
 	haproxyBinary, err := findHaproxyBinaryForCreate()
 	if err == nil {
-		if _, verifyErr := runHaproxyInstallCommand(20*time.Second, haproxyBinary, "-v"); verifyErr != nil {
+		if _, verifyErr := runHaproxyInstallCommand(30*time.Second, haproxyBinary, "-v"); verifyErr != nil {
 			return "", false, fmt.Errorf("HAPROXY_VERIFY_FAILED: haproxy -v failed: %w", verifyErr)
 		}
 		return haproxyBinary, false, nil
@@ -81,10 +83,17 @@ func ensureHaproxyInstalledForCreate() (string, bool, error) {
 	if _, pathErr := lookPathForHaproxyInstall("apt-get"); pathErr != nil {
 		return "", false, errors.New("HAPROXY_INSTALL_UNSUPPORTED_PACKAGE_MANAGER: apt-get not found")
 	}
-	if _, updateErr := runHaproxyInstallCommand(120*time.Second, "apt-get", "update"); updateErr != nil {
+	aptEnv := []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none"}
+	if _, updateErr := runHaproxyInstallCommandWithEnv(300*time.Second, aptEnv, "apt-get", "update"); updateErr != nil {
+		if isCommandTimeoutError(updateErr) {
+			return "", false, fmt.Errorf("HAPROXY_INSTALL_TIMEOUT: apt-get update timed out after 300s: %w", updateErr)
+		}
 		return "", false, fmt.Errorf("HAPROXY_INSTALL_FAILED: apt-get update failed: %w", updateErr)
 	}
-	if _, installErr := runHaproxyInstallCommand(180*time.Second, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "haproxy"); installErr != nil {
+	if _, installErr := runHaproxyInstallCommandWithEnv(600*time.Second, aptEnv, "apt-get", "install", "-y", "--no-install-recommends", "haproxy"); installErr != nil {
+		if isCommandTimeoutError(installErr) {
+			return "", false, fmt.Errorf("HAPROXY_INSTALL_TIMEOUT: apt-get install haproxy timed out after 600s: %w", installErr)
+		}
 		return "", false, fmt.Errorf("HAPROXY_INSTALL_FAILED: apt-get install haproxy failed: %w", installErr)
 	}
 
@@ -92,10 +101,14 @@ func ensureHaproxyInstalledForCreate() (string, bool, error) {
 	if err != nil {
 		return "", true, errors.New("HAPROXY_INSTALL_VERIFY_FAILED: haproxy binary still not found after install")
 	}
-	if _, verifyErr := runHaproxyInstallCommand(20*time.Second, haproxyBinary, "-v"); verifyErr != nil {
+	if _, verifyErr := runHaproxyInstallCommand(30*time.Second, haproxyBinary, "-v"); verifyErr != nil {
 		return "", true, fmt.Errorf("HAPROXY_INSTALL_VERIFY_FAILED: haproxy -v failed after install: %w", verifyErr)
 	}
 	return haproxyBinary, true, nil
+}
+
+func isCommandTimeoutError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "timed out")
 }
 
 func validateTransitRouteCreateHaproxyRequest(cfg config, request transitRouteCreateRequest) error {
