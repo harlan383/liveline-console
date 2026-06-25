@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.30-stage-3.3.175-hotfix-1-haproxy-install-runner"
+const workerVersion = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
