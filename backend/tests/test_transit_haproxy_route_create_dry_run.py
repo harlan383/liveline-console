@@ -66,7 +66,7 @@ class FakeSession:
         worker_present: bool = True,
         worker_status: str = "online",
         worker_role: str = "transit",
-        worker_version: str | None = "0.1.29-stage-3.3.175-haproxy-auto-install",
+        worker_version: str | None = "0.1.30-stage-3.3.175-hotfix-1-haproxy-install-runner",
         worker_interface: str | None = "eth0",
         worker_heartbeat_recent: bool = True,
     ) -> None:

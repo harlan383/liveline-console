@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.29-stage-3.3.175-haproxy-auto-install"
+const workerVersion = "0.1.30-stage-3.3.175-hotfix-1-haproxy-install-runner"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -3172,6 +3172,36 @@ func runCommand(timeout time.Duration, name string, args ...string) (string, err
 	return trimmed, nil
 }
 
+func runCommandWithEnv(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
+	if _, err := exec.LookPath(name); err != nil && strings.Contains(name, "/") {
+		if _, statErr := os.Stat(name); statErr != nil {
+			return "", fmt.Errorf("%s not found", name)
+		}
+	} else if err != nil {
+		return "", fmt.Errorf("%s not found", name)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), envVars...)
+	output, err := cmd.CombinedOutput()
+	trimmed := truncateOutputTail(strings.TrimSpace(string(output)), haproxyInstallOutputTailLimit)
+	commandLabel := strings.Join(append([]string{name}, args...), " ")
+	if ctx.Err() == context.DeadlineExceeded {
+		if trimmed != "" {
+			return trimmed, fmt.Errorf("%s timed out after %s\noutput_tail:\n%s", commandLabel, timeout, trimmed)
+		}
+		return "", fmt.Errorf("%s timed out after %s", commandLabel, timeout)
+	}
+	if err != nil {
+		if trimmed != "" {
+			return trimmed, fmt.Errorf("%s failed\noutput_tail:\n%s", commandLabel, trimmed)
+		}
+		return "", fmt.Errorf("%s failed: %w", commandLabel, err)
+	}
+	return trimmed, nil
+}
+
 func postWorkerCommandResult(cfg config, command workerCommand, result map[string]any) error {
 	headers := map[string]string{
 		"X-Worker-Id":     cfg.WorkerID,
@@ -5664,6 +5694,13 @@ func truncateReadonlyOutput(value string, limit int) string {
 		return value
 	}
 	return value[:limit] + "...[truncated]"
+}
+
+func truncateOutputTail(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return "[truncated]..." + value[len(value)-limit:]
 }
 
 func commandOutput(name string, args ...string) string {

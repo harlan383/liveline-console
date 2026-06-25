@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1788,10 +1789,12 @@ func restoreHaproxyInstallTestHooks(t *testing.T) {
 	originalFind := findHaproxyBinaryForCreate
 	originalLookPath := lookPathForHaproxyInstall
 	originalRun := runHaproxyInstallCommand
+	originalRunWithEnv := runHaproxyInstallCommandWithEnv
 	t.Cleanup(func() {
 		findHaproxyBinaryForCreate = originalFind
 		lookPathForHaproxyInstall = originalLookPath
 		runHaproxyInstallCommand = originalRun
+		runHaproxyInstallCommandWithEnv = originalRunWithEnv
 	})
 }
 
@@ -1848,6 +1851,13 @@ func TestEnsureHaproxyInstalledUsesAptWhenMissing(t *testing.T) {
 		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
 		return "ok", nil
 	}
+	runHaproxyInstallCommandWithEnv = func(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
+		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		if !reflect.DeepEqual(envVars, []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none"}) {
+			t.Fatalf("envVars = %#v, want noninteractive apt env", envVars)
+		}
+		return "ok", nil
+	}
 
 	binary, installed, err := ensureHaproxyInstalledForCreate()
 	if err != nil {
@@ -1861,11 +1871,91 @@ func TestEnsureHaproxyInstalledUsesAptWhenMissing(t *testing.T) {
 	}
 	want := []string{
 		"apt-get update",
-		"env DEBIAN_FRONTEND=noninteractive apt-get install -y haproxy",
+		"apt-get install -y --no-install-recommends haproxy",
 		"/usr/sbin/haproxy -v",
 	}
 	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestEnsureHaproxyInstalledInstallFailureReportsAptGetAndOutputTail(t *testing.T) {
+	restoreHaproxyInstallTestHooks(t)
+
+	findCalls := 0
+	findHaproxyBinaryForCreate = func() (string, error) {
+		findCalls++
+		return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
+	}
+	lookPathForHaproxyInstall = func(name string) (string, error) {
+		return "/usr/bin/apt-get", nil
+	}
+	runHaproxyInstallCommandWithEnv = func(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
+		command := strings.Join(append([]string{name}, args...), " ")
+		if command == "apt-get update" {
+			return "ok", nil
+		}
+		return "Reading package lists...\nE: unable to fetch package", fmt.Errorf("%s failed\noutput_tail:\nReading package lists...\nE: unable to fetch package", command)
+	}
+
+	_, installed, err := ensureHaproxyInstalledForCreate()
+	if err == nil {
+		t.Fatal("ensureHaproxyInstalledForCreate returned nil error for failed install")
+	}
+	if installed {
+		t.Fatal("installed = true, want false when apt-get install fails")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "HAPROXY_INSTALL_FAILED") {
+		t.Fatalf("error = %q, want HAPROXY_INSTALL_FAILED", message)
+	}
+	if !strings.Contains(message, "apt-get install haproxy") || !strings.Contains(message, "apt-get install -y --no-install-recommends haproxy") {
+		t.Fatalf("error = %q, want apt-get install command context", message)
+	}
+	if strings.Contains(message, "env failed") {
+		t.Fatalf("error = %q, must not mention env failed", message)
+	}
+	if !strings.Contains(message, "E: unable to fetch package") {
+		t.Fatalf("error = %q, want output tail", message)
+	}
+	if findCalls != 1 {
+		t.Fatalf("findCalls = %d, want one failed pre-install lookup", findCalls)
+	}
+}
+
+func TestEnsureHaproxyInstalledInstallTimeoutUsesTimeoutCode(t *testing.T) {
+	restoreHaproxyInstallTestHooks(t)
+
+	findHaproxyBinaryForCreate = func() (string, error) {
+		return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
+	}
+	lookPathForHaproxyInstall = func(name string) (string, error) {
+		return "/usr/bin/apt-get", nil
+	}
+	runHaproxyInstallCommandWithEnv = func(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
+		command := strings.Join(append([]string{name}, args...), " ")
+		if command == "apt-get update" {
+			return "ok", nil
+		}
+		return "partial output tail", fmt.Errorf("%s timed out after 10m0s\noutput_tail:\npartial output tail", command)
+	}
+
+	_, installed, err := ensureHaproxyInstalledForCreate()
+	if err == nil {
+		t.Fatal("ensureHaproxyInstalledForCreate returned nil error for timed out install")
+	}
+	if installed {
+		t.Fatal("installed = true, want false when apt-get install times out")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "HAPROXY_INSTALL_TIMEOUT") {
+		t.Fatalf("error = %q, want timeout code", message)
+	}
+	if !strings.Contains(message, "apt-get install haproxy timed out after 600s") {
+		t.Fatalf("error = %q, want install timeout context", message)
+	}
+	if !strings.Contains(message, "partial output tail") {
+		t.Fatalf("error = %q, want output tail", message)
 	}
 }
 
