@@ -54,6 +54,7 @@ EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.29-stage-3.3.175-haproxy-auto-
 TRANSIT_WORKER_UPGRADE_ACCEPTANCE_FORWARDING_METHOD = "haproxy_tcp"
 TRANSIT_WORKER_UPGRADE_ACCEPTANCE_CHECKSUM = "ed8be5496fb0c28fab889ead5cb7ead66cb2d3a4f19534618c518a2bfc98c8de"
 TRANSIT_WORKER_ACCEPTANCE_RESOURCE_STATUSES = {"pending_worker", "worker_online", "worker_offline"}
+WORKER_INSTALL_COMMAND_ALLOWED_STATUSES = {"pending_worker", "worker_online", "worker_offline", "online"}
 
 
 class TransitWorkerBootstrapRequest(BaseModel):
@@ -703,28 +704,14 @@ def generate_transit_resource_worker_install_command(
         return error_response(404, "TRANSIT_RESOURCE_NOT_FOUND", "中转资源不存在。")
     if resource.resource_type != "server":
         return error_response(400, "TRANSIT_RESOURCE_NOT_SERVER", "只允许 server 类型中转资源生成 Worker 安装命令。")
-    if resource.status != WORKER_PENDING_STATUS:
+    if resource.status not in WORKER_INSTALL_COMMAND_ALLOWED_STATUSES:
         return error_response(
             400,
-            "TRANSIT_RESOURCE_NOT_PENDING_WORKER",
-            "只允许 pending_worker 中转服务器生成 Worker 安装命令。",
+            "TRANSIT_RESOURCE_STATUS_NOT_ALLOWED",
+            "当前中转服务器状态不允许生成 Worker 安装命令。",
         )
     if not resource.entry_host:
         return error_response(400, "TRANSIT_RESOURCE_ENTRY_HOST_REQUIRED", "生成安装命令前必须填写中转 VPS 公网 IP 或域名。")
-
-    bound_workers = db.scalars(
-        select(Worker).where(
-            Worker.role == "transit",
-            Worker.server_id == resource.id,
-        )
-    ).all()
-    online_workers = [worker for worker in bound_workers if worker_runtime_status(worker) == "online"]
-    if online_workers:
-        return error_response(
-            409,
-            "TRANSIT_RESOURCE_WORKER_ALREADY_ONLINE",
-            "该中转服务器已有在线 Worker，不允许生成新的安装命令。",
-        )
 
     try:
         controller_url = worker_public_base_url()

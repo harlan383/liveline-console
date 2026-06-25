@@ -136,7 +136,7 @@ class TransitWorkerInstallCommandGenerationTests(unittest.TestCase):
 
         data = response_payload(response)
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(data["error_code"], "TRANSIT_RESOURCE_NOT_PENDING_WORKER")
+        self.assertEqual(data["error_code"], "TRANSIT_RESOURCE_STATUS_NOT_ALLOWED")
         create_token.assert_not_called()
 
     def test_entry_host_is_required(self):
@@ -178,7 +178,7 @@ class TransitWorkerInstallCommandGenerationTests(unittest.TestCase):
         )
         raw_token = "fixture-token-value"
         install_command = "curl -s http://example.invalid/setup-fixture | bash -s eth0 transit"
-        db = FakeDb(scalar_values=[resource], scalars_values=[[], [old_token]])
+        db = FakeDb(scalar_values=[resource], scalars_values=[[old_token]])
 
         with patch.object(transit_resources, "require_admin_session", return_value=FakeAdminSession()), patch.object(
             transit_resources, "csrf_valid", return_value=True
@@ -207,6 +207,43 @@ class TransitWorkerInstallCommandGenerationTests(unittest.TestCase):
         self.assertNotIn("raw_token", data["data"])
         self.assertEqual(data["data"]["token"]["masked_token"], "fixtur...-value")
         self.assertEqual(old_token.status, "revoked")
+        self.assertTrue(db.committed)
+
+    def test_worker_online_resource_can_regenerate_install_command(self):
+        resource = pending_resource(status="worker_online", created_at=datetime.now(timezone.utc))
+        new_token = WorkerToken(
+            id="new-token",
+            token_hash="new-hash",
+            role="transit",
+            status="active",
+            name=resource.name,
+            server_id=resource.id,
+            expires_at=datetime.now(timezone.utc),
+        )
+        install_command = "curl -s http://example.invalid/setup-fixture | bash -s eth0 transit"
+        db = FakeDb(scalar_values=[resource], scalars_values=[[]])
+
+        with patch.object(transit_resources, "require_admin_session", return_value=FakeAdminSession()), patch.object(
+            transit_resources, "csrf_valid", return_value=True
+        ), patch.object(
+            transit_resources,
+            "worker_public_base_url",
+            return_value="http://my-con.golirong.xyz:8200",
+        ), patch.object(
+            transit_resources,
+            "create_bound_worker_token",
+            return_value=(new_token, "fixture-token-value", install_command),
+        ):
+            response = transit_resources.generate_transit_resource_worker_install_command(
+                "resource-1",
+                valid_payload(),
+                make_request(),
+                db,
+            )
+
+        data = response_payload(response)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["data"]["install_command"], install_command)
         self.assertTrue(db.committed)
 
 
