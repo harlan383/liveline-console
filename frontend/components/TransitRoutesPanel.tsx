@@ -2589,27 +2589,6 @@ export function TransitRoutesPanel() {
         </div>
       </div>
 
-      {primaryActiveRoute ? (
-        <div className="candidate-summary-grid transit-route-inline-panel">
-          <span>当前 active 链路</span>
-          <strong>{primaryActiveRoute.name}</strong>
-          <span>入口</span>
-          <strong>{routeEntry(primaryActiveRoute)}</strong>
-          <span>转发方式</span>
-          <strong>{forwardingMethodLabel(primaryActiveRoute.forwarding_method)}</strong>
-          <span>监听端口</span>
-          <strong>{primaryActiveRoute.listen_port}</strong>
-          <span>SHARE_LINK</span>
-          <strong>{routeHasShareLink(primaryActiveRoute) ? "已写入" : "未写入"}</strong>
-          <span>CUTOVER</span>
-          <strong>{routeCutoverStatusLabel(primaryActiveRoute.id)}</strong>
-        </div>
-      ) : (
-        <div className="transit-route-inline-panel">
-          <p className="message">暂无 active 中转链路。新增链路弹窗只在本地生成配置预览，真实创建仍需受保护流程。</p>
-        </div>
-      )}
-
       <div className="transit-route-table-scroll">
         <div className="server-table transit-route-table" aria-label="中转链路列表">
           <div className="server-table-row server-table-head transit-route-table-row">
