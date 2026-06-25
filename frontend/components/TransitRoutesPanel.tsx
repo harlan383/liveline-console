@@ -193,8 +193,8 @@ function SafeDeleteModal({
   );
 }
 
-const requiredTransitWorkerVersion = "0.1.25-stage-3.3.137-hotfix-2";
-const transitWorkerBinaryChecksum = "fbc2e240bbb8cd64962e5151752cf410951673efadae704d192ca83f2ab89d2b";
+const requiredTransitWorkerVersion = "0.1.29-stage-3.3.175-haproxy-auto-install";
+const transitWorkerBinaryChecksum = "ed8be5496fb0c28fab889ead5cb7ead66cb2d3a4f19534618c518a2bfc98c8de";
 const transitWorkerInstallCommandConfirmText = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE";
 const workerInterfaceNamePattern = /^[A-Za-z0-9_.-]+$/;
 
@@ -1240,7 +1240,7 @@ export function TransitServersPanel() {
                 <span>Worker binary checksum：{transitWorkerBinaryChecksum}</span>
                 <ul>
                   <li>新 transit Worker online 后，才允许进入 HAProxy TCP route 创建审批。</li>
-                  <li>后续需要确认 HAProxy 已安装、计划监听端口未占用、到落地目标端口 TCP 可达。</li>
+                  <li>真实创建时会自动检测并补齐 HAProxy 依赖，随后检查计划监听端口和落地目标连通性。</li>
                   <li>云安全组、云防火墙、服务器本机防火墙必须由用户自行放行监听 TCP 端口。</li>
                   <li>本页面不会安装 HAProxy，不会修改防火墙，不会创建 route。</li>
                 </ul>
@@ -2814,7 +2814,7 @@ export function TransitRoutesPanel() {
 
             <div className="haproxy-disabled-actions">
               <strong>后续阶段入口</strong>
-              <span>本阶段只允许创建 dry-run Worker command；真实创建 HAProxy route、安装 HAProxy、绑定监听和生成客户端链接均未接入。</span>
+              <span>真实创建会在受保护 Worker command 内自动检测并补齐 HAProxy 依赖；端口放行仍需用户自行完成。</span>
               <button className="secondary compact" disabled type="button">
                 下一阶段才允许创建 HAProxy route
               </button>
@@ -3357,10 +3357,10 @@ export function TransitRoutesPanel() {
                 {createForm.forwardingMethod === "haproxy_tcp" ? (
                   <div className="warning-box wide-field">
                     <strong>HAProxy TCP mode 安全提醒</strong>
-                    <span>中转 VPS 必须已安装 HAProxy。</span>
+                    <span>创建时会自动检测并补齐 HAProxy 依赖。</span>
                     <span>HAProxy TCP mode 会创建 liveline-haproxy-&lt;port&gt;.service。</span>
                     <span>新监听端口必须已在云安全组、云防火墙、服务器本机防火墙放行。</span>
-                    <span>当前页面不会自动安装 HAProxy，不会修改防火墙，不会 cutover。</span>
+                    <span>当前流程不会修改防火墙、云安全组或云防火墙，也不会 cutover。</span>
                   </div>
                 ) : null}
 

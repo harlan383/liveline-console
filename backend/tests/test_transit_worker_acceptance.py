@@ -203,7 +203,7 @@ class TransitWorkerUpgradeAcceptanceTests(unittest.TestCase):
         self.assert_read_only(db)
 
     def test_required_worker_version_passes_acceptance(self):
-        db = FakeDb([transit_resource(status="worker_online"), transit_worker(worker_version="0.1.25-stage-3.3.137-hotfix-2")])
+        db = FakeDb([transit_resource(status="worker_online"), transit_worker(worker_version="0.1.29-stage-3.3.175-haproxy-auto-install")])
         response = self.call_endpoint(db)
         result = response_payload(response)["data"]
 

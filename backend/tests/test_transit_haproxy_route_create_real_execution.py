@@ -103,7 +103,7 @@ class FakeSession:
         worker_present: bool = True,
         worker_status: str = "online",
         worker_role: str = "transit",
-        worker_version: str | None = "0.1.25-stage-3.3.137-hotfix-2",
+        worker_version: str | None = "0.1.29-stage-3.3.175-haproxy-auto-install",
         worker_interface: str | None = "eth0",
         worker_heartbeat_recent: bool = True,
         existing_route: bool = False,

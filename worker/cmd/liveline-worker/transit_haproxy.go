@@ -16,6 +16,9 @@ const transitHaproxyServicePrefix = "liveline-haproxy"
 const transitHaproxyConfigDir = "/etc/haproxy/liveline/routes"
 
 var livelineHaproxyServiceNameRE = regexp.MustCompile(`^liveline-haproxy-[0-9]+\.service$`)
+var findHaproxyBinaryForCreate = findHaproxyBinary
+var lookPathForHaproxyInstall = exec.LookPath
+var runHaproxyInstallCommand = runCommand
 
 type transitHaproxyCreateArtifacts struct {
 	ConfigWritten   bool
@@ -64,6 +67,35 @@ func findHaproxyBinary() (string, error) {
 		return path, nil
 	}
 	return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
+}
+
+func ensureHaproxyInstalledForCreate() (string, bool, error) {
+	haproxyBinary, err := findHaproxyBinaryForCreate()
+	if err == nil {
+		if _, verifyErr := runHaproxyInstallCommand(20*time.Second, haproxyBinary, "-v"); verifyErr != nil {
+			return "", false, fmt.Errorf("HAPROXY_VERIFY_FAILED: haproxy -v failed: %w", verifyErr)
+		}
+		return haproxyBinary, false, nil
+	}
+
+	if _, pathErr := lookPathForHaproxyInstall("apt-get"); pathErr != nil {
+		return "", false, errors.New("HAPROXY_INSTALL_UNSUPPORTED_PACKAGE_MANAGER: apt-get not found")
+	}
+	if _, updateErr := runHaproxyInstallCommand(120*time.Second, "apt-get", "update"); updateErr != nil {
+		return "", false, fmt.Errorf("HAPROXY_INSTALL_FAILED: apt-get update failed: %w", updateErr)
+	}
+	if _, installErr := runHaproxyInstallCommand(180*time.Second, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "haproxy"); installErr != nil {
+		return "", false, fmt.Errorf("HAPROXY_INSTALL_FAILED: apt-get install haproxy failed: %w", installErr)
+	}
+
+	haproxyBinary, err = findHaproxyBinaryForCreate()
+	if err != nil {
+		return "", true, errors.New("HAPROXY_INSTALL_VERIFY_FAILED: haproxy binary still not found after install")
+	}
+	if _, verifyErr := runHaproxyInstallCommand(20*time.Second, haproxyBinary, "-v"); verifyErr != nil {
+		return "", true, fmt.Errorf("HAPROXY_INSTALL_VERIFY_FAILED: haproxy -v failed after install: %w", verifyErr)
+	}
+	return haproxyBinary, true, nil
 }
 
 func validateTransitRouteCreateHaproxyRequest(cfg config, request transitRouteCreateRequest) error {
@@ -132,7 +164,7 @@ func executeTransitRouteCreateHaproxy(cfg config, hostname string, request trans
 	if os.Geteuid() != 0 {
 		return nil, errors.New("haproxy_tcp real execution must run as root because systemd service is managed")
 	}
-	haproxyBinary, err := findHaproxyBinary()
+	haproxyBinary, haproxyInstalledByWorker, err := ensureHaproxyInstalledForCreate()
 	if err != nil {
 		return nil, err
 	}
@@ -197,29 +229,31 @@ func executeTransitRouteCreateHaproxy(cfg config, hostname string, request trans
 	}
 
 	return map[string]any{
-		"status":              "succeeded",
-		"execution_mode":      "real_create",
-		"real_execution":      true,
-		"summary":             fmt.Sprintf("HAProxy TCP transit route created and verified for listen %d to landing target %d.", request.PlannedListenPort, request.LandingTargetPort),
-		"worker_version":      workerVersion,
-		"hostname":            hostname,
-		"role":                cfg.Role,
-		"interface_name":      cfg.InterfaceName,
-		"transit_resource_id": request.TransitResourceID,
-		"landing_node_id":     request.LandingNodeID,
-		"planned_listen_port": request.PlannedListenPort,
-		"landing_target_host": request.LandingTargetHost,
-		"landing_target_port": request.LandingTargetPort,
-		"forwarding_method":   transitHaproxyForwardingMethod,
-		"purpose":             request.Purpose,
-		"approval_stage":      request.ApprovalStage,
-		"route_name":          request.RouteName,
-		"service_name":        serviceName,
-		"service_path":        servicePath,
-		"config_path":         configPath,
+		"status":                         "succeeded",
+		"execution_mode":                 "real_create",
+		"real_execution":                 true,
+		"summary":                        fmt.Sprintf("HAProxy TCP transit route created and verified for listen %d to landing target %d.", request.PlannedListenPort, request.LandingTargetPort),
+		"worker_version":                 workerVersion,
+		"hostname":                       hostname,
+		"role":                           cfg.Role,
+		"interface_name":                 cfg.InterfaceName,
+		"transit_resource_id":            request.TransitResourceID,
+		"landing_node_id":                request.LandingNodeID,
+		"planned_listen_port":            request.PlannedListenPort,
+		"landing_target_host":            request.LandingTargetHost,
+		"landing_target_port":            request.LandingTargetPort,
+		"forwarding_method":              transitHaproxyForwardingMethod,
+		"purpose":                        request.Purpose,
+		"approval_stage":                 request.ApprovalStage,
+		"route_name":                     request.RouteName,
+		"service_name":                   serviceName,
+		"service_path":                   servicePath,
+		"config_path":                    configPath,
+		"haproxy_auto_install_performed": haproxyInstalledByWorker,
 		"checks": []any{
 			map[string]any{"name": "worker_binding_match", "passed": true},
 			map[string]any{"name": "haproxy_binary_found", "passed": true},
+			map[string]any{"name": "haproxy_dependency_ready", "passed": true},
 			map[string]any{"name": "haproxy_config_valid", "passed": true},
 			map[string]any{"name": "planned_port_available", "passed": true},
 			map[string]any{"name": "landing_target_reachable", "passed": true},
