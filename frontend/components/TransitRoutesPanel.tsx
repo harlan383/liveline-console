@@ -6,6 +6,7 @@ import QRCode from "react-qr-code";
 import { TransitReadonlyPreflightSimplePanel } from "@/components/TransitReadonlyPreflightSimplePanel";
 import {
   apiFetch,
+  CURRENT_WORKER_INSTALL_VERSION,
   createTransitResource,
   createTransitHaproxyRouteDryRun,
   createTransitHaproxyRouteRealExecution,
@@ -108,6 +109,14 @@ type TransitRouteWorkerCreatePlanResult = {
 };
 
 type DeleteFlowMode = "remote_cleanup" | "offline_local_remove";
+type WorkerInstallPollingMode = "install" | "upgrade";
+
+type WorkerInstallPollingContext = {
+  mode: WorkerInstallPollingMode;
+  targetWorkerVersion: string;
+  generatedAt: string;
+  interfaceName: string;
+};
 
 type HaproxyReadinessConfirmations = {
   securityGroup: boolean;
@@ -193,7 +202,7 @@ function SafeDeleteModal({
   );
 }
 
-const requiredTransitWorkerVersion = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run";
+const requiredTransitWorkerVersion = CURRENT_WORKER_INSTALL_VERSION;
 const transitWorkerBinaryChecksum = "6019e7db5de7176854ea2a57c3d80d00f41f04b52e16ed8b97dcb0cb1a76ddb1";
 const transitWorkerInstallCommandConfirmText = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE";
 const workerInterfaceNamePattern = /^[A-Za-z0-9_.-]+$/;
@@ -205,6 +214,20 @@ function defaultWorkerInterfaceName(value: string | null | undefined) {
 function isValidWorkerInterfaceName(value: string) {
   const cleaned = value.trim();
   return Boolean(cleaned) && cleaned.length <= 80 && workerInterfaceNamePattern.test(cleaned);
+}
+
+function timestampAtOrAfter(value: string | null | undefined, baseline: string | null | undefined) {
+  const valueMs = Date.parse(value ?? "");
+  const baselineMs = Date.parse(baseline ?? "");
+  return Number.isFinite(valueMs) && Number.isFinite(baselineMs) && valueMs >= baselineMs;
+}
+
+function generatedAtFromExpiry(expiresAt: string | null | undefined, expiresInMinutes: number | null | undefined) {
+  const expiresAtMs = Date.parse(expiresAt ?? "");
+  if (!Number.isFinite(expiresAtMs) || !expiresInMinutes) {
+    return new Date().toISOString();
+  }
+  return new Date(expiresAtMs - expiresInMinutes * 60_000).toISOString();
 }
 
 const emptyTransitResourceDraftForm: TransitResourceDraftFormState = {
@@ -547,6 +570,8 @@ export function TransitServersPanel() {
   const [workerInstallHeartbeatMessage, setWorkerInstallHeartbeatMessage] = useState("");
   const workerInstallPollTimeoutRef = useRef<number | null>(null);
   const workerInstallPollingResourceIdRef = useRef<string | null>(null);
+  const workerInstallPollingContextRef = useRef<WorkerInstallPollingContext | null>(null);
+  const workerInstallAutoCloseTimeoutRef = useRef<number | null>(null);
   const pendingDeletedTransitResourceIdsRef = useRef<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
 
@@ -659,6 +684,26 @@ export function TransitServersPanel() {
       workerInstallPollTimeoutRef.current = null;
     }
     workerInstallPollingResourceIdRef.current = null;
+    workerInstallPollingContextRef.current = null;
+  }
+
+  function clearWorkerInstallAutoClose() {
+    if (workerInstallAutoCloseTimeoutRef.current !== null) {
+      window.clearTimeout(workerInstallAutoCloseTimeoutRef.current);
+      workerInstallAutoCloseTimeoutRef.current = null;
+    }
+  }
+
+  function scheduleWorkerInstallAutoClose() {
+    clearWorkerInstallAutoClose();
+    workerInstallAutoCloseTimeoutRef.current = window.setTimeout(() => {
+      closeApprovalPreview();
+      workerInstallAutoCloseTimeoutRef.current = null;
+    }, 1200);
+  }
+
+  function workerUpgradeStatusMessage(resource: TransitResourceData | undefined, context: WorkerInstallPollingContext) {
+    return `等待 Worker 升级到目标版本... 当前版本：${resource?.worker_version || "未返回"}；目标版本：${context.targetWorkerVersion}`;
   }
 
   async function pollTransitWorkerInstallHeartbeat(resourceId: string, attempt = 0) {
@@ -676,34 +721,62 @@ export function TransitServersPanel() {
       if (resource?.worker_id) {
         await loadWorkerCommands(resource.worker_id);
       }
-      if (resource && isTransitResourceWorkerOnline(resource)) {
+      const context = workerInstallPollingContextRef.current;
+      if (resource && context?.mode === "upgrade") {
+        const versionMatches = resource.worker_version === context.targetWorkerVersion;
+        const heartbeatAfterCommand = timestampAtOrAfter(resource.worker_last_heartbeat_at, context.generatedAt);
+        if (versionMatches && heartbeatAfterCommand) {
+          clearWorkerInstallPolling();
+          const successMessage = `Worker 已升级到 ${context.targetWorkerVersion}，中转服务器列表已自动刷新。`;
+          setWorkerInstallHeartbeatMessage(successMessage);
+          setMessage(successMessage);
+          scheduleWorkerInstallAutoClose();
+          return;
+        }
+        setWorkerInstallHeartbeatMessage(workerUpgradeStatusMessage(resource, context));
+      } else if (resource && isTransitResourceWorkerOnline(resource)) {
         clearWorkerInstallPolling();
         setWorkerInstallHeartbeatMessage("已检测到 Worker 在线。");
         setMessage("已检测到 Worker 在线，中转服务器列表已自动刷新。");
+        scheduleWorkerInstallAutoClose();
         return;
       }
     }
 
     if (attempt + 1 >= workerInstallMaxPolls) {
+      const context = workerInstallPollingContextRef.current;
       clearWorkerInstallPolling();
       await loadResources();
-      const timeoutMessage = "未检测到 Worker 上线，请检查安装命令是否执行成功、curl 是否可用、systemd 是否正常、VPS 是否能访问主控 backend。";
+      const timeoutMessage =
+        context?.mode === "upgrade"
+          ? `尚未检测到目标版本 Worker，请确认命令是否已在对应 VPS 执行。目标版本：${context.targetWorkerVersion}`
+          : "未检测到 Worker 上线，请检查安装命令是否执行成功、curl 是否可用、systemd 是否正常、VPS 是否能访问主控 backend。";
       setWorkerInstallHeartbeatMessage(timeoutMessage);
       setMessage(timeoutMessage);
       return;
     }
 
-    setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+    const context = workerInstallPollingContextRef.current;
+    if (context?.mode !== "upgrade") {
+      setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+    }
     workerInstallPollTimeoutRef.current = window.setTimeout(() => {
       void pollTransitWorkerInstallHeartbeat(resourceId, attempt + 1);
     }, workerInstallPollIntervalMs);
   }
 
-  function startTransitWorkerInstallPolling(resourceId: string) {
+  function startTransitWorkerInstallPolling(resourceId: string, context: WorkerInstallPollingContext) {
     clearWorkerInstallPolling();
+    clearWorkerInstallAutoClose();
     workerInstallPollingResourceIdRef.current = resourceId;
-    setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
-    setMessage("Worker 安装命令已生成，正在等待 Worker 注册和 heartbeat。");
+    workerInstallPollingContextRef.current = context;
+    if (context.mode === "upgrade") {
+      setWorkerInstallHeartbeatMessage(`等待 Worker 升级到目标版本... 目标版本：${context.targetWorkerVersion}`);
+      setMessage("Worker 安装命令已生成，正在等待目标版本 Worker 上报 heartbeat。");
+    } else {
+      setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+      setMessage("Worker 安装命令已生成，正在等待 Worker 注册和 heartbeat。");
+    }
     void pollTransitWorkerInstallHeartbeat(resourceId);
   }
 
@@ -711,6 +784,7 @@ export function TransitServersPanel() {
     void loadResources();
     return () => {
       clearWorkerInstallPolling();
+      clearWorkerInstallAutoClose();
     };
   }, []);
 
@@ -724,6 +798,7 @@ export function TransitServersPanel() {
   function closeApprovalPreview() {
     // Keep heartbeat polling alive after the command modal closes. Users often
     // copy the command, close the modal, then run it on the VPS.
+    clearWorkerInstallAutoClose();
     setApprovalPreviewResource(null);
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
@@ -751,6 +826,7 @@ export function TransitServersPanel() {
   }
 
   function openWorkerInstallApprovalPreview(resource: TransitResourceData) {
+    clearWorkerInstallAutoClose();
     setApprovalPreviewResource(resource);
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
@@ -796,7 +872,12 @@ export function TransitServersPanel() {
       }
       setWorkerInstallCommandResult(result.data);
       setWorkerInstallCommandError("");
-      startTransitWorkerInstallPolling(result.data.resource.id);
+      startTransitWorkerInstallPolling(result.data.resource.id, {
+        mode: isTransitResourceWorkerOnline(approvalPreviewResource) ? "upgrade" : "install",
+        targetWorkerVersion: requiredTransitWorkerVersion,
+        generatedAt: generatedAtFromExpiry(result.data.expires_at, result.data.token_expires_in_minutes),
+        interfaceName,
+      });
     } catch (error) {
       setWorkerInstallCommandResult(null);
       const errorMessage = error instanceof Error ? error.message : "生成 Worker 安装命令失败。";
