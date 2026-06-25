@@ -5,6 +5,7 @@ import QRCode from "react-qr-code";
 
 import {
   apiFetch,
+  CURRENT_WORKER_INSTALL_VERSION,
   createLandingNodeExecution,
   createLandingNodePlan,
   createWorkerCommand,
@@ -32,6 +33,14 @@ import {
 
 type ModalMode = "add" | "edit" | "delete" | "deleteNode" | "nodePlan" | "workerCommand" | null;
 type DeleteFlowMode = "remote_cleanup" | "offline_local_remove";
+type WorkerInstallPollingMode = "install" | "upgrade";
+
+type WorkerInstallPollingContext = {
+  mode: WorkerInstallPollingMode;
+  targetWorkerVersion: string;
+  generatedAt: string;
+  interfaceName: string;
+};
 
 function isOfflineLocalRemoveOffer(data: unknown): data is RemoteCleanupUnavailableData {
   return Boolean(
@@ -172,6 +181,20 @@ function defaultWorkerInterfaceName(value: string | null | undefined) {
 function isValidWorkerInterfaceName(value: string) {
   const cleaned = value.trim();
   return Boolean(cleaned) && cleaned.length <= 80 && workerInterfaceNamePattern.test(cleaned);
+}
+
+function timestampAtOrAfter(value: string | null | undefined, baseline: string | null | undefined) {
+  const valueMs = Date.parse(value ?? "");
+  const baselineMs = Date.parse(baseline ?? "");
+  return Number.isFinite(valueMs) && Number.isFinite(baselineMs) && valueMs >= baselineMs;
+}
+
+function generatedAtFromExpiry(expiresAt: string | null | undefined, expiresInMinutes: number | null | undefined) {
+  const expiresAtMs = Date.parse(expiresAt ?? "");
+  if (!Number.isFinite(expiresAtMs) || !expiresInMinutes) {
+    return new Date().toISOString();
+  }
+  return new Date(expiresAtMs - expiresInMinutes * 60_000).toISOString();
 }
 
 function sshStatusLabel(status: string) {
@@ -373,6 +396,8 @@ export function ServerManagementPanel() {
   const [submitting, setSubmitting] = useState(false);
   const workerInstallPollTimeoutRef = useRef<number | null>(null);
   const workerInstallPollingServerIdRef = useRef<string | null>(null);
+  const workerInstallPollingContextRef = useRef<WorkerInstallPollingContext | null>(null);
+  const workerInstallAutoCloseTimeoutRef = useRef<number | null>(null);
   const pendingDeletedServerIdsRef = useRef<Set<string>>(new Set());
   const pendingDeletedNodeIdsRef = useRef<Set<string>>(new Set());
 
@@ -448,6 +473,26 @@ export function ServerManagementPanel() {
       workerInstallPollTimeoutRef.current = null;
     }
     workerInstallPollingServerIdRef.current = null;
+    workerInstallPollingContextRef.current = null;
+  }
+
+  function clearWorkerInstallAutoClose() {
+    if (workerInstallAutoCloseTimeoutRef.current !== null) {
+      window.clearTimeout(workerInstallAutoCloseTimeoutRef.current);
+      workerInstallAutoCloseTimeoutRef.current = null;
+    }
+  }
+
+  function scheduleWorkerInstallAutoClose() {
+    clearWorkerInstallAutoClose();
+    workerInstallAutoCloseTimeoutRef.current = window.setTimeout(() => {
+      closeModal();
+      workerInstallAutoCloseTimeoutRef.current = null;
+    }, 1200);
+  }
+
+  function workerUpgradeStatusMessage(server: VpsServerData | undefined, context: WorkerInstallPollingContext) {
+    return `等待 Worker 升级到目标版本... 当前版本：${server?.worker_version || "未返回"}；目标版本：${context.targetWorkerVersion}`;
   }
 
   async function pollWorkerInstallHeartbeat(serverId: string, attempt = 0) {
@@ -465,34 +510,62 @@ export function ServerManagementPanel() {
       if (server?.worker_id) {
         await loadWorkerCommands(server.worker_id, server.id);
       }
-      if (server && isVpsServerWorkerOnline(server)) {
+      const context = workerInstallPollingContextRef.current;
+      if (server && context?.mode === "upgrade") {
+        const versionMatches = server.worker_version === context.targetWorkerVersion;
+        const heartbeatAfterCommand = timestampAtOrAfter(server.worker_last_heartbeat_at, context.generatedAt);
+        if (versionMatches && heartbeatAfterCommand) {
+          clearWorkerInstallPolling();
+          const successMessage = `Worker 已升级到 ${context.targetWorkerVersion}，落地服务器列表已自动刷新。`;
+          setWorkerInstallHeartbeatMessage(successMessage);
+          setMessage(successMessage);
+          scheduleWorkerInstallAutoClose();
+          return;
+        }
+        setWorkerInstallHeartbeatMessage(workerUpgradeStatusMessage(server, context));
+      } else if (server && isVpsServerWorkerOnline(server)) {
         clearWorkerInstallPolling();
         setWorkerInstallHeartbeatMessage("已检测到 Worker 在线。");
         setMessage("已检测到 Worker 在线，落地服务器列表已自动刷新。");
+        scheduleWorkerInstallAutoClose();
         return;
       }
     }
 
     if (attempt + 1 >= WORKER_INSTALL_MAX_POLLS) {
+      const context = workerInstallPollingContextRef.current;
       clearWorkerInstallPolling();
       await loadServers();
-      const timeoutMessage = "未检测到 Worker 上线，请检查安装命令是否执行成功、curl 是否可用、systemd 是否正常、VPS 是否能访问主控 backend。";
+      const timeoutMessage =
+        context?.mode === "upgrade"
+          ? `尚未检测到目标版本 Worker，请确认命令是否已在对应 VPS 执行。目标版本：${context.targetWorkerVersion}`
+          : "未检测到 Worker 上线，请检查安装命令是否执行成功、curl 是否可用、systemd 是否正常、VPS 是否能访问主控 backend。";
       setWorkerInstallHeartbeatMessage(timeoutMessage);
       setMessage(timeoutMessage);
       return;
     }
 
-    setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+    const context = workerInstallPollingContextRef.current;
+    if (context?.mode !== "upgrade") {
+      setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+    }
     workerInstallPollTimeoutRef.current = window.setTimeout(() => {
       void pollWorkerInstallHeartbeat(serverId, attempt + 1);
     }, WORKER_INSTALL_POLL_INTERVAL_MS);
   }
 
-  function startWorkerInstallPolling(serverId: string) {
+  function startWorkerInstallPolling(serverId: string, context: WorkerInstallPollingContext) {
     clearWorkerInstallPolling();
+    clearWorkerInstallAutoClose();
     workerInstallPollingServerIdRef.current = serverId;
-    setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
-    setMessage("Worker 安装命令已生成，正在等待 Worker 注册和 heartbeat。");
+    workerInstallPollingContextRef.current = context;
+    if (context.mode === "upgrade") {
+      setWorkerInstallHeartbeatMessage(`等待 Worker 升级到目标版本... 目标版本：${context.targetWorkerVersion}`);
+      setMessage("Worker 安装命令已生成，正在等待目标版本 Worker 上报 heartbeat。");
+    } else {
+      setWorkerInstallHeartbeatMessage("等待 Worker 上线...");
+      setMessage("Worker 安装命令已生成，正在等待 Worker 注册和 heartbeat。");
+    }
     void pollWorkerInstallHeartbeat(serverId);
   }
 
@@ -500,12 +573,14 @@ export function ServerManagementPanel() {
     void loadServers();
     return () => {
       clearWorkerInstallPolling();
+      clearWorkerInstallAutoClose();
     };
   }, []);
 
   function closeModal() {
     // Keep Worker heartbeat polling alive after the modal closes; it stops on
     // online, timeout, unmount, or when a new install command replaces it.
+    clearWorkerInstallAutoClose();
     setModalMode(null);
     setSelectedServer(null);
     setServerForm(emptyServerForm);
@@ -531,6 +606,7 @@ export function ServerManagementPanel() {
   }
 
   function openAddServer() {
+    clearWorkerInstallAutoClose();
     setServerForm(emptyServerForm);
     setWorkerBootstrapForm(emptyWorkerBootstrapForm);
     setWorkerTokenResult(null);
@@ -540,6 +616,7 @@ export function ServerManagementPanel() {
   }
 
   function openWorkerCommand(server: VpsServerData) {
+    clearWorkerInstallAutoClose();
     setSelectedServer(server);
     setWorkerBootstrapForm({
       name: server.name || server.ip,
@@ -637,8 +714,11 @@ export function ServerManagementPanel() {
     setWorkerTokenResult(null);
     setWorkerInstallHeartbeatMessage("");
     clearWorkerInstallPolling();
+    clearWorkerInstallAutoClose();
     setMessage(modalMode === "add" ? "正在保存落地服务器并生成一次性 Worker 安装命令。" : "正在重新生成一次性 Worker 安装命令。");
     try {
+      const pollingMode =
+        modalMode === "workerCommand" && selectedServer && isVpsServerWorkerOnline(selectedServer) ? "upgrade" : "install";
       const csrfToken = await ensureCsrfToken();
       const result =
         modalMode === "workerCommand" && selectedServer
@@ -670,7 +750,12 @@ export function ServerManagementPanel() {
       setWorkerTokenResult(tokenResult);
       await loadServers();
       if (targetServerId) {
-        startWorkerInstallPolling(targetServerId);
+        startWorkerInstallPolling(targetServerId, {
+          mode: pollingMode,
+          targetWorkerVersion: CURRENT_WORKER_INSTALL_VERSION,
+          generatedAt: generatedAtFromExpiry(tokenResult.expires_at, expiresInMinutes),
+          interfaceName,
+        });
       } else {
         setMessage("Worker 安装命令已生成，请在 VPS 上执行后手动刷新列表查看上线状态。");
       }

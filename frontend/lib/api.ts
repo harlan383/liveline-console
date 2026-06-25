@@ -726,6 +726,8 @@ export const OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT = "CONFIRM_OFFLINE_LOCAL_REMOVE";
 
 export type WorkerRole = "landing" | "transit";
 
+export const CURRENT_WORKER_INSTALL_VERSION = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run";
+
 export type WorkerTokenCreateRequest = {
   role: WorkerRole;
   name?: string | null;
