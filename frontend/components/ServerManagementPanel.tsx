@@ -1356,7 +1356,7 @@ export function ServerManagementPanel() {
                       创建直连节点
                     </button>
                     <button className="secondary" type="button" onClick={() => openWorkerCommand(server)}>
-                      安装命令
+                      安装 Worker
                     </button>
                     <button className="secondary" type="button" onClick={() => openEdit(server)}>
                       编辑

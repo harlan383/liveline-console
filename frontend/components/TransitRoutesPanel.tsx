@@ -971,11 +971,9 @@ export function TransitServersPanel() {
                       {displayStatusLabel(resource.display_status)}
                     </span>
                     <div className="server-actions">
-                      {pendingWorkerDraft ? (
-                        <button className="secondary" type="button" onClick={() => void openWorkerInstallApprovalPreview(resource)}>
-                          安装 Worker
-                        </button>
-                      ) : null}
+                      <button className="secondary" type="button" onClick={() => void openWorkerInstallApprovalPreview(resource)}>
+                        安装 Worker
+                      </button>
                       <button className="secondary" type="button" onClick={() => openEdit(resource)}>
                         编辑
                       </button>
