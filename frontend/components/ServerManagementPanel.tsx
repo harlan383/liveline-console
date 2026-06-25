@@ -312,16 +312,51 @@ function nodeEntryLabel(node: ServerNodeSummary, serverIp: string) {
   return node.port ? `${host}:${node.port}` : host;
 }
 
-function nodeProtocolSummary(node: ServerNodeSummary) {
-  return node.protocol === "vless" ? "vless / reality / tcp" : node.protocol;
+function nodeProtocolSummary(node: ServerNodeSummary | NodeData) {
+  if (node.protocol === "vless") {
+    return "VLESS Reality";
+  }
+  return node.protocol ? node.protocol.toUpperCase() : "-";
+}
+
+function nodeServiceStatusLabel(node: ServerNodeSummary | NodeData) {
+  const status = node.service_status ?? "";
+  if (status === "active" || status === "running") {
+    return "服务已启动";
+  }
+  if (status === "inactive" || status === "stopped" || status === "not_started") {
+    return "未启动";
+  }
+  if (status === "failed" || status === "error") {
+    return "异常";
+  }
+  return node.service_display_label ?? (status ? nodeStatusLabel(status) : "未返回");
 }
 
 function nodeConnectivityLabel(node: ServerNodeSummary | NodeData) {
+  const status = node.connectivity_status ?? "";
+  if (status === "not_checked" || status === "unknown" || status === "unchecked") {
+    return "待检测";
+  }
+  if (status === "connected" || status === "success" || status === "ok") {
+    return "连接正常";
+  }
+  if (status === "failed" || status === "error" || status === "disconnected") {
+    return "连接失败";
+  }
   return node.connectivity_display_label ?? nodeStatusLabel(node.connectivity_status);
 }
 
 function nodeHealthSummary(node: ServerNodeSummary | NodeData) {
+  if (node.service_status === "active" && (node.connectivity_status === "not_checked" || node.connectivity_status === "unknown")) {
+    return "服务已启动，待连通性验证";
+  }
   return node.node_health_summary ?? nodeConnectivityLabel(node);
+}
+
+function nodeClientConfigLabel(node: ServerNodeSummary | NodeData) {
+  const hasShareLink = node.share_link_present ?? ("has_share_link" in node ? node.has_share_link : false);
+  return hasShareLink ? "已生成" : "未生成";
 }
 
 function stringValue(value: unknown) {
@@ -841,7 +876,7 @@ export function ServerManagementPanel() {
           setMessage(
             result.data.status === "succeeded"
               ? "清理任务已完成，服务器和节点列表已自动刷新。"
-              : `清理任务已进入终态：${workerCommandStatusLabel(result.data.status)}。列表已自动刷新，请查看最近命令详情。`,
+              : `清理任务已进入终态：${workerCommandStatusLabel(result.data.status)}。列表已自动刷新，请查看任务详情。`,
           );
           return;
         }
@@ -1475,6 +1510,7 @@ export function ServerManagementPanel() {
                             </button>
                           </>
                         ) : null}
+                        {renderRecentWorkerCommand(latestWorkerCommandForServer(server))}
                       </div>
                     </details>
                   </div>
@@ -1489,7 +1525,6 @@ export function ServerManagementPanel() {
                         : "未注册"}；主机名：
                     {server.worker_hostname || "暂无"}；网卡：{server.worker_interface_name || "暂无"}；最后心跳：
                     {formatTime(server.worker_last_heartbeat_at)}
-                    {renderRecentWorkerCommand(latestWorkerCommandForServer(server))}
                   </div>
                 ) : null}
                 {server.last_ssh_error ? <div className="server-row-error">最近 SSH 失败原因：{server.last_ssh_error}</div> : null}
@@ -1501,12 +1536,17 @@ export function ServerManagementPanel() {
                           <strong>直连节点：{node.name}</strong>
                           <small className="node-meta-line">协议：{nodeProtocolSummary(node)}</small>
                         </span>
-                        <span className="node-entry-label">入口：{nodeEntryLabel(node, server.ip)}</span>
-                        <span className="node-config-status">配置：{node.share_link_present ? "可复制" : "未生成"}</span>
+                        <span>
+                          <span className="node-entry-label">入口地址：{nodeEntryLabel(node, server.ip)}</span>
+                          <small className="node-meta-line">服务状态：{nodeServiceStatusLabel(node)}</small>
+                        </span>
                         <span>
                           <span className={`pill ${statusClass(node.status)}`}>{nodeStatusLabel(node.status)}</span>
-                          <small className="node-health-status">{nodeHealthSummary(node)}</small>
-                          <small className="node-share-status">share_link：{node.share_link_present ? "已生成" : "未生成"}</small>
+                          <small className="node-health-status">连通性：{nodeConnectivityLabel(node)}</small>
+                        </span>
+                        <span>
+                          <span className="node-config-status">客户端配置：{nodeClientConfigLabel(node)}</span>
+                          <small className="node-share-status">{nodeHealthSummary(node)}</small>
                         </span>
                         <span className="server-actions">
                           <button className="secondary" type="button" onClick={() => void openNodeDetail(node)}>
@@ -2058,22 +2098,20 @@ export function ServerManagementPanel() {
           <div className="detail-grid">
             <span>节点名称</span>
             <strong>{selectedNodeDetail.node_name}</strong>
-            <span>入口</span>
+            <span>入口地址</span>
             <strong>
               {selectedNodeDetail.vps_ip ?? "-"}
               {selectedNodeDetail.port ? `:${selectedNodeDetail.port}` : ""}
             </strong>
-            <span>协议 / 安全 / 传输</span>
-            <strong>
-              {selectedNodeDetail.protocol} / {selectedNodeDetail.security} / {selectedNodeDetail.transport ?? "tcp"}
-            </strong>
+            <span>协议</span>
+            <strong>{nodeProtocolSummary(selectedNodeDetail)}</strong>
             <span>状态</span>
             <strong>{nodeStatusLabel(selectedNodeDetail.status)}</strong>
             <span>服务状态</span>
-            <strong>{selectedNodeDetail.service_display_label ?? selectedNodeDetail.service_status ?? "-"}</strong>
-            <span>连接状态</span>
+            <strong>{nodeServiceStatusLabel(selectedNodeDetail)}</strong>
+            <span>连通性</span>
             <strong>{nodeConnectivityLabel(selectedNodeDetail)}</strong>
-            <span>share_link 状态</span>
+            <span>客户端配置</span>
             <strong>
               {shareLinkAvailable
                 ? `已生成 / 默认隐藏完整链接${selectedNodeDetail.share_link_length ? ` / ${selectedNodeDetail.share_link_length} 字符` : ""}`
