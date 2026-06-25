@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testTransitResourceID = "current-transit-resource"
@@ -1779,6 +1780,118 @@ backend liveline_landing_23843
 	plan.TargetPort = 443
 	if haproxyConfigMatchesCleanupPlan(configPath, plan) {
 		t.Fatal("haproxyConfigMatchesCleanupPlan accepted wrong target port")
+	}
+}
+
+func restoreHaproxyInstallTestHooks(t *testing.T) {
+	t.Helper()
+	originalFind := findHaproxyBinaryForCreate
+	originalLookPath := lookPathForHaproxyInstall
+	originalRun := runHaproxyInstallCommand
+	t.Cleanup(func() {
+		findHaproxyBinaryForCreate = originalFind
+		lookPathForHaproxyInstall = originalLookPath
+		runHaproxyInstallCommand = originalRun
+	})
+}
+
+func TestEnsureHaproxyInstalledSkipsInstallWhenBinaryExists(t *testing.T) {
+	restoreHaproxyInstallTestHooks(t)
+
+	commands := []string{}
+	findHaproxyBinaryForCreate = func() (string, error) {
+		return "/usr/sbin/haproxy", nil
+	}
+	lookPathForHaproxyInstall = func(name string) (string, error) {
+		t.Fatalf("lookPathForHaproxyInstall(%q) called for existing haproxy", name)
+		return "", nil
+	}
+	runHaproxyInstallCommand = func(timeout time.Duration, name string, args ...string) (string, error) {
+		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		return "HAProxy version", nil
+	}
+
+	binary, installed, err := ensureHaproxyInstalledForCreate()
+	if err != nil {
+		t.Fatalf("ensureHaproxyInstalledForCreate returned error: %v", err)
+	}
+	if binary != "/usr/sbin/haproxy" {
+		t.Fatalf("binary = %q, want /usr/sbin/haproxy", binary)
+	}
+	if installed {
+		t.Fatal("installed = true, want false when binary already exists")
+	}
+	if len(commands) != 1 || commands[0] != "/usr/sbin/haproxy -v" {
+		t.Fatalf("commands = %#v, want haproxy -v verification only", commands)
+	}
+}
+
+func TestEnsureHaproxyInstalledUsesAptWhenMissing(t *testing.T) {
+	restoreHaproxyInstallTestHooks(t)
+
+	findCalls := 0
+	commands := []string{}
+	findHaproxyBinaryForCreate = func() (string, error) {
+		findCalls++
+		if findCalls == 1 {
+			return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
+		}
+		return "/usr/sbin/haproxy", nil
+	}
+	lookPathForHaproxyInstall = func(name string) (string, error) {
+		if name != "apt-get" {
+			t.Fatalf("lookPathForHaproxyInstall(%q), want apt-get", name)
+		}
+		return "/usr/bin/apt-get", nil
+	}
+	runHaproxyInstallCommand = func(timeout time.Duration, name string, args ...string) (string, error) {
+		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		return "ok", nil
+	}
+
+	binary, installed, err := ensureHaproxyInstalledForCreate()
+	if err != nil {
+		t.Fatalf("ensureHaproxyInstalledForCreate returned error: %v", err)
+	}
+	if binary != "/usr/sbin/haproxy" {
+		t.Fatalf("binary = %q, want /usr/sbin/haproxy", binary)
+	}
+	if !installed {
+		t.Fatal("installed = false, want true when apt-get install path runs")
+	}
+	want := []string{
+		"apt-get update",
+		"env DEBIAN_FRONTEND=noninteractive apt-get install -y haproxy",
+		"/usr/sbin/haproxy -v",
+	}
+	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestEnsureHaproxyInstalledRejectsUnsupportedPackageManager(t *testing.T) {
+	restoreHaproxyInstallTestHooks(t)
+
+	findHaproxyBinaryForCreate = func() (string, error) {
+		return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
+	}
+	lookPathForHaproxyInstall = func(name string) (string, error) {
+		return "", errors.New("not found")
+	}
+	runHaproxyInstallCommand = func(timeout time.Duration, name string, args ...string) (string, error) {
+		t.Fatalf("runHaproxyInstallCommand(%q, %#v) called without apt-get", name, args)
+		return "", nil
+	}
+
+	_, installed, err := ensureHaproxyInstalledForCreate()
+	if err == nil {
+		t.Fatal("ensureHaproxyInstalledForCreate returned nil error without apt-get")
+	}
+	if installed {
+		t.Fatal("installed = true, want false when package manager is unsupported")
+	}
+	if !strings.Contains(err.Error(), "HAPROXY_INSTALL_UNSUPPORTED_PACKAGE_MANAGER") {
+		t.Fatalf("error = %q, want unsupported package manager code", err.Error())
 	}
 }
 

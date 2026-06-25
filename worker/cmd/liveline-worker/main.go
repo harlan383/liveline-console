@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.28-stage-3.3.152-haproxy-cleanup-support"
+const workerVersion = "0.1.29-stage-3.3.175-haproxy-auto-install"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
