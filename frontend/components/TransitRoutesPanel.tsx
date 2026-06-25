@@ -542,6 +542,7 @@ export function TransitServersPanel() {
     useState<TransitWorkerInstallCommandGenerationResult | null>(null);
   const [workerInstallCommandCopied, setWorkerInstallCommandCopied] = useState(false);
   const [workerInstallCommandGenerating, setWorkerInstallCommandGenerating] = useState(false);
+  const [workerInstallCommandError, setWorkerInstallCommandError] = useState("");
   const [workerInstallInterfaceName, setWorkerInstallInterfaceName] = useState("eth0");
   const [workerInstallHeartbeatMessage, setWorkerInstallHeartbeatMessage] = useState("");
   const workerInstallPollTimeoutRef = useRef<number | null>(null);
@@ -727,6 +728,7 @@ export function TransitServersPanel() {
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
+    setWorkerInstallCommandError("");
     setWorkerInstallInterfaceName("eth0");
   }
 
@@ -753,6 +755,7 @@ export function TransitServersPanel() {
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
     setWorkerInstallCommandGenerating(false);
+    setWorkerInstallCommandError("");
     setWorkerInstallInterfaceName(defaultWorkerInterfaceName(resource.worker_interface_name));
     setWorkerInstallHeartbeatMessage("");
   }
@@ -763,11 +766,14 @@ export function TransitServersPanel() {
     }
     const interfaceName = workerInstallInterfaceName.trim();
     if (!isValidWorkerInterfaceName(interfaceName)) {
-      setMessage("网卡不能为空，且只能包含字母、数字、点、下划线或短横线。");
+      const errorMessage = "网卡不能为空，且只能包含字母、数字、点、下划线或短横线。";
+      setWorkerInstallCommandError(errorMessage);
+      setMessage(errorMessage);
       return;
     }
     setWorkerInstallCommandResult(null);
     setWorkerInstallCommandCopied(false);
+    setWorkerInstallCommandError("");
     clearWorkerInstallPolling();
     setWorkerInstallCommandGenerating(true);
     try {
@@ -783,14 +789,19 @@ export function TransitServersPanel() {
       );
       if (!result.success) {
         setWorkerInstallCommandResult(null);
-        setMessage(`${result.error_code}: ${result.message}`);
+        const errorMessage = `${result.error_code}: ${result.message}`;
+        setWorkerInstallCommandError(errorMessage);
+        setMessage(errorMessage);
         return;
       }
       setWorkerInstallCommandResult(result.data);
+      setWorkerInstallCommandError("");
       startTransitWorkerInstallPolling(result.data.resource.id);
     } catch (error) {
       setWorkerInstallCommandResult(null);
-      setMessage(error instanceof Error ? error.message : "生成 Worker 安装命令失败。");
+      const errorMessage = error instanceof Error ? error.message : "生成 Worker 安装命令失败。";
+      setWorkerInstallCommandError(errorMessage);
+      setMessage(errorMessage);
     } finally {
       setWorkerInstallCommandGenerating(false);
     }
@@ -1068,6 +1079,7 @@ export function TransitServersPanel() {
                 </button>
               </div>
               {workerInstallCommandGenerating ? <p className="message">正在生成安装命令...</p> : null}
+              {workerInstallCommandError ? <p className="form-field-error">生成安装命令失败：{workerInstallCommandError}</p> : null}
               {workerInstallCommandResult ? (
                 <>
                   <span>请在中转 VPS 上执行以下命令：</span>
