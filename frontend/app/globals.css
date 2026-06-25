@@ -865,7 +865,8 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   display: grid;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .server-table-row {
@@ -874,7 +875,7 @@ textarea {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(160px, 1.2fr) minmax(130px, 0.9fr) minmax(86px, 0.55fr) minmax(86px, 0.55fr) minmax(340px, 1.55fr);
+  grid-template-columns: minmax(160px, 1.15fr) minmax(130px, 0.85fr) minmax(86px, 0.5fr) minmax(86px, 0.5fr) minmax(380px, 1.7fr);
   min-height: 54px;
   padding: 11px 12px;
 }
@@ -908,10 +909,15 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-start;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .server-actions button {
+  flex: 0 0 auto;
   padding: 8px 10px;
+  white-space: nowrap;
 }
 
 .action-hint {
@@ -969,7 +975,7 @@ textarea {
   background: #0c1722;
   color: #dbe7f4;
   font-size: 13px;
-  grid-template-columns: minmax(160px, 1.2fr) minmax(130px, 0.9fr) minmax(86px, 0.55fr) minmax(86px, 0.55fr) minmax(340px, 1.55fr);
+  grid-template-columns: minmax(160px, 1.15fr) minmax(130px, 0.85fr) minmax(86px, 0.5fr) minmax(86px, 0.5fr) minmax(380px, 1.7fr);
   min-height: 46px;
   padding-left: 26px;
 }
@@ -1057,7 +1063,8 @@ textarea {
 }
 
 .transit-route-table {
-  min-width: 980px;
+  min-width: 1120px;
+  overflow: visible;
 }
 
 .transit-route-table-row {
@@ -1067,7 +1074,7 @@ textarea {
     minmax(140px, 0.9fr)
     minmax(80px, 0.45fr)
     minmax(86px, 0.48fr)
-    minmax(250px, 1.1fr);
+    minmax(360px, 1.25fr);
 }
 
 .transit-route-table .server-table-row {
@@ -1086,7 +1093,7 @@ textarea {
 }
 
 .transit-route-row-actions {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .transit-route-row-actions button {
