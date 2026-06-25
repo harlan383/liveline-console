@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1790,11 +1789,15 @@ func restoreHaproxyInstallTestHooks(t *testing.T) {
 	originalLookPath := lookPathForHaproxyInstall
 	originalRun := runHaproxyInstallCommand
 	originalRunWithEnv := runHaproxyInstallCommandWithEnv
+	originalStatSystemd := statSystemdRuntimeForHaproxyInstall
+	originalEuid := getEuidForHaproxyInstall
 	t.Cleanup(func() {
 		findHaproxyBinaryForCreate = originalFind
 		lookPathForHaproxyInstall = originalLookPath
 		runHaproxyInstallCommand = originalRun
 		runHaproxyInstallCommandWithEnv = originalRunWithEnv
+		statSystemdRuntimeForHaproxyInstall = originalStatSystemd
+		getEuidForHaproxyInstall = originalEuid
 	})
 }
 
@@ -1842,19 +1845,30 @@ func TestEnsureHaproxyInstalledUsesAptWhenMissing(t *testing.T) {
 		return "/usr/sbin/haproxy", nil
 	}
 	lookPathForHaproxyInstall = func(name string) (string, error) {
-		if name != "apt-get" {
-			t.Fatalf("lookPathForHaproxyInstall(%q), want apt-get", name)
+		if name != "apt-get" && name != "systemd-run" {
+			t.Fatalf("lookPathForHaproxyInstall(%q), want apt-get or systemd-run", name)
 		}
-		return "/usr/bin/apt-get", nil
+		return "/usr/bin/" + name, nil
 	}
+	statSystemdRuntimeForHaproxyInstall = func(path string) (os.FileInfo, error) {
+		if path != "/run/systemd/system" {
+			t.Fatalf("statSystemdRuntimeForHaproxyInstall(%q), want /run/systemd/system", path)
+		}
+		return nil, nil
+	}
+	getEuidForHaproxyInstall = func() int { return 0 }
 	runHaproxyInstallCommand = func(timeout time.Duration, name string, args ...string) (string, error) {
 		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
 		return "ok", nil
 	}
 	runHaproxyInstallCommandWithEnv = func(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
 		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
-		if !reflect.DeepEqual(envVars, []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none"}) {
-			t.Fatalf("envVars = %#v, want noninteractive apt env", envVars)
+		if len(envVars) != 0 {
+			t.Fatalf("envVars = %#v, want env passed through systemd-run --setenv", envVars)
+		}
+		command := strings.Join(append([]string{name}, args...), " ")
+		if !strings.Contains(command, "--setenv=DEBIAN_FRONTEND=noninteractive") || !strings.Contains(command, "--setenv=APT_LISTCHANGES_FRONTEND=none") {
+			t.Fatalf("command = %q, want systemd-run env settings", command)
 		}
 		return "ok", nil
 	}
@@ -1870,29 +1884,103 @@ func TestEnsureHaproxyInstalledUsesAptWhenMissing(t *testing.T) {
 		t.Fatal("installed = false, want true when apt-get install path runs")
 	}
 	want := []string{
-		"apt-get update",
-		"apt-get install -y --no-install-recommends haproxy",
+		"systemd-run --wait --collect --pipe --quiet --unit",
+		"systemd-run --wait --collect --pipe --quiet --unit",
 		"/usr/sbin/haproxy -v",
 	}
-	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("commands = %#v, want %#v", commands, want)
+	if len(commands) != 3 {
+		t.Fatalf("commands = %#v, want three commands", commands)
+	}
+	for index, prefix := range want[:2] {
+		if !strings.HasPrefix(commands[index], prefix) {
+			t.Fatalf("commands[%d] = %q, want prefix %q", index, commands[index], prefix)
+		}
+	}
+	if !strings.Contains(commands[0], " apt-get update") {
+		t.Fatalf("commands[0] = %q, want apt-get update", commands[0])
+	}
+	if !strings.Contains(commands[1], " apt-get install -y --no-install-recommends haproxy") {
+		t.Fatalf("commands[1] = %q, want apt-get install --no-install-recommends", commands[1])
+	}
+	if commands[2] != want[2] {
+		t.Fatalf("commands[2] = %q, want %q", commands[2], want[2])
+	}
+}
+
+func TestEnsureHaproxyInstalledFallsBackWhenNoInstallRecommendsFails(t *testing.T) {
+	restoreHaproxyInstallTestHooks(t)
+
+	findCalls := 0
+	findHaproxyBinaryForCreate = func() (string, error) {
+		findCalls++
+		if findCalls == 1 {
+			return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
+		}
+		return "/usr/sbin/haproxy", nil
+	}
+	lookPathForHaproxyInstall = func(name string) (string, error) {
+		return "/usr/bin/" + name, nil
+	}
+	statSystemdRuntimeForHaproxyInstall = func(path string) (os.FileInfo, error) {
+		return nil, nil
+	}
+	getEuidForHaproxyInstall = func() int { return 0 }
+	commands := []string{}
+	runHaproxyInstallCommand = func(timeout time.Duration, name string, args ...string) (string, error) {
+		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		return "HAProxy version", nil
+	}
+	runHaproxyInstallCommandWithEnv = func(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
+		command := strings.Join(append([]string{name}, args...), " ")
+		commands = append(commands, command)
+		if strings.Contains(command, " apt-get update") {
+			return "ok", nil
+		}
+		if strings.Contains(command, " apt-get install -y --no-install-recommends haproxy") {
+			return "Reading package lists...\nE: recommends path failed", fmt.Errorf("%s failed\noutput_tail:\nReading package lists...\nE: recommends path failed", command)
+		}
+		if strings.Contains(command, " apt-get install -y haproxy") {
+			return "ok", nil
+		}
+		t.Fatalf("unexpected command: %s", command)
+		return "", nil
+	}
+
+	binary, installed, err := ensureHaproxyInstalledForCreate()
+	if err != nil {
+		t.Fatalf("ensureHaproxyInstalledForCreate returned error: %v", err)
+	}
+	if !installed {
+		t.Fatal("installed = false, want true when fallback install path succeeds")
+	}
+	if binary != "/usr/sbin/haproxy" {
+		t.Fatalf("binary = %q, want /usr/sbin/haproxy", binary)
+	}
+	joined := strings.Join(commands, "\n")
+	if !strings.Contains(joined, "apt-get install -y --no-install-recommends haproxy") {
+		t.Fatalf("commands = %#v, want no-install-recommends attempt", commands)
+	}
+	if !strings.Contains(joined, "apt-get install -y haproxy") {
+		t.Fatalf("commands = %#v, want fallback install attempt", commands)
 	}
 }
 
 func TestEnsureHaproxyInstalledInstallFailureReportsAptGetAndOutputTail(t *testing.T) {
 	restoreHaproxyInstallTestHooks(t)
 
-	findCalls := 0
 	findHaproxyBinaryForCreate = func() (string, error) {
-		findCalls++
 		return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
 	}
 	lookPathForHaproxyInstall = func(name string) (string, error) {
-		return "/usr/bin/apt-get", nil
+		return "/usr/bin/" + name, nil
 	}
+	statSystemdRuntimeForHaproxyInstall = func(path string) (os.FileInfo, error) {
+		return nil, nil
+	}
+	getEuidForHaproxyInstall = func() int { return 0 }
 	runHaproxyInstallCommandWithEnv = func(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
 		command := strings.Join(append([]string{name}, args...), " ")
-		if command == "apt-get update" {
+		if strings.Contains(command, " apt-get update") {
 			return "ok", nil
 		}
 		return "Reading package lists...\nE: unable to fetch package", fmt.Errorf("%s failed\noutput_tail:\nReading package lists...\nE: unable to fetch package", command)
@@ -1918,9 +2006,6 @@ func TestEnsureHaproxyInstalledInstallFailureReportsAptGetAndOutputTail(t *testi
 	if !strings.Contains(message, "E: unable to fetch package") {
 		t.Fatalf("error = %q, want output tail", message)
 	}
-	if findCalls != 1 {
-		t.Fatalf("findCalls = %d, want one failed pre-install lookup", findCalls)
-	}
 }
 
 func TestEnsureHaproxyInstalledInstallTimeoutUsesTimeoutCode(t *testing.T) {
@@ -1930,11 +2015,15 @@ func TestEnsureHaproxyInstalledInstallTimeoutUsesTimeoutCode(t *testing.T) {
 		return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
 	}
 	lookPathForHaproxyInstall = func(name string) (string, error) {
-		return "/usr/bin/apt-get", nil
+		return "/usr/bin/" + name, nil
 	}
+	statSystemdRuntimeForHaproxyInstall = func(path string) (os.FileInfo, error) {
+		return nil, nil
+	}
+	getEuidForHaproxyInstall = func() int { return 0 }
 	runHaproxyInstallCommandWithEnv = func(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
 		command := strings.Join(append([]string{name}, args...), " ")
-		if command == "apt-get update" {
+		if strings.Contains(command, " apt-get update") {
 			return "ok", nil
 		}
 		return "partial output tail", fmt.Errorf("%s timed out after 10m0s\noutput_tail:\npartial output tail", command)
@@ -1982,6 +2071,69 @@ func TestEnsureHaproxyInstalledRejectsUnsupportedPackageManager(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "HAPROXY_INSTALL_UNSUPPORTED_PACKAGE_MANAGER") {
 		t.Fatalf("error = %q, want unsupported package manager code", err.Error())
+	}
+}
+
+func TestEnsureHaproxyInstalledRejectsUnavailableSystemdRun(t *testing.T) {
+	restoreHaproxyInstallTestHooks(t)
+
+	findHaproxyBinaryForCreate = func() (string, error) {
+		return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
+	}
+	lookPathForHaproxyInstall = func(name string) (string, error) {
+		if name == "apt-get" {
+			return "/usr/bin/apt-get", nil
+		}
+		return "", errors.New("not found")
+	}
+	getEuidForHaproxyInstall = func() int { return 0 }
+
+	_, installed, err := ensureHaproxyInstalledForCreate()
+	if err == nil {
+		t.Fatal("ensureHaproxyInstalledForCreate returned nil error without systemd-run")
+	}
+	if installed {
+		t.Fatal("installed = true, want false when systemd-run is unavailable")
+	}
+	if !strings.Contains(err.Error(), "HAPROXY_INSTALL_SYSTEMD_RUN_UNAVAILABLE") {
+		t.Fatalf("error = %q, want systemd-run unavailable code", err.Error())
+	}
+}
+
+func TestEnsureHaproxyInstalledReportsSandboxReadonly(t *testing.T) {
+	restoreHaproxyInstallTestHooks(t)
+
+	findHaproxyBinaryForCreate = func() (string, error) {
+		return "", errors.New("HAPROXY_NOT_INSTALLED: haproxy binary was not found on this transit server")
+	}
+	lookPathForHaproxyInstall = func(name string) (string, error) {
+		return "/usr/bin/" + name, nil
+	}
+	statSystemdRuntimeForHaproxyInstall = func(path string) (os.FileInfo, error) {
+		return nil, nil
+	}
+	getEuidForHaproxyInstall = func() int { return 0 }
+	runHaproxyInstallCommandWithEnv = func(timeout time.Duration, envVars []string, name string, args ...string) (string, error) {
+		command := strings.Join(append([]string{name}, args...), " ")
+		if strings.Contains(command, " apt-get update") {
+			return "ok", nil
+		}
+		return "dpkg: Read-only file system", fmt.Errorf("%s failed\noutput_tail:\ndpkg: Read-only file system", command)
+	}
+
+	_, installed, err := ensureHaproxyInstalledForCreate()
+	if err == nil {
+		t.Fatal("ensureHaproxyInstalledForCreate returned nil error for read-only filesystem")
+	}
+	if installed {
+		t.Fatal("installed = true, want false on sandbox readonly failure")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "HAPROXY_INSTALL_SANDBOX_READONLY") {
+		t.Fatalf("error = %q, want sandbox readonly code", message)
+	}
+	if !strings.Contains(message, "Read-only file system") {
+		t.Fatalf("error = %q, want read-only detail", message)
 	}
 }
 

@@ -115,11 +115,11 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
     def test_haproxy_tcp_minimum_worker_version_requires_auto_install_worker(self):
         self.assertEqual(
             minimum_worker_version_for_transit_forwarding_method("haproxy_tcp"),
-            "0.1.30-stage-3.3.175-hotfix-1-haproxy-install-runner",
+            "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run",
         )
         self.assertEqual(
             minimum_worker_version_key_for_transit_forwarding_method("haproxy_tcp"),
-            (0, 1, 30, 3, 3, 175),
+            (0, 1, 31, 3, 3, 175),
         )
         minimum_haproxy_create = minimum_worker_version_key_for_transit_forwarding_method("haproxy_tcp")
         self.assertLess(parse_worker_version("0.1.24-stage-3.3.122"), minimum_haproxy_create)

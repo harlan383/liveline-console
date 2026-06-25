@@ -193,8 +193,8 @@ function SafeDeleteModal({
   );
 }
 
-const requiredTransitWorkerVersion = "0.1.29-stage-3.3.175-haproxy-auto-install";
-const transitWorkerBinaryChecksum = "ed8be5496fb0c28fab889ead5cb7ead66cb2d3a4f19534618c518a2bfc98c8de";
+const requiredTransitWorkerVersion = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run";
+const transitWorkerBinaryChecksum = "6019e7db5de7176854ea2a57c3d80d00f41f04b52e16ed8b97dcb0cb1a76ddb1";
 const transitWorkerInstallCommandConfirmText = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE";
 const workerInterfaceNamePattern = /^[A-Za-z0-9_.-]+$/;
 

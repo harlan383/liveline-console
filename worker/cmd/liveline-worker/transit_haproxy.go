@@ -21,6 +21,8 @@ var findHaproxyBinaryForCreate = findHaproxyBinary
 var lookPathForHaproxyInstall = exec.LookPath
 var runHaproxyInstallCommand = runCommand
 var runHaproxyInstallCommandWithEnv = runCommandWithEnv
+var statSystemdRuntimeForHaproxyInstall = os.Stat
+var getEuidForHaproxyInstall = os.Geteuid
 
 type transitHaproxyCreateArtifacts struct {
 	ConfigWritten   bool
@@ -84,17 +86,31 @@ func ensureHaproxyInstalledForCreate() (string, bool, error) {
 		return "", false, errors.New("HAPROXY_INSTALL_UNSUPPORTED_PACKAGE_MANAGER: apt-get not found")
 	}
 	aptEnv := []string{"DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none"}
-	if _, updateErr := runHaproxyInstallCommandWithEnv(300*time.Second, aptEnv, "apt-get", "update"); updateErr != nil {
+	if _, updateErr := runHostPackageCommand(300*time.Second, "liveline-haproxy-apt-update", aptEnv, "apt-get", "update"); updateErr != nil {
 		if isCommandTimeoutError(updateErr) {
 			return "", false, fmt.Errorf("HAPROXY_INSTALL_TIMEOUT: apt-get update timed out after 300s: %w", updateErr)
 		}
+		if isSandboxReadonlyError(updateErr) {
+			return "", false, fmt.Errorf("HAPROXY_INSTALL_SANDBOX_READONLY: apt-get update cannot write system directories from liveline-worker.service sandbox: %w", updateErr)
+		}
 		return "", false, fmt.Errorf("HAPROXY_INSTALL_FAILED: apt-get update failed: %w", updateErr)
 	}
-	if _, installErr := runHaproxyInstallCommandWithEnv(600*time.Second, aptEnv, "apt-get", "install", "-y", "--no-install-recommends", "haproxy"); installErr != nil {
+	if _, installErr := runHostPackageCommand(600*time.Second, "liveline-haproxy-apt-install", aptEnv, "apt-get", "install", "-y", "--no-install-recommends", "haproxy"); installErr != nil {
 		if isCommandTimeoutError(installErr) {
 			return "", false, fmt.Errorf("HAPROXY_INSTALL_TIMEOUT: apt-get install haproxy timed out after 600s: %w", installErr)
 		}
-		return "", false, fmt.Errorf("HAPROXY_INSTALL_FAILED: apt-get install haproxy failed: %w", installErr)
+		if isSandboxReadonlyError(installErr) {
+			return "", false, fmt.Errorf("HAPROXY_INSTALL_SANDBOX_READONLY: apt-get install haproxy cannot write system directories from liveline-worker.service sandbox: %w", installErr)
+		}
+		if _, fallbackErr := runHostPackageCommand(600*time.Second, "liveline-haproxy-apt-install", aptEnv, "apt-get", "install", "-y", "haproxy"); fallbackErr != nil {
+			if isCommandTimeoutError(fallbackErr) {
+				return "", false, fmt.Errorf("HAPROXY_INSTALL_TIMEOUT: apt-get install haproxy fallback timed out after 600s: %w", fallbackErr)
+			}
+			if isSandboxReadonlyError(fallbackErr) {
+				return "", false, fmt.Errorf("HAPROXY_INSTALL_SANDBOX_READONLY: apt-get install haproxy fallback cannot write system directories from liveline-worker.service sandbox: %w", fallbackErr)
+			}
+			return "", false, fmt.Errorf("HAPROXY_INSTALL_FAILED: apt-get install haproxy failed after --no-install-recommends and fallback attempts: first=%w fallback=%w", installErr, fallbackErr)
+		}
 	}
 
 	haproxyBinary, err = findHaproxyBinaryForCreate()
@@ -109,6 +125,51 @@ func ensureHaproxyInstalledForCreate() (string, bool, error) {
 
 func isCommandTimeoutError(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "timed out")
+}
+
+func isSandboxReadonlyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lowered := strings.ToLower(err.Error())
+	return strings.Contains(lowered, "read-only file system")
+}
+
+func runHostPackageCommand(timeout time.Duration, unitPrefix string, envVars []string, name string, args ...string) (string, error) {
+	if getEuidForHaproxyInstall() != 0 {
+		return "", errors.New("HAPROXY_INSTALL_SYSTEMD_RUN_UNAVAILABLE: root privileges are required to run host package install commands")
+	}
+	if _, err := lookPathForHaproxyInstall("systemd-run"); err != nil {
+		return "", fmt.Errorf("HAPROXY_INSTALL_SYSTEMD_RUN_UNAVAILABLE: systemd-run not found: %w", err)
+	}
+	if _, err := statSystemdRuntimeForHaproxyInstall("/run/systemd/system"); err != nil {
+		return "", fmt.Errorf("HAPROXY_INSTALL_SYSTEMD_RUN_UNAVAILABLE: /run/systemd/system is not available: %w", err)
+	}
+	unitName := safeHaproxyInstallUnitName(unitPrefix)
+	systemdArgs := []string{"--wait", "--collect", "--pipe", "--quiet", "--unit", unitName}
+	for _, envVar := range envVars {
+		systemdArgs = append(systemdArgs, "--setenv="+envVar)
+	}
+	systemdArgs = append(systemdArgs, name)
+	systemdArgs = append(systemdArgs, args...)
+	output, err := runHaproxyInstallCommandWithEnv(timeout, nil, "systemd-run", systemdArgs...)
+	commandLabel := strings.Join(append([]string{name}, args...), " ")
+	if err != nil {
+		if isSandboxReadonlyError(err) {
+			return output, fmt.Errorf("HAPROXY_INSTALL_SANDBOX_READONLY: %s cannot write system directories from liveline-worker.service sandbox; systemd-run fallback required or unavailable: %w", commandLabel, err)
+		}
+		return output, fmt.Errorf("%s failed via systemd-run unit %s: %w", commandLabel, unitName, err)
+	}
+	return output, nil
+}
+
+func safeHaproxyInstallUnitName(prefix string) string {
+	cleaned := regexp.MustCompile(`[^A-Za-z0-9_.-]+`).ReplaceAllString(prefix, "-")
+	cleaned = strings.Trim(cleaned, "-.")
+	if cleaned == "" {
+		cleaned = "liveline-haproxy-install"
+	}
+	return fmt.Sprintf("%s-%d-%d", cleaned, os.Getpid(), time.Now().UnixNano())
 }
 
 func validateTransitRouteCreateHaproxyRequest(cfg config, request transitRouteCreateRequest) error {
