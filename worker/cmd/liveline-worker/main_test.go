@@ -2216,6 +2216,50 @@ func TestSafeLiveLineXrayConfigPathRejectsBroadDirectories(t *testing.T) {
 	}
 }
 
+func TestManagedXrayTempConfigPathUsesJSONSuffix(t *testing.T) {
+	path := managedXrayTempConfigPathForDir(managedXrayConfigDir, 1782476977980018674)
+	if !strings.HasPrefix(path, managedXrayConfigDir+string(os.PathSeparator)) {
+		t.Fatalf("temp path = %q, want inside managed config dir", path)
+	}
+	if !strings.HasSuffix(path, ".json") {
+		t.Fatalf("temp path = %q, want .json suffix for Xray v25.5.16 format detection", path)
+	}
+	if strings.HasSuffix(path, ".tmp") || strings.Contains(filepath.Base(path), ".tmp.") {
+		t.Fatalf("temp path = %q, must not use .tmp config suffix", path)
+	}
+}
+
+func TestRunManagedXrayConfigTestUsesJSONConfigPath(t *testing.T) {
+	tempPath := managedXrayTempConfigPathForDir(managedXrayConfigDir, 1782476977980018674)
+	originalRunCommandFunc := runCommandFunc
+	defer func() { runCommandFunc = originalRunCommandFunc }()
+
+	var capturedName string
+	var capturedArgs []string
+	runCommandFunc = func(timeout time.Duration, name string, args ...string) (string, error) {
+		capturedName = name
+		capturedArgs = append([]string(nil), args...)
+		return "", nil
+	}
+
+	if err := runManagedXrayConfigTest(tempPath); err != nil {
+		t.Fatalf("runManagedXrayConfigTest error = %v", err)
+	}
+	if capturedName != managedXrayBinaryPath {
+		t.Fatalf("command name = %q, want %q", capturedName, managedXrayBinaryPath)
+	}
+	if len(capturedArgs) != 4 || capturedArgs[0] != "run" || capturedArgs[1] != "-test" || capturedArgs[2] != "-config" {
+		t.Fatalf("captured args = %#v, want xray run -test -config <path>", capturedArgs)
+	}
+	configPath := capturedArgs[3]
+	if configPath != tempPath {
+		t.Fatalf("config path = %q, want temp path %q", configPath, tempPath)
+	}
+	if !strings.HasSuffix(configPath, ".json") {
+		t.Fatalf("config path = %q, want .json suffix for Xray v25.5.16", configPath)
+	}
+}
+
 func TestRemoteCleanupFailureResultKeepsSystemRecordBoundary(t *testing.T) {
 	request := remoteCleanupRequest{
 		CleanupType: "cleanup_transit_route",

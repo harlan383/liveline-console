@@ -71,7 +71,7 @@ def landing_worker(**overrides) -> Worker:
         "role": "landing",
         "status": "online",
         "interface_name": "ens17",
-        "worker_version": "0.1.34-stage-3.3.181-xray-v25516-multi-inbound",
+        "worker_version": "0.1.35-stage-3.3.182-hotfix-xray-temp-json-suffix",
         "worker_secret_hash": "hash",
         "last_heartbeat_at": datetime.now(timezone.utc),
     }
