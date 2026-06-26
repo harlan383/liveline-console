@@ -97,6 +97,7 @@ var extractZipFileFunc = extractZipFile
 var livelineSocatServiceNameRE = regexp.MustCompile(`^liveline-socat-[0-9]+\.service$`)
 var livelineWorkerServiceNameRE = regexp.MustCompile(`^liveline-worker(?:-[A-Za-z0-9_-]+)?\.service$`)
 var transitRouteNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`)
+var managedXrayBackupFileRE = regexp.MustCompile(`^xray\.backup\.\d{8}-\d{6}$`)
 
 var protectedTransitListenPorts = map[int]string{
 	22:    "22 is reserved for SSH management",
@@ -2621,7 +2622,7 @@ func validateManagedXrayBaseDirForPreflight(baseDir string) error {
 			if child.Type()&os.ModeSymlink != 0 {
 				return fmt.Errorf("preflight refused because %s contains symlink artifact %s", childPath, child.Name())
 			}
-			if !allowedFiles[child.Name()] {
+			if !allowedFiles[child.Name()] && !(entry.Name() == "state" && managedXrayBackupFileRE.MatchString(child.Name())) {
 				return fmt.Errorf("preflight refused because %s contains unknown artifact %s", childPath, child.Name())
 			}
 		}

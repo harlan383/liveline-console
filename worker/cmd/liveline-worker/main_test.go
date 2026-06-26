@@ -121,6 +121,44 @@ func TestValidateManagedXrayBaseDirForPreflightAllowsKnownManagedFiles(t *testin
 	}
 }
 
+func TestValidateManagedXrayBaseDirForPreflightAllowsStateBackupsAndZip(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+	stateDir := filepath.Join(baseDir, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"xray.zip", "xray.backup.20260626-192914"} {
+		if err := os.WriteFile(filepath.Join(stateDir, name), []byte("managed"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateManagedXrayBaseDirForPreflight(baseDir); err != nil {
+		t.Fatalf("validateManagedXrayBaseDirForPreflight error = %v, want state backup and xray.zip allowed", err)
+	}
+}
+
+func TestValidateManagedXrayBaseDirForPreflightRejectsUnknownStateFile(t *testing.T) {
+	for _, name := range []string{"unknown.txt", "xray.backup.random"} {
+		t.Run(name, func(t *testing.T) {
+			baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+			stateDir := filepath.Join(baseDir, "state")
+			if err := os.MkdirAll(stateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stateDir, name), []byte("not managed"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := validateManagedXrayBaseDirForPreflight(baseDir)
+			if err == nil {
+				t.Fatal("validateManagedXrayBaseDirForPreflight returned nil for unknown state file")
+			}
+			if !strings.Contains(err.Error(), "unknown artifact") {
+				t.Fatalf("error = %q, want unknown artifact", err.Error())
+			}
+		})
+	}
+}
+
 func TestValidateManagedXrayBaseDirForPreflightRejectsUnknownSubdirFile(t *testing.T) {
 	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
 	binDir := filepath.Join(baseDir, "bin")

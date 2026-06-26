@@ -43,12 +43,15 @@ sha256: 7679da6a3bb9dc2b3ce82d7f9f64ac1bb0e4bd6c3b9a0926613e5fc88abef25a
 ## Worker Changes
 
 - Worker version: `0.1.34-stage-3.3.181-xray-v25516-multi-inbound`.
-- Bundled Linux amd64 Worker binary sha256: `8aaaa132980790a50613196860ef363c4f4dc150f50b35dabc51fbc09803343b`.
+- Bundled Linux amd64 Worker binary sha256: `f045c96bae690dbfbf07fa03cfa6288b882de1ee38340a69e8696467c75cf379`.
 - If the LiveLine-managed Xray binary is missing, the Worker installs pinned `v25.5.16`.
 - If the existing LiveLine-managed Xray binary is older than `v25.5.16`, the Worker backs it up and upgrades it.
 - If the existing version is `v25.5.16` or newer, the Worker keeps it and does not downgrade.
 - The downloaded archive is verified with sha256 before replacement.
 - If config test or later startup validation fails after an upgrade, rollback restores the previous binary and config where applicable.
+- Upgrade backups are stored under the managed state directory as `xray.backup.<timestamp>`, for example `xray.backup.20260626-192914`.
+- `xray.backup.YYYYMMDD-HHMMSS` is treated as a LiveLine-managed state artifact.
+- Unknown files in the managed state directory are still rejected during preflight to avoid overwriting or mixing non-LiveLine content.
 
 ## Multi-Inbound Fix
 
