@@ -44,6 +44,7 @@ from app.schemas.transit_route import (
     TransitHaproxyRouteCreateRealExecutionRequest,
     TransitReadonlyPreflightCommandRequest,
     TransitRouteCandidateExportRequest,
+    TransitRouteRenameRequest,
     TransitRouteWorkerCreateExecuteRequest,
     TransitRouteWorkerCreatePlanRequest,
 )
@@ -982,6 +983,53 @@ def get_transit_route(
         return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转规则不存在。")
 
     return success_response(serialize_transit_route(route), "ok")
+
+
+@router.patch("/{route_id}/name")
+def rename_transit_route(
+    route_id: str,
+    payload: TransitRouteRenameRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    route = get_route_or_error(db, route_id)
+    if not route:
+        return error_response(404, "TRANSIT_ROUTE_NOT_FOUND", "中转链路不存在。")
+
+    route.name = payload.name
+    route.updated_at = datetime.now(UTC)
+    db.add(route)
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="rename_transit_route",
+        result="success",
+        request=request,
+        resource_type="transit_route",
+        resource_id=route.id,
+    )
+    db.commit()
+
+    return success_response(
+        {
+            "id": route.id,
+            "name": route.name,
+            "listen_port": route.listen_port,
+            "target_host": route.target_host,
+            "target_port": route.target_port,
+            "forwarding_method": route.forwarding_method,
+            "status": route.status,
+            "updated_at": route.updated_at.isoformat() if route.updated_at else None,
+            "share_link_present": bool(route.share_link),
+        },
+        "中转链路名称已更新。",
+    )
 
 
 @router.delete("/{route_id}")

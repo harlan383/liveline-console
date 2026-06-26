@@ -113,6 +113,20 @@ class TransitRouteListResult(BaseModel):
     routes: list[TransitRouteData]
 
 
+class TransitRouteRenameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        cleaned = clean_route_display_name(value)
+        if not cleaned:
+            raise ValueError("name 不能为空")
+        return cleaned
+
+
 class TransitRouteCandidateSummary(BaseModel):
     route_id: str
     route_name: str

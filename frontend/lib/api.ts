@@ -197,6 +197,22 @@ export type TransitRouteListResult = {
   routes: TransitRouteData[];
 };
 
+export type TransitRouteRenameRequest = {
+  name: string;
+};
+
+export type TransitRouteRenameResult = {
+  id: string;
+  name: string;
+  listen_port: number;
+  target_host: string;
+  target_port: number;
+  forwarding_method: string;
+  status: string;
+  updated_at: string | null;
+  share_link_present: boolean;
+};
+
 export type TransitRouteCandidateSummary = {
   route_id: string;
   route_name: string;
@@ -1212,6 +1228,18 @@ export async function exportTransitRouteCandidate(
 ): Promise<ApiResponse<TransitRouteCandidateExportResult>> {
   return apiFetch<TransitRouteCandidateExportResult>(`/api/transit-routes/${routeId}/candidate-export`, {
     method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateTransitRouteName(
+  routeId: string,
+  payload: TransitRouteRenameRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitRouteRenameResult>> {
+  return apiFetch<TransitRouteRenameResult>(`/api/transit-routes/${routeId}/name`, {
+    method: "PATCH",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
   });

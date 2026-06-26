@@ -25,6 +25,7 @@ import {
   requestReadonlyPreflightPlan,
   requestTransitHaproxyReadinessApproval,
   requestTransitHaproxyRouteFinalApproval,
+  updateTransitRouteName,
   type CsrfResult,
   type NodeData,
   type NodeListResult,
@@ -1410,6 +1411,10 @@ export function TransitRoutesPanel() {
   const [candidateCopyFallbackRequired, setCandidateCopyFallbackRequired] = useState(false);
   const [candidateExportModalOpen, setCandidateExportModalOpen] = useState(false);
   const [candidateExportRouteId, setCandidateExportRouteId] = useState("");
+  const [editRouteId, setEditRouteId] = useState("");
+  const [editRouteName, setEditRouteName] = useState("");
+  const [editRouteSaving, setEditRouteSaving] = useState(false);
+  const [editRouteError, setEditRouteError] = useState("");
   const [deleteRouteId, setDeleteRouteId] = useState("");
   const [deleteRouteMode, setDeleteRouteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [advancedTransitOpsOpen, setAdvancedTransitOpsOpen] = useState(false);
@@ -1459,6 +1464,7 @@ export function TransitRoutesPanel() {
     [routes],
   );
   const candidateExportRoute = routes.find((route) => route.id === candidateExportRouteId) ?? null;
+  const editRoute = routes.find((route) => route.id === editRouteId) ?? null;
   const deleteRoute = routes.find((route) => route.id === deleteRouteId) ?? null;
   const selectedResource = selectableResources.find((resource) => resource.id === draft.transitResourceId) ?? selectableResources[0] ?? null;
   const selectedNode = activeNodes.find((node) => node.id === draft.landingNodeId) ?? activeNodes[0] ?? null;
@@ -2112,6 +2118,58 @@ export function TransitRoutesPanel() {
     setCandidateMessage("临时导出客户端链接只用于复制测试；不会保存到数据库、覆盖原节点链接或切换正式线路。");
   }
 
+  function openEditRoute(route: TransitRouteData) {
+    setEditRouteId(route.id);
+    setEditRouteName(route.name);
+    setEditRouteError("");
+  }
+
+  function closeEditRouteModal() {
+    setEditRouteId("");
+    setEditRouteName("");
+    setEditRouteError("");
+    setEditRouteSaving(false);
+  }
+
+  async function submitEditRouteName(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editRoute) {
+      return;
+    }
+    const nextName = editRouteName.trim();
+    if (!nextName) {
+      setEditRouteError("链路名称不能为空。");
+      return;
+    }
+    if (nextName.length > 120) {
+      setEditRouteError("链路名称不能超过 120 个字符。");
+      return;
+    }
+
+    setEditRouteSaving(true);
+    setEditRouteError("");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await updateTransitRouteName(editRoute.id, { name: nextName }, csrfToken);
+      if (!result.success) {
+        setEditRouteError(`${result.error_code}: ${result.message}`);
+        return;
+      }
+
+      setRoutes((current) => current.map((route) => (route.id === editRoute.id ? { ...route, name: result.data.name, updated_at: result.data.updated_at } : route)));
+      setCandidateSummary((current) => (current?.route_id === editRoute.id ? { ...current, route_name: result.data.name } : current));
+      setCandidateExport((current) => (current?.route_id === editRoute.id ? null : current));
+      setCandidateMessage("中转链路名称已更新。后续临时导出会使用新名称作为客户端备注。");
+      setMessage("中转链路名称已更新。");
+      closeEditRouteModal();
+      await loadData();
+    } catch (error) {
+      setEditRouteError(error instanceof Error ? error.message : "保存中转链路名称失败。");
+    } finally {
+      setEditRouteSaving(false);
+    }
+  }
+
   function openDeleteRoute(routeId: string) {
     const route = routes.find((item) => item.id === routeId);
     setDeleteRouteId(routeId);
@@ -2716,6 +2774,9 @@ export function TransitRoutesPanel() {
                       >
                         详情
                       </button>
+                      <button className="secondary compact" type="button" onClick={() => openEditRoute(route)}>
+                        编辑
+                      </button>
                       <button className="danger compact" disabled={candidateLoading} type="button" onClick={() => openDeleteRoute(route.id)}>
                         远程清理删除
                       </button>
@@ -3303,6 +3364,50 @@ export function TransitRoutesPanel() {
             )
           }
         />
+      ) : null}
+
+      {editRoute ? (
+        <div className="modal-backdrop">
+          <div className="modal-card route-edit-modal">
+            <div className="modal-header">
+              <div>
+                <h3>编辑中转链路</h3>
+                <p className="message">只允许修改显示名称，不会修改监听端口、HAProxy 配置、客户端真实连接参数。</p>
+              </div>
+              <button className="secondary" disabled={editRouteSaving} type="button" onClick={closeEditRouteModal}>
+                关闭
+              </button>
+            </div>
+
+            <form className="form-grid" onSubmit={(event) => void submitEditRouteName(event)}>
+              <label>
+                链路名称
+                <input
+                  maxLength={120}
+                  value={editRouteName}
+                  onChange={(event) => setEditRouteName(event.target.value)}
+                  placeholder="例如：mk香港落地15m"
+                />
+              </label>
+              <div className="warning-box">
+                <strong>只修改显示名称</strong>
+                <span>监听端口：{editRoute.listen_port}</span>
+                <span>目标：{editRoute.target_host}:{editRoute.target_port}</span>
+                <span>转发方式：{forwardingMethodLabel(editRoute.forwarding_method)}</span>
+                <span>服务：{editRoute.service_name || "-"}</span>
+              </div>
+              {editRouteError ? <p className="error">{editRouteError}</p> : null}
+              <div className="modal-actions">
+                <button className="secondary" disabled={editRouteSaving} type="button" onClick={closeEditRouteModal}>
+                  取消
+                </button>
+                <button disabled={editRouteSaving || !editRouteName.trim()} type="submit">
+                  {editRouteSaving ? "保存中" : "保存"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       ) : null}
 
       {candidateExportModalOpen ? (
