@@ -93,7 +93,9 @@ type WorkerBootstrapFormState = {
 
 type ServerNodeSummary = VpsServerData["nodes"][number];
 
-const APPROVED_FORMAL_LISTEN_PORT = 27939;
+const DEFAULT_LANDING_LISTEN_PORT = 27939;
+const LANDING_LISTEN_PORT_MIN = 10000;
+const LANDING_LISTEN_PORT_MAX = 30000;
 const DEFAULT_REALITY_SNI = "dash.cloudflare.com";
 const DEFAULT_REALITY_DEST = "dash.cloudflare.com:443";
 const DEFAULT_REALITY_FINGERPRINT = "chrome";
@@ -126,8 +128,8 @@ const emptyServerForm: ServerFormState = {
 
 function createEmptyNodePlanForm(): NodePlanFormState {
   return {
-    nodeName: `liveline-reality-${APPROVED_FORMAL_LISTEN_PORT}`,
-    listenPort: String(APPROVED_FORMAL_LISTEN_PORT),
+    nodeName: `liveline-reality-${DEFAULT_LANDING_LISTEN_PORT}`,
+    listenPort: String(DEFAULT_LANDING_LISTEN_PORT),
     protocol: "vless",
     security: "reality",
     flow: "xtls-rprx-vision",
@@ -1026,8 +1028,8 @@ export function ServerManagementPanel() {
       return;
     }
     const listenPort = Number(nodePlanForm.listenPort);
-    if (listenPort !== APPROVED_FORMAL_LISTEN_PORT) {
-      setMessage(`当前正式创建仍使用受保护端口 ${APPROVED_FORMAL_LISTEN_PORT}/TCP。本阶段不支持动态端口正式创建。`);
+    if (!Number.isInteger(listenPort) || listenPort < LANDING_LISTEN_PORT_MIN || listenPort > LANDING_LISTEN_PORT_MAX) {
+      setMessage(`端口必须是 ${LANDING_LISTEN_PORT_MIN}-${LANDING_LISTEN_PORT_MAX} 之间的 TCP 端口。`);
       return;
     }
     if (BLOCKED_NODE_LISTEN_PORTS.has(listenPort)) {
@@ -1035,7 +1037,7 @@ export function ServerManagementPanel() {
       return;
     }
     if (!nodePlanForm.protectedCreateConfirmed) {
-      setMessage(`请先确认 ${APPROVED_FORMAL_LISTEN_PORT}/TCP 已在云安全组、云防火墙和服务器本机防火墙放行。`);
+      setMessage(`请先确认 ${listenPort}/TCP 已在云安全组、云防火墙和服务器本机防火墙放行。`);
       return;
     }
     setSubmitting(true);
@@ -1108,7 +1110,7 @@ export function ServerManagementPanel() {
       const createResult = await createLandingNodeExecution(
         selectedServer.id,
         {
-          approved_port: APPROVED_FORMAL_LISTEN_PORT,
+          approved_port: listenPort,
           node_name: nodePlanForm.nodeName || null,
           server_name: nodePlanForm.serverName,
           dest: nodePlanForm.dest,
@@ -1860,10 +1862,25 @@ export function ServerManagementPanel() {
       xray_existing_config_detected: "检测到已有 Xray 配置",
       missing_cloud_firewall_confirmation: "云安全组 / 云防火墙 / 服务器防火墙确认不完整",
       unsafe_port: "端口不安全或不可用于业务节点",
-      approved_port_mismatch: "端口不符合本次审批的固定候选端口 27939/TCP",
+      node_port_already_exists: "该落地服务器已有未删除节点使用此端口",
+      transit_target_port_already_exists: "已有未删除中转链路使用此端口作为落地目标",
       share_link_generation_not_approved: "未审批生成分享链接",
     };
     return labels[reason] ?? reason;
+  }
+
+  function updateNodeListenPort(value: string) {
+    setNodePlanForm((current) => {
+      const currentDefaultName = `liveline-reality-${current.listenPort}`;
+      const nextDefaultName = `liveline-reality-${value}`;
+      const shouldFollowPort = !current.nodeName.trim() || current.nodeName === currentDefaultName;
+      return {
+        ...current,
+        listenPort: value,
+        nodeName: shouldFollowPort ? nextDefaultName : current.nodeName,
+        protectedCreateConfirmed: false,
+      };
+    });
   }
 
   function renderNodePlanResult() {
@@ -2011,7 +2028,7 @@ export function ServerManagementPanel() {
       >
         <div className="worker-bootstrap-intro wide-field">
           <strong>创建直连 Reality 节点</strong>
-          <span>填写必要信息后点击创建。系统会自动预检、安装 / 启动 Xray、检查受保护端口监听，成功后再允许导出链接和二维码。</span>
+          <span>填写必要信息后点击创建。系统会自动预检、安装 / 启动 Xray、检查监听端口，成功后再允许导出链接和二维码。</span>
           <span>
             服务器：{selectedServer.name || selectedServer.ip} / {selectedServer.ip} / Worker：
             {selectedServer.worker_version || "未注册"}
@@ -2023,7 +2040,7 @@ export function ServerManagementPanel() {
           <input
             value={nodePlanForm.nodeName}
             onChange={(event) => setNodePlanForm({ ...nodePlanForm, nodeName: event.target.value })}
-            placeholder="liveline-reality-27939"
+            placeholder={`liveline-reality-${nodePlanForm.listenPort || DEFAULT_LANDING_LISTEN_PORT}`}
           />
         </label>
         <label>
@@ -2031,9 +2048,17 @@ export function ServerManagementPanel() {
           <input readOnly value={`${selectedServer.name || selectedServer.ip} / ${selectedServer.ip}`} />
         </label>
         <label>
-          当前正式创建端口
-          <input readOnly value={`${APPROVED_FORMAL_LISTEN_PORT}/TCP`} />
-          <small>请确认云安全组 / 云防火墙 / 服务器本机防火墙已放行该 TCP 端口。自定义端口能力后续单独进入 dynamic-port create stage。</small>
+          监听端口
+          <input
+            inputMode="numeric"
+            value={nodePlanForm.listenPort}
+            onChange={(event) => updateNodeListenPort(event.target.value)}
+            placeholder={String(DEFAULT_LANDING_LISTEN_PORT)}
+          />
+          <small>
+            允许 {LANDING_LISTEN_PORT_MIN}-{LANDING_LISTEN_PORT_MAX} 内非保留 TCP 端口，默认 {DEFAULT_LANDING_LISTEN_PORT}。
+            请确认云安全组 / 云防火墙 / 服务器本机防火墙已放行该 TCP 端口。
+          </small>
         </label>
         <label>
           协议
@@ -2078,7 +2103,7 @@ export function ServerManagementPanel() {
             onChange={(event) => setNodePlanForm({ ...nodePlanForm, protectedCreateConfirmed: event.target.checked })}
           />
           <span>
-            我已确认 {APPROVED_FORMAL_LISTEN_PORT}/TCP 已在云安全组、云防火墙和服务器本机防火墙放行，并理解创建成功后会生成可用客户端链接。
+            我已确认 {nodePlanForm.listenPort || DEFAULT_LANDING_LISTEN_PORT}/TCP 已在云安全组、云防火墙和服务器本机防火墙放行，并理解创建成功后会生成可用客户端链接。
           </span>
         </label>
 
@@ -2086,9 +2111,8 @@ export function ServerManagementPanel() {
           <summary>高级安全说明</summary>
           <div className="node-create-safety-body">
             <span>系统不会自动修改云安全组、云防火墙或服务器本机防火墙；端口放行仍由用户自行确认。</span>
-            <span>本阶段只简化创建体验，不扩展正式动态端口能力；正式创建仍使用当前后端受保护端口能力。</span>
-            <span>如需支持自定义端口，后续需要单独进入 dynamic-port create stage，重新设计后端 / Worker 审批边界。</span>
-            <span>创建前会自动运行 landing_preflight，确认端口未监听、Xray 未安装、且没有已有 LiveLine 管理配置。</span>
+            <span>创建前会自动运行 landing_preflight，确认端口未监听，且没有同端口节点或中转目标冲突。</span>
+            <span>如果已有 LiveLine 管理的 Xray 配置，Worker 会追加新的 Reality inbound；非 LiveLine 管理配置会被拒绝。</span>
             <span>只有远程创建成功、Xray 服务启动成功、端口监听成功后，后端才允许写入 node.share_link。</span>
             <span>失败时不会写入 node.share_link，不会展示二维码，也不会生成可复制的完整链接。</span>
             <span>真实链接不得写入日志、文档、PR、测试快照或聊天。</span>

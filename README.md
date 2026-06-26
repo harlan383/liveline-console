@@ -2636,6 +2636,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.153 HAProxy create result persist parity | Persist successful HAProxy TCP real-create results as active transit routes while preserving socat behavior; no real create, delete, Worker command, cutover, firewall mutation, or share-link mutation |
 | Stage 3.3.163 HAProxy delete cleanup risk runbook | Document pre-delete snapshots, remote cleanup risks, failure branches, and recovery plan before any destructive HAProxy 23843 cleanup test |
 | Stage 3.3.179 Reality dest/SNI template | Default new landing Reality nodes to dash.cloudflare.com dest/SNI, pass configurable Reality template to Worker, and add headerType=none to direct/transit client-link exports; no real node, route, cutover, firewall, or share-link mutation |
+| Stage 3.3.180 Dynamic landing create port | Allow direct Reality node creation to use a validated custom landing listen port with multi-inbound Worker config append; no real node, route, cutover, firewall, or share-link mutation |
 | Stage 3.3.14 C cutover decision pack | C-plan pre-review documented, No-Go for formal cutover |
 | Stage 3.3.15 C final Go / No-Go approval | Final No-Go documented, no formal cutover |
 | Stage 3.3.16 C No-Go blocker resolution plan | Blocker resolution plan documented, still No-Go |

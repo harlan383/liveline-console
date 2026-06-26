@@ -729,7 +729,7 @@ export const OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT = "CONFIRM_OFFLINE_LOCAL_REMOVE";
 
 export type WorkerRole = "landing" | "transit";
 
-export const CURRENT_WORKER_INSTALL_VERSION = "0.1.32-stage-3.3.179-reality-dest-sni-template";
+export const CURRENT_WORKER_INSTALL_VERSION = "0.1.33-stage-3.3.180-dynamic-landing-create-port";
 
 export type WorkerTokenCreateRequest = {
   role: WorkerRole;

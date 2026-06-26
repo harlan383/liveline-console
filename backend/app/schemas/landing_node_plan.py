@@ -11,6 +11,27 @@ DEFAULT_REALITY_FINGERPRINT = "chrome"
 DEFAULT_REALITY_FLOW = "xtls-rprx-vision"
 DEFAULT_REALITY_SECURITY = "reality"
 DEFAULT_REALITY_TRANSPORT = "tcp"
+DEFAULT_LANDING_NODE_LISTEN_PORT = 27939
+LANDING_NODE_LISTEN_PORT_MIN = 10000
+LANDING_NODE_LISTEN_PORT_MAX = 30000
+BLOCKED_LANDING_NODE_LISTEN_PORTS = {
+    22,
+    80,
+    443,
+    8080,
+    8443,
+    18443,
+    3000,
+    3200,
+    8000,
+    8200,
+    5432,
+    6379,
+    15432,
+    16379,
+    10000,
+    27017,
+}
 
 DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
@@ -78,8 +99,22 @@ def _validate_reality_fingerprint(value: str) -> str:
     return cleaned
 
 
+def validate_landing_node_listen_port(value: int) -> int:
+    if value < LANDING_NODE_LISTEN_PORT_MIN or value > LANDING_NODE_LISTEN_PORT_MAX:
+        raise ValueError(
+            f"listen port must be between {LANDING_NODE_LISTEN_PORT_MIN} and {LANDING_NODE_LISTEN_PORT_MAX}"
+        )
+    if value in BLOCKED_LANDING_NODE_LISTEN_PORTS:
+        raise ValueError("listen port is reserved and cannot be used for a direct node")
+    return value
+
+
 class LandingNodePlanRequest(BaseModel):
-    listen_port: int = Field(ge=1, le=65535)
+    listen_port: int = Field(
+        default=DEFAULT_LANDING_NODE_LISTEN_PORT,
+        ge=LANDING_NODE_LISTEN_PORT_MIN,
+        le=LANDING_NODE_LISTEN_PORT_MAX,
+    )
     protocol: str = Field(default="vless", max_length=40)
     security: str = Field(default=DEFAULT_REALITY_SECURITY, max_length=40)
     flow: str = Field(default=DEFAULT_REALITY_FLOW, max_length=80)
@@ -109,6 +144,11 @@ class LandingNodePlanRequest(BaseModel):
         if not cleaned:
             raise ValueError("value cannot be empty")
         return cleaned
+
+    @field_validator("listen_port")
+    @classmethod
+    def clean_listen_port(cls, value: int) -> int:
+        return validate_landing_node_listen_port(value)
 
     @field_validator("server_name")
     @classmethod
@@ -161,7 +201,11 @@ class LandingNodePlanResponse(BaseModel):
 
 
 class LandingNodeCreateRequest(BaseModel):
-    approved_port: int = Field(ge=1, le=65535)
+    approved_port: int = Field(
+        default=DEFAULT_LANDING_NODE_LISTEN_PORT,
+        ge=LANDING_NODE_LISTEN_PORT_MIN,
+        le=LANDING_NODE_LISTEN_PORT_MAX,
+    )
     node_name: str | None = Field(default=None, max_length=120)
     server_name: str = Field(default=DEFAULT_REALITY_SNI, max_length=255)
     dest: str = Field(default=DEFAULT_REALITY_DEST, max_length=255)
@@ -184,6 +228,11 @@ class LandingNodeCreateRequest(BaseModel):
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    @field_validator("approved_port")
+    @classmethod
+    def clean_approved_port(cls, value: int) -> int:
+        return validate_landing_node_listen_port(value)
 
     @field_validator("server_name")
     @classmethod

@@ -11,7 +11,6 @@ from app.schemas.landing_node_plan import LandingNodeCreateRequest, LandingNodeP
 from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
 from app.services.landing_node_create import (
-    APPROVED_FORMAL_LISTEN_PORT,
     LandingNodeCreateError,
     create_landing_node_create_command,
 )
@@ -425,12 +424,12 @@ def create_landing_node(
             "target_worker_id": worker.id,
             "target_worker_version": worker.worker_version,
             "server_id": vps.id,
-            "approved_port": APPROVED_FORMAL_LISTEN_PORT,
+            "approved_port": payload.approved_port,
             "status": command.status,
             "next_action": "等待 liveline-worker 轮询执行 landing_node_create；真实链接不会写入命令结果或日志。",
             "safety_boundary": [
                 "正式执行会先由 Worker 重新运行本机预检",
-                "只有 Worker 成功安装 Xray、写入 LiveLine 管理配置、启动服务并验证 27939/TCP 监听后，backend 才写入 node.share_link",
+                f"只有 Worker 成功安装 / 更新 Xray、写入 LiveLine 管理配置、启动服务并验证 {payload.approved_port}/TCP 监听后，backend 才写入 node.share_link",
                 "真实 vless:// 链接不会写入 README、阶段文档、终端日志、Worker 日志或聊天记录",
                 "失败回滚只允许清理本次新增内容",
             ],

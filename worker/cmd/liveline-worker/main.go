@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.32-stage-3.3.179-reality-dest-sni-template"
+const workerVersion = "0.1.33-stage-3.3.180-dynamic-landing-create-port"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -50,7 +50,9 @@ const defaultRealityFlow = "xtls-rprx-vision"
 const defaultRealitySecurity = "reality"
 const defaultRealityTransport = "tcp"
 const commandTimeout = 180 * time.Second
-const formalLandingPort = 27939
+const defaultLandingPort = 27939
+const dynamicLandingPortMin = 10000
+const dynamicLandingPortMax = 30000
 const approvedTransitCreateStage = "Stage 3.3.71-transit-route-worker-create-path"
 const approvedTransitRealCreateStage = "Stage 3.3.73d-transit-route-real-create-code-path"
 const approvedTransitHaproxyDryRunStage = "Stage 3.3.137-new-transit-haproxy-route-create-dry-run"
@@ -94,6 +96,25 @@ var protectedTransitListenPorts = map[int]string{
 	8443:  "8443 is reserved for gost fallback",
 	18443: "18443 is reserved for the current socat formal route",
 	20575: "20575 is a historical unsafe transit port",
+}
+
+var blockedLandingListenPorts = map[int]string{
+	22:    "22 is reserved for SSH management",
+	80:    "80 is reserved for HTTP",
+	443:   "443 is reserved for HTTPS / Reality destination compatibility",
+	3000:  "3000 is reserved for development services",
+	3200:  "3200 is reserved for LiveLine frontend",
+	5432:  "5432 is reserved for PostgreSQL",
+	6379:  "6379 is reserved for Redis",
+	8000:  "8000 is reserved for application services",
+	8080:  "8080 is reserved for HTTP application services",
+	8200:  "8200 is reserved for LiveLine backend",
+	8443:  "8443 is reserved for existing transit experiments",
+	10000: "10000 is reserved as the lower boundary sentinel",
+	15432: "15432 is reserved for PostgreSQL mapping",
+	16379: "16379 is reserved for Redis mapping",
+	18443: "18443 is reserved for historical socat experiments",
+	27017: "27017 is reserved for MongoDB",
 }
 
 type config struct {
@@ -2202,10 +2223,15 @@ type landingNodeCreateRequest struct {
 
 type landingNodeCreateArtifacts struct {
 	ConfigWritten    bool
+	ConfigExisted    bool
+	PreviousConfig   []byte
 	ServiceWritten   bool
+	ServiceExisted   bool
 	BinaryWritten    bool
+	BinaryExisted    bool
 	DaemonReloaded   bool
 	ServiceStarted   bool
+	ServiceWasActive bool
 	BaseDirCreated   bool
 	BinDirCreated    bool
 	ConfigDirCreated bool
@@ -2232,15 +2258,14 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 		addPhase("preflight_recheck", "failed", err.Error())
 		return landingNodeFailureResult(request, phases), err
 	}
-	addPhase("preflight_recheck", "passed", "27939/TCP 未监听，Xray / x-ui / 3x-ui 未安装，已有 Xray 配置未发现。")
+	addPhase("preflight_recheck", "passed", fmt.Sprintf("%d/TCP 未监听，未发现非 LiveLine 管理的 Xray / x-ui / 3x-ui 冲突。", request.ListenPort))
 
 	if err := installXrayBinary(artifacts); err != nil {
 		addPhase("install_xray_core", "failed", err.Error())
 		rollbackLandingNodeCreate(artifacts)
 		return landingNodeFailureResult(request, phases), err
 	}
-	artifacts.BinaryWritten = true
-	addPhase("install_xray_core", "passed", "Xray-core binary 已安装到 LiveLine 审批路径。")
+	addPhase("install_xray_core", "passed", "Xray-core binary 已就绪于 LiveLine 管理路径。")
 
 	reality, err := generateRealityMaterial()
 	if err != nil {
@@ -2250,7 +2275,8 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 	}
 	addPhase("generate_reality_material", "passed", "VLESS UUID、Reality public key 和 shortId 已生成；private key 仅写入本机配置。")
 
-	if err := writeManagedXrayConfig(request, reality, artifacts); err != nil {
+	expectedListenPorts, err := writeManagedXrayConfig(request, reality, artifacts)
+	if err != nil {
 		addPhase("write_xray_config", "failed", err.Error())
 		rollbackLandingNodeCreate(artifacts)
 		return landingNodeFailureResult(request, phases), err
@@ -2258,12 +2284,11 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 	artifacts.ConfigWritten = true
 	addPhase("write_xray_config", "passed", "LiveLine 管理的 Xray 配置已写入。")
 
-	if err := writeManagedXrayService(); err != nil {
+	if err := writeManagedXrayService(artifacts); err != nil {
 		addPhase("write_systemd_service", "failed", err.Error())
 		rollbackLandingNodeCreate(artifacts)
 		return landingNodeFailureResult(request, phases), err
 	}
-	artifacts.ServiceWritten = true
 	addPhase("write_systemd_service", "passed", "LiveLine 管理的 systemd service 已写入。")
 
 	if _, err := runCommand(commandTimeout, managedXrayBinaryPath, "run", "-test", "-config", managedXrayConfigPath); err != nil {
@@ -2284,6 +2309,7 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 		rollbackLandingNodeCreate(artifacts)
 		return landingNodeFailureResult(request, phases), err
 	}
+	artifacts.ServiceWasActive = managedXrayServiceActive()
 	if _, err := runCommand(commandTimeout, "systemctl", "restart", managedXrayServiceName); err != nil {
 		addPhase("systemd_restart", "failed", err.Error())
 		rollbackLandingNodeCreate(artifacts)
@@ -2292,14 +2318,14 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 	artifacts.ServiceStarted = true
 	addPhase("systemd_start", "passed", "LiveLine 管理的 Xray service 已 enable 并 restart。")
 
-	listenAttempts, err := verifyManagedXrayActiveAndListening(request.ListenPort)
+	listenAttempts, err := verifyManagedXrayActiveAndListeningPorts(expectedListenPorts)
 	if err != nil {
 		addPhase("verify_listening", "failed", err.Error())
 		diagnostics := collectManagedXrayDiagnostics(request.ListenPort)
 		rollbackSummary := rollbackLandingNodeCreate(artifacts)
 		return landingNodeFailureResultWithDiagnostics(request, phases, err, diagnostics, listenAttempts, rollbackSummary, true), err
 	}
-	addPhase("verify_listening", "passed", "Xray service active，27939/TCP 已监听。")
+	addPhase("verify_listening", "passed", fmt.Sprintf("Xray service active，%d/TCP 已监听。", request.ListenPort))
 
 	shareLink := buildVLESSRealityShareLink(request, reality)
 	return map[string]any{
@@ -2345,7 +2371,7 @@ func parseLandingNodeCreateRequest(cfg config, payload map[string]any) (landingN
 		ServerName:         defaultFirstStringPayload(payload, []string{"server_name", "sni", "reality_sni"}, defaultRealitySNI),
 		Dest:               defaultFirstStringPayload(payload, []string{"dest", "reality_dest"}, defaultRealityDest),
 		Fingerprint:        defaultStringPayload(payload, "fingerprint", defaultRealityFingerprint),
-		NodeName:           defaultStringPayload(payload, "node_name", "liveline-reality-27939"),
+		NodeName:           stringPayload(payload, "node_name"),
 		ManagedConfigPath:  defaultStringPayload(payload, "managed_config_path", managedXrayConfigPath),
 		ManagedServiceName: defaultStringPayload(payload, "managed_service_name", managedXrayServiceName),
 		ManagedServicePath: defaultStringPayload(payload, "managed_service_path", managedXrayServicePath),
@@ -2356,8 +2382,11 @@ func parseLandingNodeCreateRequest(cfg config, payload map[string]any) (landingN
 	if request.InterfaceName != cfg.InterfaceName {
 		return request, errors.New("landing_node_create interface does not match local worker config")
 	}
-	if request.ListenPort != formalLandingPort {
-		return request, fmt.Errorf("landing_node_create approved port must be %d", formalLandingPort)
+	if err := validateLandingNodeListenPort(request.ListenPort); err != nil {
+		return request, err
+	}
+	if request.NodeName == "" {
+		request.NodeName = fmt.Sprintf("liveline-reality-%d", request.ListenPort)
 	}
 	if request.Protocol != "vless" || request.Security != "reality" || request.Transport != "tcp" || request.Flow == "" || request.ServerName == "" || request.Dest == "" {
 		return request, errors.New("landing_node_create payload contains unsupported protocol or Reality fields")
@@ -2432,6 +2461,16 @@ func validTCPPort(port int) bool {
 	return port >= 1 && port <= 65535
 }
 
+func validateLandingNodeListenPort(port int) error {
+	if port < dynamicLandingPortMin || port > dynamicLandingPortMax {
+		return fmt.Errorf("landing_node_create listen_port must be between %d and %d", dynamicLandingPortMin, dynamicLandingPortMax)
+	}
+	if reason, blocked := blockedLandingListenPorts[port]; blocked {
+		return fmt.Errorf("landing_node_create listen_port is reserved: %s", reason)
+	}
+	return nil
+}
+
 func statusFromPassed(passed bool) string {
 	if passed {
 		return "passed"
@@ -2482,16 +2521,12 @@ func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
 		return fmt.Errorf("approved TCP port %d is already listening", request.ListenPort)
 	}
 	for _, path := range []string{
-		managedXrayBinaryPath,
 		"/usr/bin/xray",
-		managedXrayConfigPath,
-		managedXrayStateDir,
 		"/usr/local/bin/xray",
 		"/usr/local/etc/liveline-xray/config.json",
 		"/usr/local/etc/liveline-xray",
 		"/usr/local/etc/xray/config.json",
 		"/etc/xray/config.json",
-		managedXrayServicePath,
 		"/etc/systemd/system/xray.service",
 		"/etc/systemd/system/x-ui.service",
 		"/etc/systemd/system/3x-ui.service",
@@ -2503,6 +2538,9 @@ func landingNodePreflightRecheck(request landingNodeCreateRequest) error {
 		}
 	}
 	if err := validateManagedXrayBaseDirForPreflight(managedXrayBaseDir); err != nil {
+		return err
+	}
+	if err := validateManagedXrayServiceForPreflight(); err != nil {
 		return err
 	}
 	for _, binary := range []string{"xray", "x-ui", "3x-ui"} {
@@ -2534,12 +2572,13 @@ func validateManagedXrayBaseDirForPreflight(baseDir string) error {
 	if err != nil {
 		return fmt.Errorf("preflight cannot inspect %s: %w", baseDir, err)
 	}
+	allowedChildren := map[string]bool{"bin": true, "config": true, "state": true}
 	for _, entry := range entries {
 		childPath := filepath.Join(baseDir, entry.Name())
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("preflight refused because %s contains unsupported artifact %s", baseDir, childPath)
 		}
-		if entry.Name() != "bin" && entry.Name() != "config" {
+		if !allowedChildren[entry.Name()] {
 			return fmt.Errorf("preflight refused because %s contains unknown artifact %s", baseDir, childPath)
 		}
 		childInfo, err := entry.Info()
@@ -2553,14 +2592,61 @@ func validateManagedXrayBaseDirForPreflight(baseDir string) error {
 		if err != nil {
 			return fmt.Errorf("preflight cannot inspect %s: %w", childPath, err)
 		}
-		if len(childEntries) > 0 {
-			return fmt.Errorf("preflight refused because %s is not empty", childPath)
+		allowedFiles := map[string]bool{}
+		switch entry.Name() {
+		case "bin":
+			allowedFiles["xray"] = true
+		case "config":
+			allowedFiles["config.json"] = true
+		case "state":
+			allowedFiles["xray.zip"] = true
+		}
+		for _, child := range childEntries {
+			if child.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("preflight refused because %s contains symlink artifact %s", childPath, child.Name())
+			}
+			if !allowedFiles[child.Name()] {
+				return fmt.Errorf("preflight refused because %s contains unknown artifact %s", childPath, child.Name())
+			}
 		}
 	}
 	return nil
 }
 
+func validateManagedXrayServiceForPreflight() error {
+	if _, err := os.Stat(managedXrayServicePath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("preflight cannot inspect %s: %w", managedXrayServicePath, err)
+	}
+	content, err := os.ReadFile(managedXrayServicePath)
+	if err != nil {
+		return fmt.Errorf("preflight cannot read %s: %w", managedXrayServicePath, err)
+	}
+	text := string(content)
+	if !strings.Contains(text, "LiveLine managed Xray Reality node") || !strings.Contains(text, managedXrayConfigPath) {
+		return fmt.Errorf("preflight refused because %s is not a LiveLine managed Xray service", managedXrayServicePath)
+	}
+	return nil
+}
+
 func installXrayBinary(artifacts *landingNodeCreateArtifacts) error {
+	if err := ensureManagedXrayDirs(artifacts); err != nil {
+		return err
+	}
+	if info, err := os.Stat(managedXrayBinaryPath); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("%s exists but is a directory", managedXrayBinaryPath)
+		}
+		if info.Mode()&0o111 == 0 {
+			return fmt.Errorf("%s exists but is not executable", managedXrayBinaryPath)
+		}
+		artifacts.BinaryExisted = true
+		return nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
 	tmpDir, err := os.MkdirTemp("", "liveline-xray-*")
 	if err != nil {
 		return err
@@ -2578,10 +2664,11 @@ func installXrayBinary(artifacts *landingNodeCreateArtifacts) error {
 	if err := os.Chmod(xrayPath, 0o755); err != nil {
 		return err
 	}
-	if err := ensureManagedXrayDirs(artifacts); err != nil {
+	if err := copyFile(xrayPath, managedXrayBinaryPath, 0o755); err != nil {
 		return err
 	}
-	return copyFile(xrayPath, managedXrayBinaryPath, 0o755)
+	artifacts.BinaryWritten = true
+	return nil
 }
 
 func ensureManagedXrayDirs(artifacts *landingNodeCreateArtifacts) error {
@@ -2764,37 +2851,40 @@ func randomHex(byteCount int) (string, error) {
 	return hex.EncodeToString(buffer), nil
 }
 
-func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMaterial, artifacts *landingNodeCreateArtifacts) error {
-	config := map[string]any{
-		"log": map[string]any{"loglevel": "warning"},
-		"inbounds": []any{
-			map[string]any{
-				"listen":   "0.0.0.0",
-				"port":     request.ListenPort,
-				"protocol": "vless",
-				"settings": map[string]any{
-					"clients": []any{
-						map[string]any{
-							"id":   reality.UUID,
-							"flow": request.Flow,
-						},
-					},
-					"decryption": "none",
-				},
-				"streamSettings": map[string]any{
-					"network":  request.Transport,
-					"security": request.Security,
-					"realitySettings": map[string]any{
-						"show":        false,
-						"dest":        request.Dest,
-						"xver":        0,
-						"serverNames": []any{request.ServerName},
-						"privateKey":  reality.PrivateKey,
-						"shortIds":    []any{reality.ShortID},
-					},
+func buildManagedXrayInbound(request landingNodeCreateRequest, reality realityMaterial) map[string]any {
+	return map[string]any{
+		"tag":      fmt.Sprintf("liveline-reality-%d", request.ListenPort),
+		"listen":   "0.0.0.0",
+		"port":     request.ListenPort,
+		"protocol": "vless",
+		"settings": map[string]any{
+			"clients": []any{
+				map[string]any{
+					"id":   reality.UUID,
+					"flow": request.Flow,
 				},
 			},
+			"decryption": "none",
 		},
+		"streamSettings": map[string]any{
+			"network":  request.Transport,
+			"security": request.Security,
+			"realitySettings": map[string]any{
+				"show":        false,
+				"dest":        request.Dest,
+				"xver":        0,
+				"serverNames": []any{request.ServerName},
+				"privateKey":  reality.PrivateKey,
+				"shortIds":    []any{reality.ShortID},
+			},
+		},
+	}
+}
+
+func baseManagedXrayConfig(inbound map[string]any) map[string]any {
+	return map[string]any{
+		"log":      map[string]any{"loglevel": "warning"},
+		"inbounds": []any{inbound},
 		"outbounds": []any{
 			map[string]any{
 				"protocol": "freedom",
@@ -2802,17 +2892,99 @@ func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMat
 			},
 		},
 	}
-	content, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := ensureManagedXrayDirs(artifacts); err != nil {
-		return err
-	}
-	return os.WriteFile(managedXrayConfigPath, append(content, '\n'), 0o600)
 }
 
-func writeManagedXrayService() error {
+func managedXrayConfigListenPorts(config map[string]any) ([]int, error) {
+	rawInbounds, ok := config["inbounds"].([]any)
+	if !ok {
+		return nil, errors.New("managed Xray config has no inbounds array")
+	}
+	ports := []int{}
+	seen := map[int]bool{}
+	for _, item := range rawInbounds {
+		inbound, ok := item.(map[string]any)
+		if !ok {
+			return nil, errors.New("managed Xray config contains invalid inbound")
+		}
+		port := intResultValue(inbound["port"])
+		if !validTCPPort(port) {
+			return nil, errors.New("managed Xray config contains invalid inbound port")
+		}
+		if seen[port] {
+			return nil, fmt.Errorf("managed Xray config contains duplicate inbound port %d", port)
+		}
+		seen[port] = true
+		ports = append(ports, port)
+	}
+	sort.Ints(ports)
+	return ports, nil
+}
+
+func appendManagedXrayInbound(config map[string]any, request landingNodeCreateRequest, reality realityMaterial) (map[string]any, []int, error) {
+	ports, err := managedXrayConfigListenPorts(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, port := range ports {
+		if port == request.ListenPort {
+			return nil, nil, fmt.Errorf("managed Xray config already contains inbound port %d", request.ListenPort)
+		}
+	}
+	rawInbounds := config["inbounds"].([]any)
+	config["inbounds"] = append(rawInbounds, buildManagedXrayInbound(request, reality))
+	if _, ok := config["log"]; !ok {
+		config["log"] = map[string]any{"loglevel": "warning"}
+	}
+	if _, ok := config["outbounds"]; !ok {
+		config["outbounds"] = []any{map[string]any{"protocol": "freedom", "tag": "direct"}}
+	}
+	return config, append(ports, request.ListenPort), nil
+}
+
+func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMaterial, artifacts *landingNodeCreateArtifacts) ([]int, error) {
+	if err := ensureManagedXrayDirs(artifacts); err != nil {
+		return nil, err
+	}
+	inbound := buildManagedXrayInbound(request, reality)
+	config := baseManagedXrayConfig(inbound)
+	expectedPorts := []int{request.ListenPort}
+
+	existingContent, err := os.ReadFile(managedXrayConfigPath)
+	if err == nil {
+		artifacts.ConfigExisted = true
+		artifacts.PreviousConfig = append([]byte(nil), existingContent...)
+		if len(bytes.TrimSpace(existingContent)) == 0 {
+			return nil, errors.New("managed Xray config exists but is empty")
+		}
+		var existing map[string]any
+		if err := json.Unmarshal(existingContent, &existing); err != nil {
+			return nil, fmt.Errorf("managed Xray config is not valid JSON: %w", err)
+		}
+		config, expectedPorts, err = appendManagedXrayInbound(existing, request, reality)
+		if err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	content, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(managedXrayConfigPath, append(content, '\n'), 0o600); err != nil {
+		return nil, err
+	}
+	artifacts.ConfigWritten = true
+	return expectedPorts, nil
+}
+
+func writeManagedXrayService(artifacts *landingNodeCreateArtifacts) error {
+	if _, err := os.Stat(managedXrayServicePath); err == nil {
+		artifacts.ServiceExisted = true
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	content := `[Unit]
 Description=LiveLine managed Xray Reality node
 After=network-online.target
@@ -2829,13 +3001,24 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 `
-	return os.WriteFile(managedXrayServicePath, []byte(content), 0o644)
+	if err := os.WriteFile(managedXrayServicePath, []byte(content), 0o644); err != nil {
+		return err
+	}
+	artifacts.ServiceWritten = true
+	return nil
 }
 
 func verifyManagedXrayActiveAndListening(port int) ([]any, error) {
+	return verifyManagedXrayActiveAndListeningPorts([]int{port})
+}
+
+func verifyManagedXrayActiveAndListeningPorts(ports []int) ([]any, error) {
+	if len(ports) == 0 {
+		return nil, errors.New("no managed Xray listen ports provided for verification")
+	}
 	attempts := []any{}
 	var lastActive string
-	var lastListener bool
+	lastListeners := map[int]bool{}
 	var lastErr error
 	for index := 1; index <= 10; index++ {
 		output, err := runCommand(8*time.Second, "systemctl", "is-active", managedXrayServiceName)
@@ -2844,23 +3027,34 @@ func verifyManagedXrayActiveAndListening(port int) ([]any, error) {
 			active = "unknown"
 		}
 		ssOutput, ssErr := readonlyCommandOutput("ss", "-lntp")
-		matchingLines := ssMatchingLinesForPort(ssOutput, port)
-		listener := len(matchingLines) > 0
+		portChecks := map[string]any{}
+		allListening := true
+		for _, port := range ports {
+			matchingLines := ssMatchingLinesForPort(ssOutput, port)
+			listener := len(matchingLines) > 0
+			lastListeners[port] = listener
+			if !listener {
+				allListening = false
+			}
+			portChecks[strconv.Itoa(port)] = map[string]any{
+				"port_listening":    listener,
+				"ss_matching_lines": matchingLines,
+			}
+		}
 		attempt := map[string]any{
 			"attempt":             index,
 			"xray_service_active": active,
-			"port_listening":      listener,
-			"ss_matching_lines":   matchingLines,
+			"all_ports_listening": allListening,
+			"port_checks":         portChecks,
 		}
 		if ssErr != "" {
 			attempt["ss_error"] = truncateCompactString(ssErr, 160)
 		}
 		attempts = append(attempts, attempt)
-		fmt.Printf("landing_node_create listen_verification attempt=%d service_active=%s port_listening=%v\n", index, active, listener)
+		fmt.Printf("landing_node_create listen_verification attempt=%d service_active=%s all_ports_listening=%v\n", index, active, allListening)
 		lastActive = active
-		lastListener = listener
 		lastErr = err
-		if err == nil && active == "active" && listener {
+		if err == nil && active == "active" && allListening {
 			return attempts, nil
 		}
 		if index < 10 {
@@ -2868,12 +3062,12 @@ func verifyManagedXrayActiveAndListening(port int) ([]any, error) {
 		}
 	}
 	if lastErr != nil {
-		return attempts, fmt.Errorf("landing_node_create service did not become verifiably active/listening: active=%s listener=%v error=%w", lastActive, lastListener, lastErr)
+		return attempts, fmt.Errorf("landing_node_create service did not become verifiably active/listening: active=%s listeners=%v error=%w", lastActive, lastListeners, lastErr)
 	}
 	if lastActive != "active" {
 		return attempts, fmt.Errorf("%s is not active after retry: %s", managedXrayServiceName, lastActive)
 	}
-	return attempts, fmt.Errorf("approved TCP port %d is not listening after Xray start", port)
+	return attempts, fmt.Errorf("one or more managed Xray TCP ports are not listening after Xray start: %v", lastListeners)
 }
 
 func portListening(port int) bool {
@@ -3036,14 +3230,22 @@ func rollbackLandingNodeCreate(artifacts *landingNodeCreateArtifacts) []any {
 		add("systemctl_stop", managedXrayServiceName, err)
 	}
 	if artifacts.ServiceWritten {
-		_, err := runCommand(30*time.Second, "systemctl", "disable", managedXrayServiceName)
-		add("systemctl_disable", managedXrayServiceName, err)
-		add("remove", managedXrayServicePath, os.Remove(managedXrayServicePath))
+		if artifacts.ServiceExisted {
+			add("preserve", managedXrayServicePath, nil)
+		} else {
+			_, err := runCommand(30*time.Second, "systemctl", "disable", managedXrayServiceName)
+			add("systemctl_disable", managedXrayServiceName, err)
+			add("remove", managedXrayServicePath, os.Remove(managedXrayServicePath))
+		}
 	}
 	if artifacts.ConfigWritten {
-		add("remove", managedXrayConfigPath, os.Remove(managedXrayConfigPath))
+		if artifacts.ConfigExisted {
+			add("restore", managedXrayConfigPath, os.WriteFile(managedXrayConfigPath, artifacts.PreviousConfig, 0o600))
+		} else {
+			add("remove", managedXrayConfigPath, os.Remove(managedXrayConfigPath))
+		}
 	}
-	if artifacts.BinaryWritten {
+	if artifacts.BinaryWritten && !artifacts.BinaryExisted {
 		add("remove", managedXrayBinaryPath, os.Remove(managedXrayBinaryPath))
 	}
 	if artifacts.StateDirCreated {
@@ -3062,7 +3264,16 @@ func rollbackLandingNodeCreate(artifacts *landingNodeCreateArtifacts) []any {
 		_, err := runCommand(30*time.Second, "systemctl", "daemon-reload")
 		add("systemctl_daemon_reload", "systemd", err)
 	}
+	if artifacts.ServiceWasActive && artifacts.ConfigExisted {
+		_, err := runCommand(30*time.Second, "systemctl", "restart", managedXrayServiceName)
+		add("systemctl_restart_previous", managedXrayServiceName, err)
+	}
 	return summary
+}
+
+func managedXrayServiceActive() bool {
+	output, err := runCommand(8*time.Second, "systemctl", "is-active", managedXrayServiceName)
+	return err == nil && strings.TrimSpace(output) == "active"
 }
 
 func collectManagedXrayDiagnostics(port int) map[string]any {
@@ -5431,7 +5642,7 @@ func summarizeListeningPorts(ssOutput string, limit int) []map[string]any {
 
 func landingPortSummary(ssOutput string) map[string]any {
 	rows, skipped := listeningPortRows(ssOutput)
-	checks := portChecksFromRows(rows, []int{22, 80, 443, 8443, 18443, formalLandingPort})
+	checks := portChecksFromRows(rows, []int{22, 80, 443, 8443, 18443, defaultLandingPort})
 	importantPorts := map[string]any{}
 	for _, check := range checks {
 		port := fmt.Sprintf("%v", check["port"])
