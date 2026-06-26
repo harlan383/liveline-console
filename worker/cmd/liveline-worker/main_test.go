@@ -2195,6 +2195,94 @@ LISTEN  0      4096   127.0.0.1:22      0.0.0.0:*     users:(("sshd",pid=1,fd=3)
 	}
 }
 
+func landingNodeCreatePayload(overrides map[string]any) map[string]any {
+	payload := map[string]any{
+		"server_id":            "server-1",
+		"server_ip":            "198.51.100.19",
+		"worker_id":            "worker-1",
+		"interface_name":       "ens17",
+		"listen_port":          formalLandingPort,
+		"protocol":             "vless",
+		"security":             "reality",
+		"flow":                 defaultRealityFlow,
+		"node_name":            "liveline-reality-27939",
+		"managed_config_path":  managedXrayConfigPath,
+		"managed_service_name": managedXrayServiceName,
+		"managed_service_path": managedXrayServicePath,
+	}
+	for key, value := range overrides {
+		payload[key] = value
+	}
+	return payload
+}
+
+func TestLandingNodeCreateRequestDefaultsToCloudflareRealityTemplate(t *testing.T) {
+	cfg := config{WorkerID: "worker-1", InterfaceName: "ens17"}
+	request, err := parseLandingNodeCreateRequest(cfg, landingNodeCreatePayload(map[string]any{}))
+	if err != nil {
+		t.Fatalf("parseLandingNodeCreateRequest error = %v", err)
+	}
+	if request.ServerName != defaultRealitySNI {
+		t.Fatalf("ServerName = %q, want %q", request.ServerName, defaultRealitySNI)
+	}
+	if request.Dest != defaultRealityDest {
+		t.Fatalf("Dest = %q, want %q", request.Dest, defaultRealityDest)
+	}
+	if request.Fingerprint != defaultRealityFingerprint {
+		t.Fatalf("Fingerprint = %q, want %q", request.Fingerprint, defaultRealityFingerprint)
+	}
+	if request.Transport != defaultRealityTransport {
+		t.Fatalf("Transport = %q, want %q", request.Transport, defaultRealityTransport)
+	}
+}
+
+func TestLandingNodeCreateRequestUsesCustomRealityTemplate(t *testing.T) {
+	cfg := config{WorkerID: "worker-1", InterfaceName: "ens17"}
+	request, err := parseLandingNodeCreateRequest(cfg, landingNodeCreatePayload(map[string]any{
+		"server_name": "edge.example.com",
+		"dest":        "edge.example.com:443",
+		"fingerprint": "chrome",
+		"transport":   "tcp",
+	}))
+	if err != nil {
+		t.Fatalf("parseLandingNodeCreateRequest error = %v", err)
+	}
+	if request.ServerName != "edge.example.com" || request.Dest != "edge.example.com:443" || request.Fingerprint != "chrome" {
+		t.Fatalf("custom Reality fields not preserved: %#v", request)
+	}
+}
+
+func TestLandingNodeCreateShareLinkIncludesHeaderTypeNone(t *testing.T) {
+	request := landingNodeCreateRequest{
+		ServerIP:    "198.51.100.19",
+		ListenPort:  formalLandingPort,
+		Flow:        defaultRealityFlow,
+		Transport:   defaultRealityTransport,
+		ServerName:  defaultRealitySNI,
+		Fingerprint: defaultRealityFingerprint,
+		NodeName:    "liveline-reality-27939",
+	}
+	reality := realityMaterial{
+		UUID:      "11111111-2222-3333-4444-555555555555",
+		PublicKey: "fake-public-key",
+		ShortID:   "abcdef",
+	}
+	link := buildVLESSRealityShareLink(request, reality)
+	for _, expected := range []string{
+		"sni=dash.cloudflare.com",
+		"fp=chrome",
+		"type=tcp",
+		"headerType=none",
+	} {
+		if !strings.Contains(link, expected) {
+			t.Fatalf("share link missing %q: %s", expected, link)
+		}
+	}
+	if strings.Contains(link, "www.microsoft.com") {
+		t.Fatalf("share link retained old Reality template: %s", link)
+	}
+}
+
 func TestLandingNodeCreateFailedSubmitKeepsDiagnosticsAndDropsSecrets(t *testing.T) {
 	result := map[string]any{
 		"status":               "failed",

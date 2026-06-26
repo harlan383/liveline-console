@@ -50,7 +50,7 @@ from app.services.worker_targeting import (
 )
 
 router = APIRouter()
-EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run"
+EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.32-stage-3.3.179-reality-dest-sni-template"
 TRANSIT_WORKER_UPGRADE_ACCEPTANCE_FORWARDING_METHOD = "haproxy_tcp"
 TRANSIT_WORKER_UPGRADE_ACCEPTANCE_CHECKSUM = "6019e7db5de7176854ea2a57c3d80d00f41f04b52e16ed8b97dcb0cb1a76ddb1"
 TRANSIT_WORKER_ACCEPTANCE_RESOURCE_STATUSES = {"pending_worker", "worker_online", "worker_offline"}

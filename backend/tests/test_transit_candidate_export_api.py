@@ -232,6 +232,7 @@ class TransitCandidateExportApiTests(unittest.TestCase):
         self.assertIn("sid=fake-short-id", exported["candidate_link"])
         self.assertIn("sni=www.example.com", exported["candidate_link"])
         self.assertIn("flow=xtls-rprx-vision", exported["candidate_link"])
+        self.assertIn("headerType=none", exported["candidate_link"])
         self.assertTrue(exported["candidate_link"].endswith("#hk-socat-live-23843"))
         self.assertNotEqual(exported["candidate_link"], original_node_share_link)
         self.assertEqual(route.node.share_link, original_node_share_link)

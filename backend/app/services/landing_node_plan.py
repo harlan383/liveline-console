@@ -292,6 +292,7 @@ def build_landing_node_plan(
         "flow": payload.flow,
         "server_name": payload.server_name,
         "dest": payload.dest,
+        "fingerprint": payload.fingerprint,
         "key_generation_strategy": {
             "uuid": "future_worker_generates_at_execution_time",
             "reality_private_key": "future_worker_generates_at_execution_time_and_never_returns_private_key",
