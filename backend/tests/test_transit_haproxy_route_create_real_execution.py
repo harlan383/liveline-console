@@ -101,6 +101,7 @@ class FakeSession:
         command_present: bool = True,
         command_payload: dict | None = None,
         command_status: str = "succeeded",
+        command_worker_id: str = TRANSIT_WORKER_ID,
         resource_present: bool = True,
         node_present: bool = True,
         node_port: int | None = 27939,
@@ -163,7 +164,7 @@ class FakeSession:
         self.command = (
             WorkerCommand(
                 id=DRY_RUN_COMMAND_ID,
-                worker_id=TRANSIT_WORKER_ID,
+                worker_id=command_worker_id,
                 server_type="transit",
                 server_id=TRANSIT_RESOURCE_ID,
                 command_type="transit_route_create",
@@ -316,6 +317,12 @@ class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
             "dry_run_payload_matches_real_request",
         )
 
+    def test_dry_run_worker_mismatch_blocks_real_execution(self):
+        self.assert_blocked_by(
+            FakeSession(command_worker_id="older-transit-worker"),
+            "dry_run_worker_matches_current_transit_worker",
+        )
+
     def test_missing_approved_planned_listen_port_blocks_real_execution(self):
         command_payload = dry_run_payload()
         command_payload.pop("approved_planned_listen_port")
@@ -396,6 +403,7 @@ class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
         self.assertEqual(command_payload["source_dry_run_command_id"], DRY_RUN_COMMAND_ID)
         self.assertFalse(command_payload["dry_run"])
         self.assertFalse(command_payload["approval_required"])
+        self.assertTrue(command_payload["real_execution"])
         self.assertTrue(command_payload["approved_real_execution"])
         self.assertEqual(command_payload["execution_mode"], "real_create")
         self.assertEqual(command_payload["planned_service_name"], "liveline-haproxy-23843.service")
@@ -407,6 +415,12 @@ class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
         self.assertEqual(command_payload["approved_landing_target_host"], "64.90.13.19")
         self.assertEqual(command_payload["landing_target_port"], 27939)
         self.assertEqual(command_payload["approved_landing_target_port"], 27939)
+        self.assertFalse(command_payload["route_created"])
+        self.assertFalse(command_payload["haproxy_installed"])
+        self.assertFalse(command_payload["listener_bound"])
+        self.assertFalse(command_payload["firewall_modified"])
+        self.assertFalse(command_payload["share_link_mutated"])
+        self.assertFalse(command_payload["cutover"])
 
         forbidden_keys = {
             "shell",
