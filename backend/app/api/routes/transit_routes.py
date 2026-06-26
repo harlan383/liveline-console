@@ -1376,8 +1376,12 @@ def create_haproxy_route_create_dry_run(
         "landing_node_id": node.id,
         "landing_node_name": node.node_name,
         "planned_listen_port": payload.planned_listen_port,
+        "approved_planned_listen_port": payload.planned_listen_port,
+        "approved_firewall_confirmation": True,
         "landing_target_host": payload.landing_target_host,
+        "approved_landing_target_host": payload.landing_target_host,
         "landing_target_port": payload.landing_target_port,
+        "approved_landing_target_port": payload.landing_target_port,
         "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
         "purpose": payload.purpose,
         "approval_stage": payload.approval_stage,
@@ -1476,8 +1480,12 @@ def haproxy_route_create_final_approval(
         "transit_resource_id": payload.transit_resource_id,
         "landing_node_id": payload.landing_node_id,
         "planned_listen_port": payload.planned_listen_port,
+        "approved_planned_listen_port": payload.planned_listen_port,
+        "approved_firewall_confirmation": True,
         "landing_target_host": payload.landing_target_host,
+        "approved_landing_target_host": payload.landing_target_host,
         "landing_target_port": payload.landing_target_port,
+        "approved_landing_target_port": payload.landing_target_port,
         "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
         "route_name": payload.route_name,
         "planned_service_name": payload.planned_service_name,
@@ -1492,6 +1500,10 @@ def haproxy_route_create_final_approval(
         and command_payload.get("dry_run") is True
         and command_payload.get("real_execution") is False
         and command_payload.get("user_approved_real_execution") is False
+        and command_payload.get("approved_planned_listen_port") == payload.planned_listen_port
+        and command_payload.get("approved_firewall_confirmation") is True
+        and command_payload.get("approved_landing_target_host") == payload.landing_target_host
+        and command_payload.get("approved_landing_target_port") == payload.landing_target_port
         and command_payload.get("route_created", False) is False
         and command_payload.get("listener_bound", False) is False
         and command_payload.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP
@@ -1823,8 +1835,12 @@ def create_haproxy_route_create_real_execution(
         "transit_resource_id": payload.transit_resource_id,
         "landing_node_id": payload.landing_node_id,
         "planned_listen_port": payload.planned_listen_port,
+        "approved_planned_listen_port": payload.planned_listen_port,
+        "approved_firewall_confirmation": True,
         "landing_target_host": payload.landing_target_host,
+        "approved_landing_target_host": payload.landing_target_host,
         "landing_target_port": payload.landing_target_port,
+        "approved_landing_target_port": payload.landing_target_port,
         "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
         "route_name": payload.route_name,
         "planned_service_name": planned_service_name,
@@ -1843,6 +1859,10 @@ def create_haproxy_route_create_real_execution(
         and command_payload.get("approval_required") is True
         and command_payload.get("real_execution") is False
         and command_payload.get("user_approved_real_execution") is False
+        and command_payload.get("approved_planned_listen_port") == payload.planned_listen_port
+        and command_payload.get("approved_firewall_confirmation") is True
+        and command_payload.get("approved_landing_target_host") == payload.landing_target_host
+        and command_payload.get("approved_landing_target_port") == payload.landing_target_port
         and command_payload.get("route_created", False) is False
         and command_payload.get("listener_bound", False) is False
         and command_payload.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP
@@ -2127,8 +2147,12 @@ def create_haproxy_route_create_real_execution(
         "landing_node_id": node.id,
         "landing_node_name": node.node_name,
         "planned_listen_port": payload.planned_listen_port,
+        "approved_planned_listen_port": payload.planned_listen_port,
+        "approved_firewall_confirmation": True,
         "landing_target_host": payload.landing_target_host,
+        "approved_landing_target_host": payload.landing_target_host,
         "landing_target_port": payload.landing_target_port,
+        "approved_landing_target_port": payload.landing_target_port,
         "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
         "purpose": "HAProxy TCP protected route create",
         "approval_stage": HAPROXY_ROUTE_CREATE_REAL_EXECUTION_STAGE,
@@ -2432,6 +2456,15 @@ def create_transit_route_worker_create_plan(
         "route_name": route_name,
         "safety_boundary": TRANSIT_ROUTE_CREATE_DRY_RUN_BOUNDARY,
     }
+    if payload.forwarding_method == FORWARDING_METHOD_HAPROXY_TCP:
+        command_payload.update(
+            {
+                "approved_planned_listen_port": payload.planned_listen_port,
+                "approved_firewall_confirmation": True,
+                "approved_landing_target_host": payload.landing_target_host,
+                "approved_landing_target_port": payload.landing_target_port,
+            }
+        )
     command = create_worker_command(db, target_worker, TRANSIT_ROUTE_CREATE_COMMAND, command_payload)
     record_audit(
         db,
@@ -2660,6 +2693,15 @@ def create_transit_route_worker_create_execute(
         "no_cutover_confirmed": True,
         "safety_boundary": TRANSIT_ROUTE_CREATE_REAL_BOUNDARY,
     }
+    if payload.forwarding_method == FORWARDING_METHOD_HAPROXY_TCP:
+        command_payload.update(
+            {
+                "approved_planned_listen_port": payload.planned_listen_port,
+                "approved_firewall_confirmation": True,
+                "approved_landing_target_host": payload.landing_target_host,
+                "approved_landing_target_port": payload.landing_target_port,
+            }
+        )
     command = create_worker_command(db, target_worker, TRANSIT_ROUTE_CREATE_COMMAND, command_payload)
     record_audit(
         db,

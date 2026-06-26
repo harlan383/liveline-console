@@ -50,9 +50,9 @@ from app.services.worker_targeting import (
 )
 
 router = APIRouter()
-EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.35-stage-3.3.182-hotfix-xray-temp-json-suffix"
+EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.36-stage-3.3.188-transit-port-approval"
 TRANSIT_WORKER_UPGRADE_ACCEPTANCE_FORWARDING_METHOD = "haproxy_tcp"
-TRANSIT_WORKER_UPGRADE_ACCEPTANCE_CHECKSUM = "76ce855d0b63d03fdf53261d23030beb9e0f990d04d72689b098927f09986e83"
+TRANSIT_WORKER_UPGRADE_ACCEPTANCE_CHECKSUM = "377a6b9a53ddc3971e2e32e8b0fa48bdc594f53c634d34a6a8bd45597f21ae8e"
 TRANSIT_WORKER_ACCEPTANCE_RESOURCE_STATUSES = {"pending_worker", "worker_online", "worker_offline"}
 WORKER_INSTALL_COMMAND_ALLOWED_STATUSES = {"pending_worker", "worker_online", "worker_offline", "online"}
 

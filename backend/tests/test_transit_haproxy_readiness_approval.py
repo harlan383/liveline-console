@@ -66,7 +66,7 @@ class FakeSession:
         worker_present: bool = True,
         worker_status: str = "online",
         worker_role: str = "transit",
-        worker_version: str | None = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run",
+        worker_version: str | None = "0.1.36-stage-3.3.188-transit-port-approval",
         worker_interface: str | None = "eth0",
         worker_heartbeat_recent: bool = True,
     ) -> None:

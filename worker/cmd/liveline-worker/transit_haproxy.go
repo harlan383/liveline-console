@@ -197,32 +197,9 @@ func validateTransitRouteCreateHaproxyRequest(cfg config, request transitRouteCr
 	if err := validateTransitRouteCreateWorkerApproval(cfg, request); err != nil {
 		return err
 	}
-	if normalizeTransitHaproxyForwardingMethod(request.ForwardingMethod) != transitHaproxyForwardingMethod {
-		return errors.New("haproxy_tcp create path requires forwarding_method=haproxy_tcp")
-	}
-	if request.PlannedListenPort != approvedTransitListenPort {
-		return errors.New("haproxy_tcp planned_listen_port is not approved")
-	}
-	if request.LandingTargetHost != approvedTransitLandingTargetHost {
-		return errors.New("haproxy_tcp landing_target_host is not approved")
-	}
-	if request.LandingTargetPort != approvedTransitLandingTargetPort {
-		return errors.New("haproxy_tcp landing_target_port is not approved")
-	}
-	if request.RouteName != approvedTransitHaproxyRouteName {
-		return errors.New("haproxy_tcp route_name is not approved")
-	}
-	if !validTCPPort(request.PlannedListenPort) || !validTCPPort(request.LandingTargetPort) {
-		return errors.New("haproxy_tcp ports must be 1-65535")
-	}
-	if reason, reserved := protectedTransitListenPorts[request.PlannedListenPort]; reserved {
-		return fmt.Errorf("haproxy_tcp planned listen port is protected: %s", reason)
-	}
-	if !safeDialTargetHost(request.LandingTargetHost) {
-		return errors.New("haproxy_tcp landing target host is invalid")
-	}
-	if !transitRouteNameRE.MatchString(request.RouteName) {
-		return errors.New("haproxy_tcp route_name contains unsafe characters")
+	request.ForwardingMethod = normalizeTransitHaproxyForwardingMethod(request.ForwardingMethod)
+	if err := validateTransitRouteCreateHaproxyApprovedParams(request); err != nil {
+		return err
 	}
 	serviceName := transitHaproxyServiceNameForPort(request.PlannedListenPort)
 	if !livelineHaproxyServiceNameRE.MatchString(serviceName) {

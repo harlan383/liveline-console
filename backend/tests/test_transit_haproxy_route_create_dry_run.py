@@ -66,7 +66,7 @@ class FakeSession:
         worker_present: bool = True,
         worker_status: str = "online",
         worker_role: str = "transit",
-        worker_version: str | None = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run",
+        worker_version: str | None = "0.1.36-stage-3.3.188-transit-port-approval",
         worker_interface: str | None = "eth0",
         worker_heartbeat_recent: bool = True,
     ) -> None:
@@ -308,6 +308,13 @@ class TransitHaproxyRouteCreateDryRunTests(unittest.TestCase):
         self.assertEqual(data["data"]["planned_service_name"], "liveline-haproxy-12081.service")
         command_payload = data["data"]["command"]["payload"]
         haproxy_config_plan = command_payload["haproxy_config_plan"]
+        self.assertEqual(command_payload["planned_listen_port"], 12081)
+        self.assertEqual(command_payload["approved_planned_listen_port"], 12081)
+        self.assertTrue(command_payload["approved_firewall_confirmation"])
+        self.assertEqual(command_payload["landing_target_host"], "64.90.13.19")
+        self.assertEqual(command_payload["approved_landing_target_host"], "64.90.13.19")
+        self.assertEqual(command_payload["landing_target_port"], 27939)
+        self.assertEqual(command_payload["approved_landing_target_port"], 27939)
         self.assertEqual(command_payload["planned_service_name"], "liveline-haproxy-12081.service")
         self.assertEqual(haproxy_config_plan["mode"], "tcp")
         self.assertEqual(haproxy_config_plan["frontend_bind"], "*:12081")
