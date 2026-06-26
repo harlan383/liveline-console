@@ -156,6 +156,7 @@ def valid_payload(**overrides):
         "forwarding_method": "haproxy_tcp",
         "purpose": "直播",
         "route_name": "haproxy-tcp-12081",
+        "route_display_name": "mk香港落地15m",
         "readiness_approval_confirmed": True,
         "dry_run": True,
         "approval_required": True,
@@ -309,6 +310,9 @@ class TransitHaproxyRouteCreateDryRunTests(unittest.TestCase):
         command_payload = data["data"]["command"]["payload"]
         haproxy_config_plan = command_payload["haproxy_config_plan"]
         self.assertEqual(command_payload["planned_listen_port"], 12081)
+        self.assertEqual(command_payload["route_name"], "haproxy-tcp-12081")
+        self.assertEqual(command_payload["route_display_name"], "mk香港落地15m")
+        self.assertEqual(data["data"]["route_display_name"], "mk香港落地15m")
         self.assertEqual(command_payload["approved_planned_listen_port"], 12081)
         self.assertTrue(command_payload["approved_firewall_confirmation"])
         self.assertEqual(command_payload["landing_target_host"], "64.90.13.19")

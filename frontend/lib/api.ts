@@ -385,6 +385,7 @@ export type TransitHaproxyRouteCreateDryRunRequest = {
   forwarding_method: "haproxy_tcp";
   purpose: string | null;
   route_name: string;
+  route_display_name?: string | null;
   approval_stage: string;
   readiness_approval_confirmed: true;
   dry_run: true;
@@ -417,6 +418,7 @@ export type TransitHaproxyRouteCreateDryRunResult = {
   landing_target_port: number;
   forwarding_method: "haproxy_tcp";
   route_name: string;
+  route_display_name?: string | null;
   readiness_summary: string;
   checks: ReadonlyPreflightCheckItem[];
   safety_boundary: string[];
@@ -432,6 +434,7 @@ export type TransitHaproxyRouteCreateFinalApprovalRequest = {
   landing_target_port: number;
   forwarding_method: "haproxy_tcp";
   route_name: string;
+  route_display_name?: string | null;
   planned_service_name: string;
   approval_stage: string;
   dry_run_verified: boolean;
@@ -456,6 +459,7 @@ export type TransitHaproxyRouteCreateFinalApprovalResult = {
   landing_target_port: number;
   forwarding_method: "haproxy_tcp";
   route_name: string;
+  route_display_name?: string | null;
   target_worker_id: string | null;
   target_worker_version: string | null;
   minimum_supported_worker_version: string;
@@ -482,6 +486,7 @@ export type TransitHaproxyRouteCreateRealExecutionRequest = {
   landing_target_port: number;
   forwarding_method: "haproxy_tcp";
   route_name: string;
+  route_display_name?: string | null;
   approval_stage: string;
   final_approval_text: string;
   real_execution_text: string;
@@ -505,6 +510,7 @@ export type TransitHaproxyRouteCreateRealExecutionResult = {
   landing_target_port: number;
   forwarding_method: "haproxy_tcp";
   route_name: string;
+  route_display_name?: string | null;
   target_worker_id: string | null;
   target_worker_version: string | null;
   minimum_supported_worker_version: string;

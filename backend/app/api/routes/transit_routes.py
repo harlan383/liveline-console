@@ -1397,6 +1397,7 @@ def create_haproxy_route_create_dry_run(
         "share_link_mutated": False,
         "cutover": False,
         "route_name": payload.route_name,
+        "route_display_name": payload.route_display_name,
         "planned_service_name": planned_service_name,
         "haproxy_config_plan": {
             "mode": "tcp",
@@ -1447,6 +1448,7 @@ def create_haproxy_route_create_dry_run(
             "landing_target_port": payload.landing_target_port,
             "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
             "route_name": payload.route_name,
+            "route_display_name": payload.route_display_name,
             "readiness_summary": readiness["summary"],
             "checks": readiness["checks"],
             "safety_boundary": HAPROXY_ROUTE_CREATE_DRY_RUN_BOUNDARY,
@@ -1490,6 +1492,8 @@ def haproxy_route_create_final_approval(
         "route_name": payload.route_name,
         "planned_service_name": payload.planned_service_name,
     }
+    if command_payload.get("route_display_name") or payload.route_display_name:
+        payload_match_fields["route_display_name"] = payload.route_display_name
     payload_matches = bool(command_payload) and all(
         command_payload.get(key) == value for key, value in payload_match_fields.items()
     )
@@ -1757,6 +1761,7 @@ def haproxy_route_create_final_approval(
             "landing_target_port": payload.landing_target_port,
             "forwarding_method": payload.forwarding_method,
             "route_name": payload.route_name,
+            "route_display_name": payload.route_display_name,
             "target_worker_id": target_worker.id if target_worker else None,
             "target_worker_version": target_worker.worker_version if target_worker else None,
             "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
@@ -1854,6 +1859,8 @@ def create_haproxy_route_create_real_execution(
         "route_name": payload.route_name,
         "planned_service_name": planned_service_name,
     }
+    if command_payload.get("route_display_name") or payload.route_display_name:
+        payload_match_fields["route_display_name"] = payload.route_display_name
     payload_matches = bool(command_payload) and all(
         command_payload.get(key) == value for key, value in payload_match_fields.items()
     )
@@ -2130,6 +2137,7 @@ def create_haproxy_route_create_real_execution(
         "landing_target_port": payload.landing_target_port,
         "forwarding_method": payload.forwarding_method,
         "route_name": payload.route_name,
+        "route_display_name": payload.route_display_name,
         "target_worker_id": target_worker.id if target_worker else None,
         "target_worker_version": target_worker.worker_version if target_worker else None,
         "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
@@ -2181,6 +2189,7 @@ def create_haproxy_route_create_real_execution(
         "approved_real_execution": True,
         "user_approved_real_execution": True,
         "route_name": payload.route_name,
+        "route_display_name": payload.route_display_name,
         "planned_service_name": planned_service_name,
         "route_created": False,
         "haproxy_installed": False,

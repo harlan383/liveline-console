@@ -88,6 +88,7 @@ def dry_run_payload(**overrides):
         "share_link_mutated": False,
         "cutover": False,
         "route_name": "haproxy-tcp-23843",
+        "route_display_name": "mk香港落地15m",
         "planned_service_name": "liveline-haproxy-23843.service",
     }
     payload.update(overrides)
@@ -262,6 +263,7 @@ def valid_payload(**overrides):
         "landing_target_port": 27939,
         "forwarding_method": "haproxy_tcp",
         "route_name": "haproxy-tcp-23843",
+        "route_display_name": "mk香港落地15m",
         "approval_stage": "Stage 3.3.139-new-transit-haproxy-route-create-real-execution",
         "firewall_security_group_confirmed": True,
         "cloud_firewall_confirmed": True,
@@ -408,6 +410,8 @@ class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
         self.assertEqual(command_payload["execution_mode"], "real_create")
         self.assertEqual(command_payload["planned_service_name"], "liveline-haproxy-23843.service")
         self.assertEqual(command_payload["forwarding_method"], "haproxy_tcp")
+        self.assertEqual(command_payload["route_name"], "haproxy-tcp-23843")
+        self.assertEqual(command_payload["route_display_name"], "mk香港落地15m")
         self.assertEqual(command_payload["planned_listen_port"], 23843)
         self.assertEqual(command_payload["approved_planned_listen_port"], 23843)
         self.assertTrue(command_payload["approved_firewall_confirmation"])
