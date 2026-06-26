@@ -729,7 +729,7 @@ export const OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT = "CONFIRM_OFFLINE_LOCAL_REMOVE";
 
 export type WorkerRole = "landing" | "transit";
 
-export const CURRENT_WORKER_INSTALL_VERSION = "0.1.34-stage-3.3.181-xray-v25516-multi-inbound";
+export const CURRENT_WORKER_INSTALL_VERSION = "0.1.35-stage-3.3.182-hotfix-xray-temp-json-suffix";
 
 export type WorkerTokenCreateRequest = {
   role: WorkerRole;

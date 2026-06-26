@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.34-stage-3.3.181-xray-v25516-multi-inbound"
+const workerVersion = "0.1.35-stage-3.3.182-hotfix-xray-temp-json-suffix"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -3182,12 +3182,12 @@ func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMat
 	if err != nil {
 		return nil, err
 	}
-	tempPath := filepath.Join(managedXrayConfigDir, ".config.json."+strconv.FormatInt(time.Now().UnixNano(), 10)+".tmp")
+	tempPath := managedXrayTempConfigPath()
 	if err := os.WriteFile(tempPath, append(content, '\n'), 0o600); err != nil {
 		return nil, err
 	}
 	defer os.Remove(tempPath)
-	if _, err := runCommandFunc(commandTimeout, managedXrayBinaryPath, "run", "-test", "-config", tempPath); err != nil {
+	if err := runManagedXrayConfigTest(tempPath); err != nil {
 		return nil, err
 	}
 	if err := os.Rename(tempPath, managedXrayConfigPath); err != nil {
@@ -3195,6 +3195,24 @@ func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMat
 	}
 	artifacts.ConfigWritten = true
 	return expectedPorts, nil
+}
+
+func managedXrayTempConfigPath() string {
+	return managedXrayTempConfigPathForDir(managedXrayConfigDir, time.Now().UnixNano())
+}
+
+func managedXrayTempConfigPathForDir(configDir string, unixNano int64) string {
+	return filepath.Join(configDir, ".config."+strconv.FormatInt(unixNano, 10)+".json")
+}
+
+func managedXrayConfigTestArgs(configPath string) []string {
+	return []string{"run", "-test", "-config", configPath}
+}
+
+func runManagedXrayConfigTest(configPath string) error {
+	args := managedXrayConfigTestArgs(configPath)
+	_, err := runCommandFunc(commandTimeout, managedXrayBinaryPath, args...)
+	return err
 }
 
 func writeManagedXrayService(artifacts *landingNodeCreateArtifacts) error {
