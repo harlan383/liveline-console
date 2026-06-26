@@ -25,6 +25,12 @@ HAPROXY_ROUTE_NAME = "mkiepl-haproxy-live-23843"
 HAPROXY_SERVICE_NAME = "liveline-haproxy-23843.service"
 HAPROXY_SERVICE_PATH = "/etc/systemd/system/liveline-haproxy-23843.service"
 HAPROXY_CONFIG_PATH = "/etc/haproxy/liveline/routes/liveline-haproxy-23843.cfg"
+DYNAMIC_HAPROXY_LISTEN_PORT = 23587
+DYNAMIC_LANDING_TARGET_PORT = 28917
+DYNAMIC_HAPROXY_ROUTE_NAME = "mkiepl-haproxy-live-23587"
+DYNAMIC_HAPROXY_SERVICE_NAME = "liveline-haproxy-23587.service"
+DYNAMIC_HAPROXY_SERVICE_PATH = "/etc/systemd/system/liveline-haproxy-23587.service"
+DYNAMIC_HAPROXY_CONFIG_PATH = "/etc/haproxy/liveline/routes/liveline-haproxy-23587.cfg"
 
 
 class FakeSession:
@@ -34,6 +40,7 @@ class FakeSession:
         duplicate_route: TransitRoute | None = None,
         resource_status: str = "worker_online",
         node_share_link: bool = True,
+        node_port: int = APPROVED_LANDING_TARGET_PORT,
     ) -> None:
         self.resource = TransitResource(
             id=TRANSIT_RESOURCE_ID,
@@ -47,7 +54,7 @@ class FakeSession:
             id=LANDING_NODE_ID,
             vps_id=LANDING_VPS_ID,
             node_name="liveline-reality-27939",
-            xray_port=APPROVED_LANDING_TARGET_PORT,
+            xray_port=node_port,
             status="active",
             share_link="redacted-share-link-present" if node_share_link else None,
         )
@@ -124,11 +131,21 @@ def successful_result(**overrides) -> dict:
 
 
 def haproxy_command(**payload_overrides) -> WorkerCommand:
-    return command(
-        forwarding_method=FORWARDING_METHOD_HAPROXY_TCP,
-        route_name=HAPROXY_ROUTE_NAME,
-        **payload_overrides,
-    )
+    payload = {
+        "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
+        "route_name": HAPROXY_ROUTE_NAME,
+        "command_intent": "haproxy_route_create_real_execution",
+        "execution_mode": "real_create",
+        "dry_run": False,
+        "real_execution": True,
+        "approved_real_execution": True,
+        "approved_planned_listen_port": APPROVED_TRANSIT_LISTEN_PORT,
+        "approved_firewall_confirmation": True,
+        "approved_landing_target_host": "64.90.13.19",
+        "approved_landing_target_port": APPROVED_LANDING_TARGET_PORT,
+    }
+    payload.update(payload_overrides)
+    return command(**payload)
 
 
 def haproxy_successful_result(**overrides) -> dict:
@@ -139,6 +156,30 @@ def haproxy_successful_result(**overrides) -> dict:
         service_name=HAPROXY_SERVICE_NAME,
         service_path=HAPROXY_SERVICE_PATH,
         config_path=HAPROXY_CONFIG_PATH,
+    )
+    result.update(overrides)
+    return result
+
+
+def dynamic_haproxy_command(**payload_overrides) -> WorkerCommand:
+    return haproxy_command(
+        planned_listen_port=DYNAMIC_HAPROXY_LISTEN_PORT,
+        approved_planned_listen_port=DYNAMIC_HAPROXY_LISTEN_PORT,
+        landing_target_port=DYNAMIC_LANDING_TARGET_PORT,
+        approved_landing_target_port=DYNAMIC_LANDING_TARGET_PORT,
+        route_name=DYNAMIC_HAPROXY_ROUTE_NAME,
+        **payload_overrides,
+    )
+
+
+def dynamic_haproxy_successful_result(**overrides) -> dict:
+    result = haproxy_successful_result(
+        planned_listen_port=DYNAMIC_HAPROXY_LISTEN_PORT,
+        landing_target_port=DYNAMIC_LANDING_TARGET_PORT,
+        route_name=DYNAMIC_HAPROXY_ROUTE_NAME,
+        service_name=DYNAMIC_HAPROXY_SERVICE_NAME,
+        service_path=DYNAMIC_HAPROXY_SERVICE_PATH,
+        config_path=DYNAMIC_HAPROXY_CONFIG_PATH,
     )
     result.update(overrides)
     return result
@@ -192,6 +233,30 @@ class TransitRouteCreateResultPersistenceTests(unittest.TestCase):
         self.assertEqual(route.service_path, HAPROXY_SERVICE_PATH)
         self.assertEqual(route.status, "active")
         self.assertIsNone(route.share_link)
+        self.assertTrue(normalized["route_persisted"])
+        self.assertEqual(normalized["share_link_storage"], "transit_route.share_link_null_not_generated")
+
+    def test_haproxy_dynamic_real_create_result_creates_active_transit_route_without_share_link(self):
+        db = FakeSession(node_port=DYNAMIC_LANDING_TARGET_PORT)
+        original_share_link = db.node.share_link
+
+        normalized = persist_successful_transit_route_create_result(
+            db=db,
+            command=dynamic_haproxy_command(),
+            result=dynamic_haproxy_successful_result(),
+        )
+
+        routes = [item for item in db.added if isinstance(item, TransitRoute)]
+        self.assertEqual(len(routes), 1)
+        route = routes[0]
+        self.assertEqual(route.name, DYNAMIC_HAPROXY_ROUTE_NAME)
+        self.assertEqual(route.listen_port, DYNAMIC_HAPROXY_LISTEN_PORT)
+        self.assertEqual(route.target_port, DYNAMIC_LANDING_TARGET_PORT)
+        self.assertEqual(route.forwarding_method, FORWARDING_METHOD_HAPROXY_TCP)
+        self.assertEqual(route.service_name, DYNAMIC_HAPROXY_SERVICE_NAME)
+        self.assertEqual(route.service_path, DYNAMIC_HAPROXY_SERVICE_PATH)
+        self.assertIsNone(route.share_link)
+        self.assertEqual(db.node.share_link, original_share_link)
         self.assertTrue(normalized["route_persisted"])
         self.assertEqual(normalized["share_link_storage"], "transit_route.share_link_null_not_generated")
 
@@ -260,15 +325,67 @@ class TransitRouteCreateResultPersistenceTests(unittest.TestCase):
 
         self.assertEqual(context.exception.code, "LANDING_NODE_SHARE_LINK_REQUIRED")
 
-    def test_real_create_result_rejects_non_approved_port(self):
+    def test_haproxy_real_create_result_rejects_mismatched_approved_planned_listen_port(self):
         with self.assertRaises(Exception) as context:
             persist_successful_transit_route_create_result(
-                db=FakeSession(),
-                command=command(planned_listen_port=25000),
-                result=successful_result(planned_listen_port=25000, service_name="liveline-socat-25000.service"),
+                db=FakeSession(node_port=DYNAMIC_LANDING_TARGET_PORT),
+                command=dynamic_haproxy_command(approved_planned_listen_port=DYNAMIC_HAPROXY_LISTEN_PORT + 1),
+                result=dynamic_haproxy_successful_result(),
             )
 
         self.assertEqual(context.exception.code, "LISTEN_PORT_APPROVAL_MISMATCH")
+
+    def test_haproxy_real_create_result_rejects_missing_approved_planned_listen_port(self):
+        payload = dynamic_haproxy_command().payload_json
+        payload.pop("approved_planned_listen_port")
+        with self.assertRaises(Exception) as context:
+            persist_successful_transit_route_create_result(
+                db=FakeSession(node_port=DYNAMIC_LANDING_TARGET_PORT),
+                command=command(**payload),
+                result=dynamic_haproxy_successful_result(),
+            )
+
+        self.assertEqual(context.exception.code, "LISTEN_PORT_APPROVAL_MISMATCH")
+
+    def test_haproxy_real_create_result_rejects_mismatched_approved_landing_target_port(self):
+        with self.assertRaises(Exception) as context:
+            persist_successful_transit_route_create_result(
+                db=FakeSession(node_port=DYNAMIC_LANDING_TARGET_PORT),
+                command=dynamic_haproxy_command(approved_landing_target_port=DYNAMIC_LANDING_TARGET_PORT + 1),
+                result=dynamic_haproxy_successful_result(),
+            )
+
+        self.assertEqual(context.exception.code, "LANDING_PORT_APPROVAL_MISMATCH")
+
+    def test_haproxy_real_create_result_rejects_missing_firewall_confirmation(self):
+        with self.assertRaises(Exception) as context:
+            persist_successful_transit_route_create_result(
+                db=FakeSession(node_port=DYNAMIC_LANDING_TARGET_PORT),
+                command=dynamic_haproxy_command(approved_firewall_confirmation=False),
+                result=dynamic_haproxy_successful_result(),
+            )
+
+        self.assertEqual(context.exception.code, "FIREWALL_CONFIRMATION_MISSING")
+
+    def test_haproxy_real_create_result_rejects_result_listen_port_mismatch(self):
+        with self.assertRaises(Exception) as context:
+            persist_successful_transit_route_create_result(
+                db=FakeSession(node_port=DYNAMIC_LANDING_TARGET_PORT),
+                command=dynamic_haproxy_command(),
+                result=dynamic_haproxy_successful_result(listen_port=DYNAMIC_HAPROXY_LISTEN_PORT + 1),
+            )
+
+        self.assertEqual(context.exception.code, "RESULT_LISTEN_PORT_APPROVAL_MISMATCH")
+
+    def test_haproxy_real_create_result_rejects_result_target_port_mismatch(self):
+        with self.assertRaises(Exception) as context:
+            persist_successful_transit_route_create_result(
+                db=FakeSession(node_port=DYNAMIC_LANDING_TARGET_PORT),
+                command=dynamic_haproxy_command(),
+                result=dynamic_haproxy_successful_result(target_port=DYNAMIC_LANDING_TARGET_PORT + 1),
+            )
+
+        self.assertEqual(context.exception.code, "RESULT_TARGET_PORT_APPROVAL_MISMATCH")
 
     def test_real_create_result_rejects_mismatched_result_target(self):
         with self.assertRaises(Exception) as context:
