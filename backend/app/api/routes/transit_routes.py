@@ -56,6 +56,7 @@ from app.services.remote_cleanup_delete import (
     offline_local_remove_transit_route,
     remote_cleanup_unavailable_offer,
 )
+from app.services.share_link_compat import ensure_vless_tcp_header_type_none
 from app.services.worker_binding import worker_runtime_status
 from app.services.worker_targeting import (
     WorkerTargetError,
@@ -940,7 +941,7 @@ def build_transient_candidate_link(route: TransitRoute, node: Node) -> tuple[str
         host = f"[{host}]"
     netloc = f"{userinfo}@{host}:{route.listen_port}"
     fragment = quote(route.name or APPROVED_TRANSIT_CANDIDATE_NAME, safe="")
-    link = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, fragment))
+    link = ensure_vless_tcp_header_type_none(urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, fragment)))
     return link, None
 
 

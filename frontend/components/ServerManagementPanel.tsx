@@ -71,6 +71,7 @@ type NodePlanFormState = {
   flow: string;
   serverName: string;
   dest: string;
+  fingerprint: string;
   remark: string;
   allowInstallXray: boolean;
   allowModifyFirewall: boolean;
@@ -93,6 +94,9 @@ type WorkerBootstrapFormState = {
 type ServerNodeSummary = VpsServerData["nodes"][number];
 
 const APPROVED_FORMAL_LISTEN_PORT = 27939;
+const DEFAULT_REALITY_SNI = "dash.cloudflare.com";
+const DEFAULT_REALITY_DEST = "dash.cloudflare.com:443";
+const DEFAULT_REALITY_FINGERPRINT = "chrome";
 const BLOCKED_NODE_LISTEN_PORTS = new Set([
   22,
   80,
@@ -127,8 +131,9 @@ function createEmptyNodePlanForm(): NodePlanFormState {
     protocol: "vless",
     security: "reality",
     flow: "xtls-rprx-vision",
-    serverName: "www.microsoft.com",
-    dest: "www.microsoft.com:443",
+    serverName: DEFAULT_REALITY_SNI,
+    dest: DEFAULT_REALITY_DEST,
+    fingerprint: DEFAULT_REALITY_FINGERPRINT,
     remark: "",
     allowInstallXray: true,
     allowModifyFirewall: false,
@@ -1073,6 +1078,7 @@ export function ServerManagementPanel() {
           flow: nodePlanForm.flow,
           server_name: nodePlanForm.serverName,
           dest: nodePlanForm.dest,
+          fingerprint: nodePlanForm.fingerprint,
           remark: nodePlanForm.nodeName || null,
           allow_install_xray: true,
           allow_modify_firewall: false,
@@ -1106,6 +1112,7 @@ export function ServerManagementPanel() {
           node_name: nodePlanForm.nodeName || null,
           server_name: nodePlanForm.serverName,
           dest: nodePlanForm.dest,
+          fingerprint: nodePlanForm.fingerprint,
           confirm_firewall_open: nodePlanForm.protectedCreateConfirmed,
           confirm_generate_share_link: nodePlanForm.protectedCreateConfirmed,
           confirm_write_share_link_after_success: nodePlanForm.protectedCreateConfirmed,
@@ -2029,20 +2036,40 @@ export function ServerManagementPanel() {
           <small>请确认云安全组 / 云防火墙 / 服务器本机防火墙已放行该 TCP 端口。自定义端口能力后续单独进入 dynamic-port create stage。</small>
         </label>
         <label>
-          Reality SNI / serverName
-          <input
-            value={nodePlanForm.serverName}
-            onChange={(event) => setNodePlanForm({ ...nodePlanForm, serverName: event.target.value })}
-          />
-        </label>
-        <label>
-          Reality dest
-          <input value={nodePlanForm.dest} onChange={(event) => setNodePlanForm({ ...nodePlanForm, dest: event.target.value })} />
-        </label>
-        <label>
           协议
           <input readOnly value="VLESS / Reality / TCP" />
         </label>
+
+        <details className="node-create-safety-details wide-field">
+          <summary>高级 Reality 设置</summary>
+          <div className="node-create-safety-body">
+            <span>如无特殊需要，使用默认 dash.cloudflare.com 模板。</span>
+            <label>
+              Reality SNI
+              <input
+                value={nodePlanForm.serverName}
+                onChange={(event) => setNodePlanForm({ ...nodePlanForm, serverName: event.target.value })}
+                placeholder={DEFAULT_REALITY_SNI}
+              />
+            </label>
+            <label>
+              Reality Dest
+              <input
+                value={nodePlanForm.dest}
+                onChange={(event) => setNodePlanForm({ ...nodePlanForm, dest: event.target.value })}
+                placeholder={DEFAULT_REALITY_DEST}
+              />
+            </label>
+            <label>
+              Fingerprint
+              <input
+                value={nodePlanForm.fingerprint}
+                onChange={(event) => setNodePlanForm({ ...nodePlanForm, fingerprint: event.target.value })}
+                placeholder={DEFAULT_REALITY_FINGERPRINT}
+              />
+            </label>
+          </div>
+        </details>
 
         <label className="node-create-confirm wide-field">
           <input

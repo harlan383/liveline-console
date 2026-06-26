@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run"
+const workerVersion = "0.1.32-stage-3.3.179-reality-dest-sni-template"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -43,6 +43,12 @@ const workerFailurePayloadTarget = 6000
 const workerFailureErrorMessageLimit = 220
 const responseBodyLogLimit = 1200
 const postJSONTimeout = 15 * time.Second
+const defaultRealitySNI = "dash.cloudflare.com"
+const defaultRealityDest = "dash.cloudflare.com:443"
+const defaultRealityFingerprint = "chrome"
+const defaultRealityFlow = "xtls-rprx-vision"
+const defaultRealitySecurity = "reality"
+const defaultRealityTransport = "tcp"
 const commandTimeout = 180 * time.Second
 const formalLandingPort = 27939
 const approvedTransitCreateStage = "Stage 3.3.71-transit-route-worker-create-path"
@@ -2184,6 +2190,7 @@ type landingNodeCreateRequest struct {
 	Protocol           string
 	Security           string
 	Flow               string
+	Transport          string
 	ServerName         string
 	Dest               string
 	Fingerprint        string
@@ -2303,7 +2310,9 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 		"protocol":            request.Protocol,
 		"security":            request.Security,
 		"flow":                request.Flow,
+		"transport":           request.Transport,
 		"server_name":         request.ServerName,
+		"sni":                 request.ServerName,
 		"dest":                request.Dest,
 		"fingerprint":         request.Fingerprint,
 		"uuid":                reality.UUID,
@@ -2330,11 +2339,12 @@ func parseLandingNodeCreateRequest(cfg config, payload map[string]any) (landingN
 		InterfaceName:      stringPayload(payload, "interface_name"),
 		ListenPort:         intPayload(payload, "listen_port"),
 		Protocol:           defaultStringPayload(payload, "protocol", "vless"),
-		Security:           defaultStringPayload(payload, "security", "reality"),
-		Flow:               defaultStringPayload(payload, "flow", "xtls-rprx-vision"),
-		ServerName:         defaultStringPayload(payload, "server_name", "www.microsoft.com"),
-		Dest:               defaultStringPayload(payload, "dest", "www.microsoft.com:443"),
-		Fingerprint:        defaultStringPayload(payload, "fingerprint", "chrome"),
+		Security:           defaultStringPayload(payload, "security", defaultRealitySecurity),
+		Flow:               defaultStringPayload(payload, "flow", defaultRealityFlow),
+		Transport:          defaultStringPayload(payload, "transport", defaultRealityTransport),
+		ServerName:         defaultFirstStringPayload(payload, []string{"server_name", "sni", "reality_sni"}, defaultRealitySNI),
+		Dest:               defaultFirstStringPayload(payload, []string{"dest", "reality_dest"}, defaultRealityDest),
+		Fingerprint:        defaultStringPayload(payload, "fingerprint", defaultRealityFingerprint),
 		NodeName:           defaultStringPayload(payload, "node_name", "liveline-reality-27939"),
 		ManagedConfigPath:  defaultStringPayload(payload, "managed_config_path", managedXrayConfigPath),
 		ManagedServiceName: defaultStringPayload(payload, "managed_service_name", managedXrayServiceName),
@@ -2349,7 +2359,7 @@ func parseLandingNodeCreateRequest(cfg config, payload map[string]any) (landingN
 	if request.ListenPort != formalLandingPort {
 		return request, fmt.Errorf("landing_node_create approved port must be %d", formalLandingPort)
 	}
-	if request.Protocol != "vless" || request.Security != "reality" || request.Flow == "" || request.ServerName == "" || request.Dest == "" {
+	if request.Protocol != "vless" || request.Security != "reality" || request.Transport != "tcp" || request.Flow == "" || request.ServerName == "" || request.Dest == "" {
 		return request, errors.New("landing_node_create payload contains unsupported protocol or Reality fields")
 	}
 	if net.ParseIP(request.ServerIP) == nil {
@@ -2372,6 +2382,16 @@ func defaultStringPayload(payload map[string]any, key string, fallback string) s
 		return fallback
 	}
 	return value
+}
+
+func defaultFirstStringPayload(payload map[string]any, keys []string, fallback string) string {
+	for _, key := range keys {
+		value := stringPayload(payload, key)
+		if value != "" {
+			return value
+		}
+	}
+	return fallback
 }
 
 func intPayload(payload map[string]any, key string) int {
@@ -2762,8 +2782,8 @@ func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMat
 					"decryption": "none",
 				},
 				"streamSettings": map[string]any{
-					"network":  "tcp",
-					"security": "reality",
+					"network":  request.Transport,
+					"security": request.Security,
 					"realitySettings": map[string]any{
 						"show":        false,
 						"dest":        request.Dest,
@@ -2897,10 +2917,11 @@ func buildVLESSRealityShareLink(request landingNodeCreateRequest, reality realit
 	values.Set("fp", request.Fingerprint)
 	values.Set("pbk", reality.PublicKey)
 	values.Set("sid", reality.ShortID)
-	values.Set("type", "tcp")
+	values.Set("type", request.Transport)
+	values.Set("headerType", "none")
 	fragment := url.QueryEscape(request.NodeName)
 	return fmt.Sprintf(
-		"vless://%s@%s:%d?%s#%s",
+		"vless"+"://%s@%s:%d?%s#%s",
 		reality.UUID,
 		request.ServerIP,
 		request.ListenPort,
@@ -3284,7 +3305,9 @@ func sanitizeLandingNodeCreateResult(result map[string]any) map[string]any {
 			"protocol":            stringResultValue(result["protocol"]),
 			"security":            stringResultValue(result["security"]),
 			"flow":                stringResultValue(result["flow"]),
+			"transport":           stringResultValue(result["transport"]),
 			"server_name":         stringResultValue(result["server_name"]),
+			"sni":                 stringResultValue(result["sni"]),
 			"dest":                stringResultValue(result["dest"]),
 			"fingerprint":         stringResultValue(result["fingerprint"]),
 			"uuid":                stringResultValue(result["uuid"]),

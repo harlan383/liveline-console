@@ -19,6 +19,7 @@ from app.services.remote_cleanup_delete import (
     offline_local_remove_node,
     remote_cleanup_unavailable_offer,
 )
+from app.services.share_link_compat import ensure_vless_tcp_header_type_none
 from app.services.worker_commands import serialize_worker_command
 
 router = APIRouter()
@@ -71,7 +72,7 @@ def serialize_node(node: Node, *, include_share_link: bool = False) -> dict:
         "last_sync_status": node.last_sync_status,
     }
     if include_share_link:
-        data["share_link"] = node.share_link
+        data["share_link"] = ensure_vless_tcp_header_type_none(node.share_link) if node.share_link else node.share_link
     return data
 
 
@@ -260,7 +261,7 @@ def export_node_share_link(
         {
             "node_id": node.id,
             "node_name": node.node_name,
-            "share_link": node.share_link,
+            "share_link": ensure_vless_tcp_header_type_none(node.share_link),
             "warning": "share_link is sensitive; do not paste it into chats, logs, PRs, or documents.",
         },
         "节点链接已导出。本响应是唯一明文返回位置，请勿写入日志或文档。",

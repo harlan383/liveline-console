@@ -560,6 +560,7 @@ export type LandingNodePlanRequest = {
   flow: string;
   server_name: string;
   dest: string;
+  fingerprint: string;
   remark?: string | null;
   allow_install_xray: boolean;
   allow_modify_firewall: boolean;
@@ -587,6 +588,7 @@ export type LandingNodePlanResponse = {
   flow: string;
   server_name: string;
   dest: string;
+  fingerprint: string;
   key_generation_strategy: Record<string, string>;
   required_user_confirmations: string[];
   preflight_summary: Record<string, unknown>;
@@ -602,6 +604,7 @@ export type LandingNodeCreateRequest = {
   node_name?: string | null;
   server_name?: string;
   dest?: string;
+  fingerprint?: string;
   confirm_firewall_open: boolean;
   confirm_generate_share_link: boolean;
   confirm_write_share_link_after_success: boolean;
@@ -726,7 +729,7 @@ export const OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT = "CONFIRM_OFFLINE_LOCAL_REMOVE";
 
 export type WorkerRole = "landing" | "transit";
 
-export const CURRENT_WORKER_INSTALL_VERSION = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run";
+export const CURRENT_WORKER_INSTALL_VERSION = "0.1.32-stage-3.3.179-reality-dest-sni-template";
 
 export type WorkerTokenCreateRequest = {
   role: WorkerRole;

@@ -8,7 +8,15 @@ from app.models.node import Node
 from app.models.vps_server import VpsServer
 from app.models.worker import Worker
 from app.models.worker_command import WorkerCommand
-from app.schemas.landing_node_plan import LandingNodeCreateRequest
+from app.schemas.landing_node_plan import (
+    DEFAULT_REALITY_DEST,
+    DEFAULT_REALITY_FINGERPRINT,
+    DEFAULT_REALITY_FLOW,
+    DEFAULT_REALITY_SECURITY,
+    DEFAULT_REALITY_SNI,
+    DEFAULT_REALITY_TRANSPORT,
+    LandingNodeCreateRequest,
+)
 from app.services.landing_node_plan import (
     APPROVED_FORMAL_LISTEN_PORT,
     latest_landing_preflight,
@@ -17,6 +25,7 @@ from app.services.landing_node_plan import (
 )
 from app.services.worker_binding import worker_runtime_status
 from app.services.worker_commands import create_worker_command
+from app.services.share_link_compat import ensure_vless_tcp_header_type_none, is_vless_share_link
 from app.services.worker_targeting import (
     minimum_worker_version_for_command,
     worker_sort_key,
@@ -24,10 +33,8 @@ from app.services.worker_targeting import (
 )
 
 LANDING_NODE_CREATE_COMMAND = "landing_node_create"
-DEFAULT_REALITY_SERVER_NAME = "www.microsoft.com"
-DEFAULT_REALITY_DEST = "www.microsoft.com:443"
-DEFAULT_REALITY_FLOW = "xtls-rprx-vision"
-DEFAULT_FINGERPRINT = "chrome"
+DEFAULT_REALITY_SERVER_NAME = DEFAULT_REALITY_SNI
+DEFAULT_FINGERPRINT = DEFAULT_REALITY_FINGERPRINT
 MANAGED_XRAY_CONFIG_PATH = "/opt/liveline-xray/config/config.json"
 MANAGED_XRAY_SERVICE_NAME = "liveline-xray.service"
 MANAGED_XRAY_SERVICE_PATH = "/etc/systemd/system/liveline-xray.service"
@@ -215,6 +222,9 @@ def create_landing_node_create_command(
     payload: LandingNodeCreateRequest,
 ) -> tuple[WorkerCommand, Worker]:
     worker = validate_landing_node_create_request(db=db, vps=vps, payload=payload)
+    reality_sni = payload.server_name or DEFAULT_REALITY_SERVER_NAME
+    reality_dest = payload.dest or DEFAULT_REALITY_DEST
+    fingerprint = payload.fingerprint or DEFAULT_FINGERPRINT
     command_payload = {
         "stage": "3.3.37",
         "server_id": vps.id,
@@ -223,11 +233,15 @@ def create_landing_node_create_command(
         "interface_name": worker.interface_name,
         "listen_port": APPROVED_FORMAL_LISTEN_PORT,
         "protocol": "vless",
-        "security": "reality",
+        "security": DEFAULT_REALITY_SECURITY,
         "flow": DEFAULT_REALITY_FLOW,
-        "server_name": payload.server_name or DEFAULT_REALITY_SERVER_NAME,
-        "dest": payload.dest or DEFAULT_REALITY_DEST,
-        "fingerprint": DEFAULT_FINGERPRINT,
+        "server_name": reality_sni,
+        "sni": reality_sni,
+        "reality_sni": reality_sni,
+        "dest": reality_dest,
+        "reality_dest": reality_dest,
+        "fingerprint": fingerprint,
+        "transport": DEFAULT_REALITY_TRANSPORT,
         "node_name": payload.node_name or f"liveline-reality-{APPROVED_FORMAL_LISTEN_PORT}",
         "managed_config_path": MANAGED_XRAY_CONFIG_PATH,
         "managed_service_name": MANAGED_XRAY_SERVICE_NAME,
@@ -278,8 +292,9 @@ def persist_successful_landing_node_result(
         raise LandingNodeCreateError("FORMAL_SERVER_NOT_APPROVED", "Worker 命令缺少绑定落地服务器。")
 
     share_link = _result_string(result, "secure_share_link")
-    if not share_link or not share_link.startswith("vless://"):
+    if not is_vless_share_link(share_link):
         raise LandingNodeCreateError("SHARE_LINK_MISSING", "Worker 未返回可写入的 VLESS 分享链接。")
+    share_link = ensure_vless_tcp_header_type_none(share_link)
     listen_port = _result_int(result, "listen_port")
     if listen_port != APPROVED_FORMAL_LISTEN_PORT:
         raise LandingNodeCreateError("FORMAL_PORT_NOT_APPROVED", "Worker 返回端口不是 27939/TCP。")
@@ -294,8 +309,8 @@ def persist_successful_landing_node_result(
         vps_id=command.server_id,
         node_name=_result_string(result, "node_name") or f"liveline-reality-{APPROVED_FORMAL_LISTEN_PORT}",
         protocol="vless",
-        transport="tcp",
-        security="reality",
+        transport=_result_string(result, "transport") or DEFAULT_REALITY_TRANSPORT,
+        security=_result_string(result, "security") or DEFAULT_REALITY_SECURITY,
         flow=_result_string(result, "flow") or DEFAULT_REALITY_FLOW,
         xray_port=APPROVED_FORMAL_LISTEN_PORT,
         uuid=_result_string(result, "uuid"),

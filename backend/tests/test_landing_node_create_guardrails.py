@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 import unittest
 from unittest.mock import patch
 
+from pydantic import ValidationError
+
 from app.models.node import Node
 from app.models.vps_server import VpsServer
 from app.models.worker import Worker
@@ -68,7 +70,7 @@ def landing_worker(**overrides) -> Worker:
         "role": "landing",
         "status": "online",
         "interface_name": "ens17",
-        "worker_version": "0.1.21-stage-3.3.97",
+        "worker_version": "0.1.32-stage-3.3.179-reality-dest-sni-template",
         "worker_secret_hash": "hash",
         "last_heartbeat_at": datetime.now(timezone.utc),
     }
@@ -236,9 +238,52 @@ class LandingNodeCreateGuardrailTests(unittest.TestCase):
         self.assertEqual(captured_payload["server_id"], SERVER_ID)
         self.assertEqual(captured_payload["node_name"], "custom-reality-node")
         self.assertEqual(captured_payload["server_name"], "example.com")
+        self.assertEqual(captured_payload["sni"], "example.com")
+        self.assertEqual(captured_payload["reality_sni"], "example.com")
         self.assertEqual(captured_payload["dest"], "example.com:443")
+        self.assertEqual(captured_payload["reality_dest"], "example.com:443")
+        self.assertEqual(captured_payload["fingerprint"], "chrome")
         self.assertEqual(captured_payload["interface_name"], "ens17")
         self.assertEqual(captured_payload["listen_port"], APPROVED_FORMAL_LISTEN_PORT)
+
+    def test_create_payload_defaults_to_cloudflare_reality_template(self):
+        worker = landing_worker()
+        captured_payload = {}
+        command = WorkerCommand(id="command-1", worker_id=worker.id, command_type=LANDING_NODE_CREATE_COMMAND)
+
+        def fake_create_worker_command(_db, _worker, _command_type, payload):
+            captured_payload.update(payload)
+            return command
+
+        with (
+            patch("app.services.landing_node_create.validate_landing_node_create_request", return_value=worker),
+            patch("app.services.landing_node_create.create_worker_command", side_effect=fake_create_worker_command),
+        ):
+            create_landing_node_create_command(
+                db=FakeSession(workers=[worker]),
+                vps=approved_vps(),
+                payload=approved_payload(),
+            )
+
+        self.assertEqual(captured_payload["server_name"], "dash.cloudflare.com")
+        self.assertEqual(captured_payload["dest"], "dash.cloudflare.com:443")
+        self.assertEqual(captured_payload["fingerprint"], "chrome")
+        self.assertEqual(captured_payload["flow"], "xtls-rprx-vision")
+        self.assertEqual(captured_payload["security"], "reality")
+        self.assertEqual(captured_payload["transport"], "tcp")
+
+    def test_create_payload_rejects_invalid_reality_sni_and_dest(self):
+        invalid_cases = [
+            {"server_name": "https://dash.cloudflare.com"},
+            {"server_name": "dash.cloudflare.com/"},
+            {"server_name": "dash.cloudflare.com:443"},
+            {"dest": "dash.cloudflare.com:abc"},
+            {"dest": "https://dash.cloudflare.com:443"},
+        ]
+        for overrides in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValidationError):
+                    approved_payload(**overrides)
 
     def test_success_result_sanitizes_full_share_link_from_command_result(self):
         db = FakeSession(vps=approved_vps(status="unconfigured"))
