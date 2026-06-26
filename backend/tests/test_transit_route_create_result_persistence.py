@@ -242,14 +242,14 @@ class TransitRouteCreateResultPersistenceTests(unittest.TestCase):
 
         normalized = persist_successful_transit_route_create_result(
             db=db,
-            command=dynamic_haproxy_command(),
+            command=dynamic_haproxy_command(route_display_name="mk香港落地15m"),
             result=dynamic_haproxy_successful_result(),
         )
 
         routes = [item for item in db.added if isinstance(item, TransitRoute)]
         self.assertEqual(len(routes), 1)
         route = routes[0]
-        self.assertEqual(route.name, DYNAMIC_HAPROXY_ROUTE_NAME)
+        self.assertEqual(route.name, "mk香港落地15m")
         self.assertEqual(route.listen_port, DYNAMIC_HAPROXY_LISTEN_PORT)
         self.assertEqual(route.target_port, DYNAMIC_LANDING_TARGET_PORT)
         self.assertEqual(route.forwarding_method, FORWARDING_METHOD_HAPROXY_TCP)
@@ -257,6 +257,8 @@ class TransitRouteCreateResultPersistenceTests(unittest.TestCase):
         self.assertEqual(route.service_path, DYNAMIC_HAPROXY_SERVICE_PATH)
         self.assertIsNone(route.share_link)
         self.assertEqual(db.node.share_link, original_share_link)
+        self.assertEqual(normalized["route_name"], DYNAMIC_HAPROXY_ROUTE_NAME)
+        self.assertEqual(normalized["route_display_name"], "mk香港落地15m")
         self.assertTrue(normalized["route_persisted"])
         self.assertEqual(normalized["share_link_storage"], "transit_route.share_link_null_not_generated")
 

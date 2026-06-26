@@ -1,5 +1,6 @@
 import json
 import unittest
+from urllib.parse import unquote, urlsplit
 from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
@@ -284,6 +285,30 @@ class TransitCandidateExportApiTests(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertIn("@163.223.216.108:24001", data["data"]["candidate_link"])
         self.assertTrue(data["data"]["candidate_link"].endswith("#custom-socat-route"))
+
+    def test_export_candidate_remark_prefers_persisted_display_name(self):
+        route = make_candidate_route(route_id="custom-route-2")
+        route.name = "mk香港落地15m"
+        route.listen_port = 29833
+        payload = valid_export_payload()
+
+        with patch.object(transit_routes, "require_admin_session", return_value=FakeAdminSession()), patch.object(
+            transit_routes, "csrf_valid", return_value=True
+        ):
+            response = transit_routes.export_transit_route_candidate(
+                route.id,
+                payload,
+                make_request(f"/api/transit-routes/{route.id}/candidate-export"),
+                FakeSession(route=route),
+            )
+        data = response_payload(response)
+
+        self.assertTrue(data["success"])
+        exported = data["data"]
+        self.assertEqual(exported["route_name"], "mk香港落地15m")
+        self.assertEqual(exported["candidate_name"], "mk香港落地15m")
+        self.assertIn("@163.223.216.108:29833", exported["candidate_link"])
+        self.assertEqual(unquote(urlsplit(exported["candidate_link"]).fragment), "mk香港落地15m")
 
     def test_export_rejects_cutover_route(self):
         route = make_candidate_route()

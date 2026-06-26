@@ -53,6 +53,18 @@ def normalize_forwarding_method(value: str) -> str:
     return cleaned
 
 
+def clean_route_display_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    lowered = cleaned.lower()
+    if not cleaned:
+        return None
+    if "://" in lowered or "private key" in lowered or "token" in lowered or "password" in lowered:
+        raise ValueError("route_display_name 不能包含链接、token、密码或私钥内容")
+    return cleaned
+
+
 class TransitRouteCreateFields(BaseModel):
     transit_resource_id: str = Field(min_length=1, max_length=36)
     node_id: str = Field(min_length=1, max_length=36)
@@ -283,6 +295,7 @@ class TransitHaproxyRouteCreateDryRunRequest(BaseModel):
     forwarding_method: str = FORWARDING_METHOD_HAPROXY_TCP
     purpose: str | None = Field(default=None, max_length=120)
     route_name: str = Field(min_length=1, max_length=120)
+    route_display_name: str | None = Field(default=None, max_length=120)
     approval_stage: str = HAPROXY_ROUTE_CREATE_DRY_RUN_STAGE
     readiness_approval_confirmed: bool = False
     dry_run: bool = True
@@ -318,6 +331,11 @@ class TransitHaproxyRouteCreateDryRunRequest(BaseModel):
             raise ValueError("route_name 只能包含字母、数字、点、下划线和短横线，并且必须以字母或数字开头")
         return cleaned
 
+    @field_validator("route_display_name")
+    @classmethod
+    def validate_haproxy_dry_run_display_name(cls, value: str | None) -> str | None:
+        return clean_route_display_name(value)
+
     @field_validator("approval_stage")
     @classmethod
     def validate_haproxy_dry_run_approval_stage(cls, value: str) -> str:
@@ -338,6 +356,7 @@ class TransitHaproxyRouteCreateFinalApprovalRequest(BaseModel):
     landing_target_port: int = Field(ge=1, le=65535)
     forwarding_method: str = FORWARDING_METHOD_HAPROXY_TCP
     route_name: str = Field(min_length=1, max_length=120)
+    route_display_name: str | None = Field(default=None, max_length=120)
     planned_service_name: str = Field(min_length=1, max_length=160)
     approval_stage: str = HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_STAGE
     dry_run_verified: bool = False
@@ -361,6 +380,11 @@ class TransitHaproxyRouteCreateFinalApprovalRequest(BaseModel):
         if not TRANSIT_ROUTE_SAFE_NAME_RE.match(cleaned):
             raise ValueError("route_name 只能包含字母、数字、点、下划线和短横线，并且必须以字母或数字开头")
         return cleaned
+
+    @field_validator("route_display_name")
+    @classmethod
+    def validate_haproxy_final_display_name(cls, value: str | None) -> str | None:
+        return clean_route_display_name(value)
 
     @field_validator("planned_service_name")
     @classmethod
@@ -390,6 +414,7 @@ class TransitHaproxyRouteCreateRealExecutionRequest(BaseModel):
     landing_target_port: int = Field(ge=1, le=65535)
     forwarding_method: str = FORWARDING_METHOD_HAPROXY_TCP
     route_name: str = Field(min_length=1, max_length=120)
+    route_display_name: str | None = Field(default=None, max_length=120)
     approval_stage: str = HAPROXY_ROUTE_CREATE_REAL_EXECUTION_STAGE
     final_approval_text: str = Field(min_length=1, max_length=120)
     real_execution_text: str = Field(min_length=1, max_length=120)
@@ -412,6 +437,11 @@ class TransitHaproxyRouteCreateRealExecutionRequest(BaseModel):
         if not TRANSIT_ROUTE_SAFE_NAME_RE.match(cleaned):
             raise ValueError("route_name 只能包含字母、数字、点、下划线和短横线，并且必须以字母或数字开头")
         return cleaned
+
+    @field_validator("route_display_name")
+    @classmethod
+    def validate_haproxy_real_display_name(cls, value: str | None) -> str | None:
+        return clean_route_display_name(value)
 
     @field_validator("approval_stage")
     @classmethod

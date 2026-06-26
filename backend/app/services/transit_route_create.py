@@ -80,6 +80,33 @@ def _expected_config_path(listen_port: int, forwarding_method: str) -> str | Non
     return None
 
 
+def _safe_route_display_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = value.strip()
+    lowered = cleaned.lower()
+    if not cleaned:
+        return None
+    if len(cleaned) > 120:
+        raise TransitRouteCreateResultError("ROUTE_DISPLAY_NAME_INVALID", "中转链路显示名称超过长度限制。")
+    if "://" in lowered or "private key" in lowered or "token" in lowered or "password" in lowered:
+        raise TransitRouteCreateResultError("ROUTE_DISPLAY_NAME_INVALID", "中转链路显示名称不能包含链接、token、密码或私钥内容。")
+    return cleaned
+
+
+def _route_display_name(payload: dict[str, Any], normalized: dict[str, Any], raw_result: dict[str, Any], fallback: str) -> str:
+    for key in ("user_route_name", "display_name", "route_display_name"):
+        cleaned = _safe_route_display_name(_result_string(payload, key))
+        if cleaned:
+            return cleaned
+    for source in (normalized, raw_result):
+        for key in ("user_route_name", "display_name", "route_display_name"):
+            cleaned = _safe_route_display_name(_result_string(source, key))
+            if cleaned:
+                return cleaned
+    return fallback
+
+
 def _existing_route(db: Session, transit_resource_id: str, listen_port: int) -> TransitRoute | None:
     return db.scalar(
         select(TransitRoute).where(
@@ -250,6 +277,7 @@ def persist_successful_transit_route_create_result(
     result_config_path = _result_string(normalized, "config_path") or _result_string(result, "config_path")
     if expected_config_path and result_config_path and result_config_path != expected_config_path:
         raise TransitRouteCreateResultError("CONFIG_PATH_APPROVAL_MISMATCH", "Worker 返回 HAProxy 配置路径与审批参数不一致。")
+    display_name = _route_display_name(payload, normalized, result, route_name)
 
     resource = db.get(TransitResource, transit_resource_id)
     if not resource or resource.deleted_at is not None:
@@ -282,7 +310,7 @@ def persist_successful_transit_route_create_result(
         return normalized
 
     route = TransitRoute(
-        name=route_name,
+        name=display_name,
         transit_resource_id=transit_resource_id,
         node_id=landing_node_id,
         landing_vps_id=node.vps_id,
@@ -299,6 +327,7 @@ def persist_successful_transit_route_create_result(
     db.flush()
 
     normalized["route_id"] = route.id
+    normalized["route_display_name"] = display_name
     normalized["route_status"] = route.status
     normalized["route_persisted"] = True
     normalized["share_link_storage"] = "transit_route.share_link_null_not_generated"

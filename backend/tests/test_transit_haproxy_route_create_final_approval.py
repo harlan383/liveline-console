@@ -87,6 +87,7 @@ def dry_run_payload(**overrides):
         "share_link_mutated": False,
         "cutover": False,
         "route_name": "haproxy-tcp-23843",
+        "route_display_name": "mk香港落地15m",
         "planned_service_name": "liveline-haproxy-23843.service",
     }
     payload.update(overrides)
@@ -209,6 +210,7 @@ def valid_payload(**overrides):
         "landing_target_port": 27939,
         "forwarding_method": "haproxy_tcp",
         "route_name": "haproxy-tcp-23843",
+        "route_display_name": "mk香港落地15m",
         "planned_service_name": "liveline-haproxy-23843.service",
         "dry_run_verified": True,
         "firewall_security_group_confirmed": True,
@@ -395,6 +397,7 @@ class TransitHaproxyRouteCreateFinalApprovalTests(unittest.TestCase):
         self.assertFalse(data["data"]["blocked"])
         self.assertEqual(data["data"]["dry_run_command_id"], DRY_RUN_COMMAND_ID)
         self.assertEqual(data["data"]["planned_service_name"], "liveline-haproxy-23843.service")
+        self.assertEqual(data["data"]["route_display_name"], "mk香港落地15m")
         self.assertEqual(data["data"]["next_stage"], "Stage 3.3.139-new-transit-haproxy-route-create-real-execution")
         self.assertFalse(data["data"]["worker_command_created"])
         self.assertFalse(data["data"]["real_execution_command_created"])

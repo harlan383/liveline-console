@@ -1772,7 +1772,12 @@ export function TransitRoutesPanel() {
       return;
     }
 
-    const routeName = createForm.routeName.trim() || defaultTransitRouteName(createForm.forwardingMethod, createForm.listenPort);
+    const routeDisplayName = createForm.routeName.trim();
+    const routeName =
+      createForm.forwardingMethod === "haproxy_tcp"
+        ? defaultTransitRouteName("haproxy_tcp", createForm.listenPort)
+        : routeDisplayName || defaultTransitRouteName(createForm.forwardingMethod, createForm.listenPort);
+    const routeDisplayNameForPayload = routeDisplayName || routeName;
 
     setCreateStep("preflight_create");
     setCreateCommand(null);
@@ -1829,6 +1834,7 @@ export function TransitRoutesPanel() {
             forwarding_method: "haproxy_tcp",
             purpose: "直播",
             route_name: routeName,
+            route_display_name: routeDisplayNameForPayload,
             approval_stage: "Stage 3.3.137-new-transit-haproxy-route-create-dry-run",
             readiness_approval_confirmed: true,
             dry_run: true,
@@ -1861,6 +1867,7 @@ export function TransitRoutesPanel() {
             landing_target_port: createTargetPort,
             forwarding_method: "haproxy_tcp",
             route_name: routeName,
+            route_display_name: dryRunResult.data.route_display_name ?? routeDisplayNameForPayload,
             planned_service_name: dryRunResult.data.planned_service_name,
             approval_stage: "Stage 3.3.138-new-transit-haproxy-route-create-final-approval",
             dry_run_verified: true,
@@ -2006,6 +2013,7 @@ export function TransitRoutesPanel() {
           landing_target_port: finalApproval.landing_target_port,
           forwarding_method: "haproxy_tcp",
           route_name: finalApproval.route_name,
+          route_display_name: finalApproval.route_display_name ?? dryRun.route_display_name ?? null,
           approval_stage: "Stage 3.3.139-new-transit-haproxy-route-create-real-execution",
           final_approval_text: HAPROXY_FINAL_APPROVAL_TEXT,
           real_execution_text: HAPROXY_REAL_EXECUTION_TEXT,
@@ -2488,6 +2496,7 @@ export function TransitRoutesPanel() {
           landing_target_port: haproxyDryRun.landing_target_port,
           forwarding_method: "haproxy_tcp",
           route_name: haproxyDryRun.route_name,
+          route_display_name: haproxyDryRun.route_display_name ?? null,
           planned_service_name: haproxyDryRun.planned_service_name,
           approval_stage: "Stage 3.3.138-new-transit-haproxy-route-create-final-approval",
           dry_run_verified: true,
@@ -2541,6 +2550,7 @@ export function TransitRoutesPanel() {
           landing_target_port: haproxyFinalApproval.landing_target_port,
           forwarding_method: "haproxy_tcp",
           route_name: haproxyFinalApproval.route_name,
+          route_display_name: haproxyFinalApproval.route_display_name ?? haproxyDryRun.route_display_name ?? null,
           approval_stage: "Stage 3.3.139-new-transit-haproxy-route-create-real-execution",
           firewall_security_group_confirmed: haproxyReadinessConfirmations.securityGroup,
           cloud_firewall_confirmed: haproxyReadinessConfirmations.cloudFirewall,
