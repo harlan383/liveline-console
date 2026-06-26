@@ -9,6 +9,7 @@ from app.models.vps_server import VpsServer
 from app.models.worker import Worker
 from app.models.worker_command import WorkerCommand
 from app.schemas.landing_node_plan import (
+    DEFAULT_LANDING_NODE_LISTEN_PORT,
     DEFAULT_REALITY_DEST,
     DEFAULT_REALITY_FINGERPRINT,
     DEFAULT_REALITY_FLOW,
@@ -16,8 +17,11 @@ from app.schemas.landing_node_plan import (
     DEFAULT_REALITY_SNI,
     DEFAULT_REALITY_TRANSPORT,
     LandingNodeCreateRequest,
+    validate_landing_node_listen_port,
 )
 from app.services.landing_node_plan import (
+    active_node_on_port_exists,
+    active_transit_target_on_port_exists,
     APPROVED_FORMAL_LISTEN_PORT,
     latest_landing_preflight,
     service_installed,
@@ -104,8 +108,7 @@ def _preflight_has_blocking_xray(command: WorkerCommand | None) -> bool:
         return True
     result = command.result_json
     return (
-        service_installed(result, "xray")
-        or service_installed(result, "x-ui")
+        service_installed(result, "x-ui")
         or service_installed(result, "3x-ui")
         or xray_existing_config_detected(result)
     )
@@ -116,16 +119,7 @@ def _vps_is_available_for_create(vps: VpsServer) -> bool:
 
 
 def _active_node_on_port_exists(db: Session, server_id: str, port: int) -> bool:
-    return (
-        db.scalar(
-            select(Node.id)
-            .where(Node.vps_id == server_id)
-            .where(Node.deleted_at.is_(None))
-            .where(Node.xray_port == port)
-            .limit(1)
-        )
-        is not None
-    )
+    return active_node_on_port_exists(db, server_id, port)
 
 
 def _approved_worker_for_vps(db: Session, *, vps: VpsServer, preflight: WorkerCommand) -> Worker:
@@ -187,8 +181,10 @@ def validate_landing_node_create_request(
 ) -> Worker:
     if not _vps_is_available_for_create(vps):
         raise LandingNodeCreateError("FORMAL_SERVER_NOT_APPROVED", "当前落地服务器记录不可用于正式创建。")
-    if payload.approved_port != APPROVED_FORMAL_LISTEN_PORT:
-        raise LandingNodeCreateError("FORMAL_PORT_NOT_APPROVED", "本阶段只允许使用审批端口 27939/TCP。")
+    try:
+        validate_landing_node_listen_port(payload.approved_port)
+    except ValueError as exc:
+        raise LandingNodeCreateError("FORMAL_PORT_NOT_APPROVED", str(exc)) from exc
 
     confirmations = {
         "CONFIRM_FIREWALL_OPEN_REQUIRED": payload.confirm_firewall_open,
@@ -201,8 +197,10 @@ def validate_landing_node_create_request(
     if missing:
         raise LandingNodeCreateError(missing[0], "正式创建前必须完成所有二次确认。")
 
-    if _active_node_on_port_exists(db, vps.id, APPROVED_FORMAL_LISTEN_PORT):
-        raise LandingNodeCreateError("NODE_PORT_ALREADY_EXISTS", "系统中已有未删除节点使用审批端口。")
+    if _active_node_on_port_exists(db, vps.id, payload.approved_port):
+        raise LandingNodeCreateError("NODE_PORT_ALREADY_EXISTS", "系统中已有未删除节点使用该监听端口。")
+    if active_transit_target_on_port_exists(db, vps.id, payload.approved_port):
+        raise LandingNodeCreateError("TRANSIT_TARGET_PORT_ALREADY_EXISTS", "系统中已有未删除中转链路使用该端口作为落地目标。")
 
     preflight = latest_landing_preflight(db, vps.id)
     if _preflight_has_interface_mismatch(preflight):
@@ -231,7 +229,7 @@ def create_landing_node_create_command(
         "server_ip": vps.ip,
         "worker_id": worker.id,
         "interface_name": worker.interface_name,
-        "listen_port": APPROVED_FORMAL_LISTEN_PORT,
+        "listen_port": payload.approved_port,
         "protocol": "vless",
         "security": DEFAULT_REALITY_SECURITY,
         "flow": DEFAULT_REALITY_FLOW,
@@ -242,7 +240,7 @@ def create_landing_node_create_command(
         "reality_dest": reality_dest,
         "fingerprint": fingerprint,
         "transport": DEFAULT_REALITY_TRANSPORT,
-        "node_name": payload.node_name or f"liveline-reality-{APPROVED_FORMAL_LISTEN_PORT}",
+        "node_name": payload.node_name or f"liveline-reality-{payload.approved_port}",
         "managed_config_path": MANAGED_XRAY_CONFIG_PATH,
         "managed_service_name": MANAGED_XRAY_SERVICE_NAME,
         "managed_service_path": MANAGED_XRAY_SERVICE_PATH,
@@ -296,10 +294,12 @@ def persist_successful_landing_node_result(
         raise LandingNodeCreateError("SHARE_LINK_MISSING", "Worker 未返回可写入的 VLESS 分享链接。")
     share_link = ensure_vless_tcp_header_type_none(share_link)
     listen_port = _result_int(result, "listen_port")
-    if listen_port != APPROVED_FORMAL_LISTEN_PORT:
-        raise LandingNodeCreateError("FORMAL_PORT_NOT_APPROVED", "Worker 返回端口不是 27939/TCP。")
-    if _active_node_on_port_exists(db, command.server_id, APPROVED_FORMAL_LISTEN_PORT):
-        raise LandingNodeCreateError("NODE_PORT_ALREADY_EXISTS", "系统中已有未删除节点使用审批端口。")
+    command_port = _result_int(command.payload_json or {}, "listen_port") if isinstance(command.payload_json, dict) else None
+    expected_port = command_port or DEFAULT_LANDING_NODE_LISTEN_PORT
+    if listen_port != expected_port:
+        raise LandingNodeCreateError("FORMAL_PORT_NOT_APPROVED", "Worker 返回端口与创建命令审批端口不一致。")
+    if _active_node_on_port_exists(db, command.server_id, expected_port):
+        raise LandingNodeCreateError("NODE_PORT_ALREADY_EXISTS", "系统中已有未删除节点使用该监听端口。")
 
     vps = db.get(VpsServer, command.server_id)
     if not vps or not _vps_is_available_for_create(vps):
@@ -307,12 +307,12 @@ def persist_successful_landing_node_result(
 
     node = Node(
         vps_id=command.server_id,
-        node_name=_result_string(result, "node_name") or f"liveline-reality-{APPROVED_FORMAL_LISTEN_PORT}",
+        node_name=_result_string(result, "node_name") or f"liveline-reality-{expected_port}",
         protocol="vless",
         transport=_result_string(result, "transport") or DEFAULT_REALITY_TRANSPORT,
         security=_result_string(result, "security") or DEFAULT_REALITY_SECURITY,
         flow=_result_string(result, "flow") or DEFAULT_REALITY_FLOW,
-        xray_port=APPROVED_FORMAL_LISTEN_PORT,
+        xray_port=expected_port,
         uuid=_result_string(result, "uuid"),
         reality_public_key=_result_string(result, "reality_public_key"),
         reality_short_id=_result_string(result, "reality_short_id"),

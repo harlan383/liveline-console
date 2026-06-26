@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -104,7 +105,7 @@ func TestValidateManagedXrayBaseDirForPreflightRejectsUnknownArtifacts(t *testin
 	}
 }
 
-func TestValidateManagedXrayBaseDirForPreflightRejectsNonEmptyKnownSubdir(t *testing.T) {
+func TestValidateManagedXrayBaseDirForPreflightAllowsKnownManagedFiles(t *testing.T) {
 	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
 	binDir := filepath.Join(baseDir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -113,12 +114,26 @@ func TestValidateManagedXrayBaseDirForPreflightRejectsNonEmptyKnownSubdir(t *tes
 	if err := os.WriteFile(filepath.Join(binDir, "xray"), []byte("binary"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := validateManagedXrayBaseDirForPreflight(baseDir); err != nil {
+		t.Fatalf("validateManagedXrayBaseDirForPreflight error = %v, want known managed file allowed", err)
+	}
+}
+
+func TestValidateManagedXrayBaseDirForPreflightRejectsUnknownSubdirFile(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+	binDir := filepath.Join(baseDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "surprise"), []byte("binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	err := validateManagedXrayBaseDirForPreflight(baseDir)
 	if err == nil {
-		t.Fatal("validateManagedXrayBaseDirForPreflight returned nil for non-empty known subdir")
+		t.Fatal("validateManagedXrayBaseDirForPreflight returned nil for unknown subdir file")
 	}
-	if !strings.Contains(err.Error(), "not empty") {
-		t.Fatalf("error = %q, want not empty", err.Error())
+	if !strings.Contains(err.Error(), "unknown artifact") {
+		t.Fatalf("error = %q, want unknown artifact", err.Error())
 	}
 }
 
@@ -2201,7 +2216,7 @@ func landingNodeCreatePayload(overrides map[string]any) map[string]any {
 		"server_ip":            "198.51.100.19",
 		"worker_id":            "worker-1",
 		"interface_name":       "ens17",
-		"listen_port":          formalLandingPort,
+		"listen_port":          defaultLandingPort,
 		"protocol":             "vless",
 		"security":             "reality",
 		"flow":                 defaultRealityFlow,
@@ -2252,15 +2267,44 @@ func TestLandingNodeCreateRequestUsesCustomRealityTemplate(t *testing.T) {
 	}
 }
 
+func TestLandingNodeCreateRequestAcceptsDynamicPort(t *testing.T) {
+	cfg := config{WorkerID: "worker-1", InterfaceName: "ens17"}
+	request, err := parseLandingNodeCreateRequest(cfg, landingNodeCreatePayload(map[string]any{
+		"listen_port": 27940,
+		"node_name":   "",
+	}))
+	if err != nil {
+		t.Fatalf("parseLandingNodeCreateRequest error = %v", err)
+	}
+	if request.ListenPort != 27940 {
+		t.Fatalf("ListenPort = %d, want 27940", request.ListenPort)
+	}
+	if request.NodeName != "liveline-reality-27940" {
+		t.Fatalf("NodeName = %q, want dynamic default", request.NodeName)
+	}
+}
+
+func TestLandingNodeCreateRequestRejectsUnsafePorts(t *testing.T) {
+	cfg := config{WorkerID: "worker-1", InterfaceName: "ens17"}
+	for _, port := range []int{22, 443, 8000, 9999, 30001} {
+		t.Run(strconv.Itoa(port), func(t *testing.T) {
+			_, err := parseLandingNodeCreateRequest(cfg, landingNodeCreatePayload(map[string]any{"listen_port": port}))
+			if err == nil {
+				t.Fatalf("parseLandingNodeCreateRequest accepted unsafe port %d", port)
+			}
+		})
+	}
+}
+
 func TestLandingNodeCreateShareLinkIncludesHeaderTypeNone(t *testing.T) {
 	request := landingNodeCreateRequest{
 		ServerIP:    "198.51.100.19",
-		ListenPort:  formalLandingPort,
+		ListenPort:  27940,
 		Flow:        defaultRealityFlow,
 		Transport:   defaultRealityTransport,
 		ServerName:  defaultRealitySNI,
 		Fingerprint: defaultRealityFingerprint,
-		NodeName:    "liveline-reality-27939",
+		NodeName:    "liveline-reality-27940",
 	}
 	reality := realityMaterial{
 		UUID:      "11111111-2222-3333-4444-555555555555",
@@ -2281,6 +2325,58 @@ func TestLandingNodeCreateShareLinkIncludesHeaderTypeNone(t *testing.T) {
 	if strings.Contains(link, "www.microsoft.com") {
 		t.Fatalf("share link retained old Reality template: %s", link)
 	}
+	if !strings.Contains(link, "@198.51.100.19:27940") {
+		t.Fatalf("share link did not include dynamic port: %s", link)
+	}
+}
+
+func TestAppendManagedXrayInboundAppendsDynamicPort(t *testing.T) {
+	var existing map[string]any
+	if err := json.Unmarshal([]byte(`{"inbounds":[{"listen":"0.0.0.0","port":27939,"protocol":"vless"}],"outbounds":[{"protocol":"freedom","tag":"direct"}]}`), &existing); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+	request := landingNodeCreateRequest{
+		ListenPort: 27940,
+		Flow:       defaultRealityFlow,
+		Transport:  defaultRealityTransport,
+		Security:   defaultRealitySecurity,
+		ServerName: defaultRealitySNI,
+		Dest:       defaultRealityDest,
+	}
+	reality := realityMaterial{UUID: "uuid-2", PrivateKey: "private-key", ShortID: "abcd"}
+	updated, ports, err := appendManagedXrayInbound(existing, request, reality)
+	if err != nil {
+		t.Fatalf("appendManagedXrayInbound error = %v", err)
+	}
+	if len(ports) != 2 || ports[0] != 27939 || ports[1] != 27940 {
+		t.Fatalf("ports = %#v, want [27939 27940]", ports)
+	}
+	inbounds := updated["inbounds"].([]any)
+	if len(inbounds) != 2 {
+		t.Fatalf("len(inbounds) = %d, want 2", len(inbounds))
+	}
+	newInbound := inbounds[1].(map[string]any)
+	if intResultValue(newInbound["port"]) != 27940 {
+		t.Fatalf("new inbound port = %#v, want 27940", newInbound["port"])
+	}
+}
+
+func TestAppendManagedXrayInboundRejectsDuplicatePort(t *testing.T) {
+	var existing map[string]any
+	if err := json.Unmarshal([]byte(`{"inbounds":[{"port":27940,"protocol":"vless"}]}`), &existing); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+	_, _, err := appendManagedXrayInbound(existing, landingNodeCreateRequest{ListenPort: 27940}, realityMaterial{})
+	if err == nil {
+		t.Fatal("appendManagedXrayInbound accepted duplicate port")
+	}
+}
+
+func TestManagedXrayConfigListenPortsRejectsInvalidConfig(t *testing.T) {
+	_, err := managedXrayConfigListenPorts(map[string]any{"inbounds": "not-an-array"})
+	if err == nil {
+		t.Fatal("managedXrayConfigListenPorts accepted invalid inbounds")
+	}
 }
 
 func TestLandingNodeCreateFailedSubmitKeepsDiagnosticsAndDropsSecrets(t *testing.T) {
@@ -2290,7 +2386,7 @@ func TestLandingNodeCreateFailedSubmitKeepsDiagnosticsAndDropsSecrets(t *testing
 		"redacted_error":       "approved TCP port 27939 is not listening after Xray start",
 		"worker_version":       workerVersion,
 		"node_name":            "liveline-reality-27939",
-		"listen_port":          formalLandingPort,
+		"listen_port":          defaultLandingPort,
 		"xray_service_active":  "active",
 		"xray_service_enabled": "enabled",
 		"xray_config_exists":   true,
@@ -2300,7 +2396,7 @@ func TestLandingNodeCreateFailedSubmitKeepsDiagnosticsAndDropsSecrets(t *testing
 			map[string]any{
 				"tag":        "liveline-reality",
 				"listen":     "0.0.0.0",
-				"port":       formalLandingPort,
+				"port":       defaultLandingPort,
 				"protocol":   "vless",
 				"settings":   map[string]any{"clients": []any{map[string]any{"id": "must-not-survive"}}},
 				"privateKey": "must-not-survive",
@@ -2345,8 +2441,8 @@ func TestLandingNodeCreateFailedSubmitKeepsDiagnosticsAndDropsSecrets(t *testing
 	if inbound["settings"] != nil || inbound["privateKey"] != nil {
 		t.Fatalf("inbound summary retained unsafe fields: %#v", inbound)
 	}
-	if inbound["port"] != formalLandingPort {
-		t.Fatalf("inbound port = %#v, want %d", inbound["port"], formalLandingPort)
+	if inbound["port"] != defaultLandingPort {
+		t.Fatalf("inbound port = %#v, want %d", inbound["port"], defaultLandingPort)
 	}
 	attempts, ok := submitResult["listen_check_attempts"].([]any)
 	if !ok || len(attempts) != 1 {
@@ -2363,7 +2459,7 @@ func TestLandingNodeCreateSuccessSubmitKeepsSecureShareLinkForBackendIngest(t *t
 	sanitized := sanitizeCommandResult("landing_node_create", map[string]any{
 		"status":             "succeeded",
 		"node_name":          "liveline-reality-27939",
-		"listen_port":        formalLandingPort,
+		"listen_port":        defaultLandingPort,
 		"protocol":           "vless",
 		"security":           "reality",
 		"flow":               "xtls-rprx-vision",

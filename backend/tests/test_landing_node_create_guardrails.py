@@ -33,14 +33,15 @@ class FakeScalarResult:
 
 
 class FakeSession:
-    def __init__(self, *, workers=None, vps=None) -> None:
+    def __init__(self, *, workers=None, vps=None, scalar_value=None) -> None:
         self.added = []
         self.flushed = False
         self.workers = workers or []
         self.vps = vps or approved_vps()
+        self.scalar_value = scalar_value
 
     def scalar(self, *_args, **_kwargs):
-        return None
+        return self.scalar_value
 
     def scalars(self, *_args, **_kwargs):
         return FakeScalarResult(self.workers)
@@ -70,7 +71,7 @@ def landing_worker(**overrides) -> Worker:
         "role": "landing",
         "status": "online",
         "interface_name": "ens17",
-        "worker_version": "0.1.32-stage-3.3.179-reality-dest-sni-template",
+        "worker_version": "0.1.33-stage-3.3.180-dynamic-landing-create-port",
         "worker_secret_hash": "hash",
         "last_heartbeat_at": datetime.now(timezone.utc),
     }
@@ -118,6 +119,10 @@ def approved_payload(**overrides) -> LandingNodeCreateRequest:
     return LandingNodeCreateRequest(**data)
 
 
+def fake_vless_link() -> str:
+    return "vless" + "://" + "fake-redacted-example"
+
+
 class LandingNodeCreateGuardrailTests(unittest.TestCase):
     def test_active_server_with_matching_worker_and_clean_preflight_is_allowed(self):
         worker = landing_worker()
@@ -131,13 +136,26 @@ class LandingNodeCreateGuardrailTests(unittest.TestCase):
 
         self.assertIs(selected, worker)
 
-    def test_non_approved_port_is_still_rejected(self):
-        payload = approved_payload(approved_port=APPROVED_FORMAL_LISTEN_PORT + 1)
+    def test_custom_approved_port_is_allowed(self):
+        worker = landing_worker()
+        payload = approved_payload(approved_port=27940)
 
-        with self.assertRaises(LandingNodeCreateError) as ctx:
-            validate_landing_node_create_request(db=FakeSession(), vps=approved_vps(), payload=payload)
+        with patch("app.services.landing_node_create.latest_landing_preflight", return_value=successful_preflight()):
+            selected = validate_landing_node_create_request(
+                db=FakeSession(workers=[worker]),
+                vps=approved_vps(),
+                payload=payload,
+            )
 
-        self.assertEqual(ctx.exception.code, "FORMAL_PORT_NOT_APPROVED")
+        self.assertIs(selected, worker)
+
+    def test_blocked_port_is_rejected_by_schema(self):
+        with self.assertRaises(ValidationError):
+            approved_payload(approved_port=22)
+
+    def test_out_of_range_port_is_rejected_by_schema(self):
+        with self.assertRaises(ValidationError):
+            approved_payload(approved_port=30001)
 
     def test_deleted_server_is_rejected(self):
         with self.assertRaises(LandingNodeCreateError) as ctx:
@@ -218,6 +236,7 @@ class LandingNodeCreateGuardrailTests(unittest.TestCase):
             return command
 
         payload = approved_payload(
+            approved_port=27940,
             node_name="custom-reality-node",
             server_name="example.com",
             dest="example.com:443",
@@ -244,7 +263,7 @@ class LandingNodeCreateGuardrailTests(unittest.TestCase):
         self.assertEqual(captured_payload["reality_dest"], "example.com:443")
         self.assertEqual(captured_payload["fingerprint"], "chrome")
         self.assertEqual(captured_payload["interface_name"], "ens17")
-        self.assertEqual(captured_payload["listen_port"], APPROVED_FORMAL_LISTEN_PORT)
+        self.assertEqual(captured_payload["listen_port"], 27940)
 
     def test_create_payload_defaults_to_cloudflare_reality_template(self):
         worker = landing_worker()
@@ -272,6 +291,28 @@ class LandingNodeCreateGuardrailTests(unittest.TestCase):
         self.assertEqual(captured_payload["security"], "reality")
         self.assertEqual(captured_payload["transport"], "tcp")
 
+    def test_create_payload_defaults_node_name_to_actual_port(self):
+        worker = landing_worker()
+        captured_payload = {}
+        command = WorkerCommand(id="command-1", worker_id=worker.id, command_type=LANDING_NODE_CREATE_COMMAND)
+
+        def fake_create_worker_command(_db, _worker, _command_type, payload):
+            captured_payload.update(payload)
+            return command
+
+        with (
+            patch("app.services.landing_node_create.validate_landing_node_create_request", return_value=worker),
+            patch("app.services.landing_node_create.create_worker_command", side_effect=fake_create_worker_command),
+        ):
+            create_landing_node_create_command(
+                db=FakeSession(workers=[worker]),
+                vps=approved_vps(),
+                payload=approved_payload(approved_port=27941),
+            )
+
+        self.assertEqual(captured_payload["listen_port"], 27941)
+        self.assertEqual(captured_payload["node_name"], "liveline-reality-27941")
+
     def test_create_payload_rejects_invalid_reality_sni_and_dest(self):
         invalid_cases = [
             {"server_name": "https://dash.cloudflare.com"},
@@ -293,7 +334,7 @@ class LandingNodeCreateGuardrailTests(unittest.TestCase):
             server_id=SERVER_ID,
             command_type=LANDING_NODE_CREATE_COMMAND,
         )
-        full_link = "vless" + "://fake-redacted-example"
+        full_link = fake_vless_link()
         result = {
             "status": "succeeded",
             "node_name": "custom-reality-node",
@@ -318,7 +359,65 @@ class LandingNodeCreateGuardrailTests(unittest.TestCase):
         self.assertEqual(len(created_nodes), 1)
         self.assertEqual(created_nodes[0].vps_id, SERVER_ID)
         self.assertEqual(created_nodes[0].share_link, full_link)
+        self.assertEqual(created_nodes[0].xray_port, APPROVED_FORMAL_LISTEN_PORT)
         self.assertEqual(db.vps.status, "active")
+
+    def test_success_result_persists_actual_custom_port(self):
+        db = FakeSession(vps=approved_vps(status="unconfigured"))
+        command = WorkerCommand(
+            id="command-1",
+            worker_id=WORKER_ID,
+            server_id=SERVER_ID,
+            command_type=LANDING_NODE_CREATE_COMMAND,
+            payload_json={"listen_port": 27940},
+        )
+        result = {
+            "status": "succeeded",
+            "node_name": "custom-reality-node",
+            "listen_port": 27940,
+            "flow": "xtls-rprx-vision",
+            "uuid": "fake-uuid",
+            "reality_public_key": "fake-public-key",
+            "reality_short_id": "fake-short-id",
+            "server_name": "example.com",
+            "dest": "example.com:443",
+            "fingerprint": "chrome",
+            "secure_share_link": fake_vless_link(),
+        }
+
+        persist_successful_landing_node_result(db=db, command=command, result=result)
+        created_nodes = [item for item in db.added if isinstance(item, Node)]
+        self.assertEqual(created_nodes[0].xray_port, 27940)
+
+    def test_success_result_rejects_listen_port_mismatch(self):
+        command = WorkerCommand(
+            id="command-1",
+            worker_id=WORKER_ID,
+            server_id=SERVER_ID,
+            command_type=LANDING_NODE_CREATE_COMMAND,
+            payload_json={"listen_port": 27940},
+        )
+        result = {
+            "status": "succeeded",
+            "listen_port": 27941,
+            "secure_share_link": fake_vless_link(),
+        }
+
+        with self.assertRaises(LandingNodeCreateError) as ctx:
+            persist_successful_landing_node_result(db=FakeSession(), command=command, result=result)
+
+        self.assertEqual(ctx.exception.code, "FORMAL_PORT_NOT_APPROVED")
+
+    def test_duplicate_port_is_rejected(self):
+        with patch("app.services.landing_node_create.latest_landing_preflight", return_value=successful_preflight()):
+            with self.assertRaises(LandingNodeCreateError) as ctx:
+                validate_landing_node_create_request(
+                    db=FakeSession(workers=[landing_worker()], scalar_value="existing-node"),
+                    vps=approved_vps(),
+                    payload=approved_payload(approved_port=27940),
+                )
+
+        self.assertEqual(ctx.exception.code, "NODE_PORT_ALREADY_EXISTS")
 
 
 if __name__ == "__main__":
