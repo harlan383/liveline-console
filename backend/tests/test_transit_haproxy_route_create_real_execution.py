@@ -67,8 +67,12 @@ def dry_run_payload(**overrides):
         "landing_node_id": LANDING_NODE_ID,
         "landing_node_name": "liveline-reality-27939",
         "planned_listen_port": 23843,
+        "approved_planned_listen_port": 23843,
+        "approved_firewall_confirmation": True,
         "landing_target_host": "64.90.13.19",
+        "approved_landing_target_host": "64.90.13.19",
         "landing_target_port": 27939,
+        "approved_landing_target_port": 27939,
         "forwarding_method": "haproxy_tcp",
         "purpose": "直播",
         "approval_stage": "Stage 3.3.137-new-transit-haproxy-route-create-dry-run",
@@ -103,7 +107,7 @@ class FakeSession:
         worker_present: bool = True,
         worker_status: str = "online",
         worker_role: str = "transit",
-        worker_version: str | None = "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run",
+        worker_version: str | None = "0.1.36-stage-3.3.188-transit-port-approval",
         worker_interface: str | None = "eth0",
         worker_heartbeat_recent: bool = True,
         existing_route: bool = False,
@@ -312,6 +316,30 @@ class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
             "dry_run_payload_matches_real_request",
         )
 
+    def test_missing_approved_planned_listen_port_blocks_real_execution(self):
+        command_payload = dry_run_payload()
+        command_payload.pop("approved_planned_listen_port")
+
+        self.assert_blocked_by(
+            FakeSession(command_payload=command_payload),
+            "dry_run_command_shape_valid",
+        )
+
+    def test_approved_planned_listen_port_mismatch_blocks_real_execution(self):
+        self.assert_blocked_by(
+            FakeSession(command_payload=dry_run_payload(approved_planned_listen_port=24731)),
+            "dry_run_command_shape_valid",
+        )
+
+    def test_missing_approved_firewall_confirmation_blocks_real_execution(self):
+        command_payload = dry_run_payload()
+        command_payload.pop("approved_firewall_confirmation")
+
+        self.assert_blocked_by(
+            FakeSession(command_payload=command_payload),
+            "dry_run_command_shape_valid",
+        )
+
     def test_old_worker_version_blocks_real_execution(self):
         self.assert_blocked_by(
             FakeSession(worker_version="0.1.24-stage-3.3.122"),
@@ -373,8 +401,12 @@ class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
         self.assertEqual(command_payload["planned_service_name"], "liveline-haproxy-23843.service")
         self.assertEqual(command_payload["forwarding_method"], "haproxy_tcp")
         self.assertEqual(command_payload["planned_listen_port"], 23843)
+        self.assertEqual(command_payload["approved_planned_listen_port"], 23843)
+        self.assertTrue(command_payload["approved_firewall_confirmation"])
         self.assertEqual(command_payload["landing_target_host"], "64.90.13.19")
+        self.assertEqual(command_payload["approved_landing_target_host"], "64.90.13.19")
         self.assertEqual(command_payload["landing_target_port"], 27939)
+        self.assertEqual(command_payload["approved_landing_target_port"], 27939)
 
         forbidden_keys = {
             "shell",

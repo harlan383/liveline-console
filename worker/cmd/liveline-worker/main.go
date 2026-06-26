@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.35-stage-3.3.182-hotfix-xray-temp-json-suffix"
+const workerVersion = "0.1.36-stage-3.3.188-transit-port-approval"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -1338,27 +1338,31 @@ func remoteCleanupFailureResult(cfg config, hostname string, request remoteClean
 }
 
 type transitRouteCreateRequest struct {
-	TransitResourceID string
-	TransitWorkerID   string
-	InterfaceName     string
-	LandingNodeID     string
-	PlannedListenPort int
-	LandingTargetHost string
-	LandingTargetPort int
-	ForwardingMethod  string
-	Purpose           string
-	ApprovalStage     string
-	DryRun            bool
-	ApprovalRequired  bool
-	ExecutionMode     string
-	ApprovedReal      bool
-	SecurityGroupOK   bool
-	CloudFirewallOK   bool
-	ServerFirewallOK  bool
-	NoShareLinkChange bool
-	NoFullClientLink  bool
-	NoCutover         bool
-	RouteName         string
+	TransitResourceID            string
+	TransitWorkerID              string
+	InterfaceName                string
+	LandingNodeID                string
+	PlannedListenPort            int
+	ApprovedPlannedListenPort    int
+	ApprovedFirewallConfirmation bool
+	LandingTargetHost            string
+	ApprovedLandingTargetHost    string
+	LandingTargetPort            int
+	ApprovedLandingTargetPort    int
+	ForwardingMethod             string
+	Purpose                      string
+	ApprovalStage                string
+	DryRun                       bool
+	ApprovalRequired             bool
+	ExecutionMode                string
+	ApprovedReal                 bool
+	SecurityGroupOK              bool
+	CloudFirewallOK              bool
+	ServerFirewallOK             bool
+	NoShareLinkChange            bool
+	NoFullClientLink             bool
+	NoCutover                    bool
+	RouteName                    string
 }
 
 type transitRouteCreateArtifacts struct {
@@ -1622,8 +1626,21 @@ func parseTransitRouteCreateRequest(payload map[string]any) (transitRouteCreateR
 		InterfaceName:     stringPayload(payload, "interface_name"),
 		LandingNodeID:     stringPayload(payload, "landing_node_id"),
 		PlannedListenPort: intPayload(payload, "planned_listen_port"),
-		LandingTargetHost: stringPayload(payload, "landing_target_host"),
+		ApprovedPlannedListenPort: intPayload(
+			payload,
+			"approved_planned_listen_port",
+		),
+		ApprovedFirewallConfirmation: boolPayload(payload, "approved_firewall_confirmation"),
+		LandingTargetHost:            stringPayload(payload, "landing_target_host"),
+		ApprovedLandingTargetHost: stringPayload(
+			payload,
+			"approved_landing_target_host",
+		),
 		LandingTargetPort: intPayload(payload, "landing_target_port"),
+		ApprovedLandingTargetPort: intPayload(
+			payload,
+			"approved_landing_target_port",
+		),
 		ForwardingMethod:  defaultStringPayload(payload, "forwarding_method", "socat"),
 		Purpose:           stringPayload(payload, "purpose"),
 		ApprovalStage:     stringPayload(payload, "approval_stage"),
@@ -1640,6 +1657,37 @@ func parseTransitRouteCreateRequest(payload map[string]any) (transitRouteCreateR
 		RouteName:         defaultStringPayload(payload, "route_name", approvedTransitRouteName),
 	}
 	return request, nil
+}
+
+func validateTransitRouteCreateHaproxyApprovedParams(request transitRouteCreateRequest) error {
+	if request.ApprovedPlannedListenPort != request.PlannedListenPort {
+		return errors.New("transit_route_create haproxy_tcp planned_listen_port is not approved")
+	}
+	if !request.ApprovedFirewallConfirmation {
+		return errors.New("transit_route_create haproxy_tcp requires approved_firewall_confirmation=true")
+	}
+	if request.ApprovedLandingTargetHost != request.LandingTargetHost {
+		return errors.New("transit_route_create haproxy_tcp landing_target_host is not approved")
+	}
+	if request.ApprovedLandingTargetPort != request.LandingTargetPort {
+		return errors.New("transit_route_create haproxy_tcp landing_target_port is not approved")
+	}
+	if request.ForwardingMethod != approvedTransitHaproxyForwardingMethod {
+		return errors.New("transit_route_create haproxy_tcp requires forwarding_method=haproxy_tcp")
+	}
+	if !validTCPPort(request.PlannedListenPort) || !validTCPPort(request.LandingTargetPort) {
+		return errors.New("transit_route_create haproxy_tcp ports must be 1-65535")
+	}
+	if reason, reserved := protectedTransitListenPorts[request.PlannedListenPort]; reserved {
+		return fmt.Errorf("transit_route_create haproxy_tcp planned listen port is protected: %s", reason)
+	}
+	if !safeDialTargetHost(request.LandingTargetHost) {
+		return errors.New("transit_route_create haproxy_tcp landing target host is invalid")
+	}
+	if !transitRouteNameRE.MatchString(request.RouteName) {
+		return errors.New("transit_route_create haproxy_tcp route_name contains unsafe characters")
+	}
+	return nil
 }
 
 func validateTransitRouteCreateApprovedParams(request transitRouteCreateRequest) error {
@@ -1731,31 +1779,7 @@ func validateTransitRouteCreateHaproxyDryRunRequest(request transitRouteCreateRe
 	if request.LandingNodeID == "" {
 		return errors.New("transit_route_create haproxy_tcp landing_node_id is required")
 	}
-	if request.PlannedListenPort != approvedTransitListenPort {
-		return errors.New("transit_route_create haproxy_tcp planned_listen_port is not approved")
-	}
-	if request.LandingTargetHost != approvedTransitLandingTargetHost {
-		return errors.New("transit_route_create haproxy_tcp landing_target_host is not approved")
-	}
-	if request.LandingTargetPort != approvedTransitLandingTargetPort {
-		return errors.New("transit_route_create haproxy_tcp landing_target_port is not approved")
-	}
-	if request.ForwardingMethod != approvedTransitHaproxyForwardingMethod {
-		return errors.New("transit_route_create haproxy_tcp requires forwarding_method=haproxy_tcp")
-	}
-	if !validTCPPort(request.PlannedListenPort) || !validTCPPort(request.LandingTargetPort) {
-		return errors.New("transit_route_create haproxy_tcp ports must be 1-65535")
-	}
-	if reason, reserved := protectedTransitListenPorts[request.PlannedListenPort]; reserved {
-		return fmt.Errorf("transit_route_create haproxy_tcp planned listen port is protected: %s", reason)
-	}
-	if !safeDialTargetHost(request.LandingTargetHost) {
-		return errors.New("transit_route_create haproxy_tcp landing target host is invalid")
-	}
-	if !transitRouteNameRE.MatchString(request.RouteName) {
-		return errors.New("transit_route_create haproxy_tcp route_name contains unsafe characters")
-	}
-	return nil
+	return validateTransitRouteCreateHaproxyApprovedParams(request)
 }
 
 func validateTransitRouteCreateRealRequest(cfg config, request transitRouteCreateRequest) error {

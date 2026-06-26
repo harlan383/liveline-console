@@ -112,18 +112,19 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
             (0, 1, 20, 3, 3, 73),
         )
 
-    def test_haproxy_tcp_minimum_worker_version_requires_auto_install_worker(self):
+    def test_haproxy_tcp_minimum_worker_version_requires_dynamic_approval_worker(self):
         self.assertEqual(
             minimum_worker_version_for_transit_forwarding_method("haproxy_tcp"),
-            "0.1.31-stage-3.3.175-hotfix-2-haproxy-systemd-run",
+            "0.1.36-stage-3.3.188-transit-port-approval",
         )
         self.assertEqual(
             minimum_worker_version_key_for_transit_forwarding_method("haproxy_tcp"),
-            (0, 1, 31, 3, 3, 175),
+            (0, 1, 36, 3, 3, 188),
         )
         minimum_haproxy_create = minimum_worker_version_key_for_transit_forwarding_method("haproxy_tcp")
         self.assertLess(parse_worker_version("0.1.24-stage-3.3.122"), minimum_haproxy_create)
         self.assertLess(parse_worker_version("0.1.28-stage-3.3.152-haproxy-cleanup-support"), minimum_haproxy_create)
+        self.assertLess(parse_worker_version("0.1.35-stage-3.3.182-hotfix-xray-temp-json-suffix"), minimum_haproxy_create)
 
     def test_haproxy_tcp_remote_cleanup_requires_cleanup_support_worker(self):
         self.assertEqual(

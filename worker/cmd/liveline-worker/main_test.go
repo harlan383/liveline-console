@@ -647,28 +647,32 @@ func approvedTransitRouteCreatePayload() map[string]any {
 
 func approvedTransitHaproxyRouteCreatePayload() map[string]any {
 	return map[string]any{
-		"command_intent":       "haproxy_route_create_dry_run",
-		"transit_resource_id":  testTransitResourceID,
-		"transit_worker_id":    testTransitWorkerID,
-		"interface_name":       testTransitInterfaceName,
-		"landing_node_id":      testTransitLandingNodeID,
-		"planned_listen_port":  approvedTransitListenPort,
-		"landing_target_host":  approvedTransitLandingTargetHost,
-		"landing_target_port":  approvedTransitLandingTargetPort,
-		"forwarding_method":    approvedTransitHaproxyForwardingMethod,
-		"purpose":              "直播",
-		"approval_stage":       approvedTransitHaproxyDryRunStage,
-		"dry_run":              true,
-		"approval_required":    true,
-		"real_execution":       false,
-		"route_created":        false,
-		"haproxy_installed":    false,
-		"listener_bound":       false,
-		"firewall_modified":    false,
-		"share_link_mutated":   false,
-		"cutover":              false,
-		"route_name":           "haproxy-tcp-23843",
-		"planned_service_name": "liveline-haproxy-23843.service",
+		"command_intent":                 "haproxy_route_create_dry_run",
+		"transit_resource_id":            testTransitResourceID,
+		"transit_worker_id":              testTransitWorkerID,
+		"interface_name":                 testTransitInterfaceName,
+		"landing_node_id":                testTransitLandingNodeID,
+		"planned_listen_port":            approvedTransitListenPort,
+		"approved_planned_listen_port":   approvedTransitListenPort,
+		"approved_firewall_confirmation": true,
+		"landing_target_host":            approvedTransitLandingTargetHost,
+		"approved_landing_target_host":   approvedTransitLandingTargetHost,
+		"landing_target_port":            approvedTransitLandingTargetPort,
+		"approved_landing_target_port":   approvedTransitLandingTargetPort,
+		"forwarding_method":              approvedTransitHaproxyForwardingMethod,
+		"purpose":                        "直播",
+		"approval_stage":                 approvedTransitHaproxyDryRunStage,
+		"dry_run":                        true,
+		"approval_required":              true,
+		"real_execution":                 false,
+		"route_created":                  false,
+		"haproxy_installed":              false,
+		"listener_bound":                 false,
+		"firewall_modified":              false,
+		"share_link_mutated":             false,
+		"cutover":                        false,
+		"route_name":                     "haproxy-tcp-23843",
+		"planned_service_name":           "liveline-haproxy-23843.service",
 		"haproxy_config_plan": map[string]any{
 			"mode":           "tcp",
 			"frontend_bind":  "*:23843",
@@ -814,6 +818,60 @@ func TestTransitRouteCreateHaproxyDryRunRejectsNonApprovedPort(t *testing.T) {
 	}
 }
 
+func TestTransitRouteCreateHaproxyDryRunAllowsApprovedDynamicPort(t *testing.T) {
+	payload := approvedTransitHaproxyRouteCreatePayload()
+	payload["planned_listen_port"] = 25963
+	payload["approved_planned_listen_port"] = 25963
+	payload["landing_target_port"] = 28917
+	payload["approved_landing_target_port"] = 28917
+	payload["route_name"] = "haproxy-tcp-25963"
+	payload["planned_service_name"] = "liveline-haproxy-25963.service"
+	payload["haproxy_config_plan"] = map[string]any{
+		"mode":           "tcp",
+		"frontend_bind":  "*:25963",
+		"backend_target": "64.90.13.19:28917",
+	}
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTransitRouteCreateDryRunRequest(request); err != nil {
+		t.Fatalf("validateTransitRouteCreateDryRunRequest returned error for approved dynamic HAProxy port: %v", err)
+	}
+}
+
+func TestTransitRouteCreateHaproxyDryRunRejectsMissingApprovedPort(t *testing.T) {
+	payload := approvedTransitHaproxyRouteCreatePayload()
+	delete(payload, "approved_planned_listen_port")
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateDryRunRequest(request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateDryRunRequest returned nil without approved_planned_listen_port")
+	}
+	if !strings.Contains(err.Error(), "planned_listen_port is not approved") {
+		t.Fatalf("error = %q, want planned_listen_port approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateHaproxyDryRunRejectsMissingFirewallApproval(t *testing.T) {
+	payload := approvedTransitHaproxyRouteCreatePayload()
+	payload["approved_firewall_confirmation"] = false
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateTransitRouteCreateDryRunRequest(request)
+	if err == nil {
+		t.Fatal("validateTransitRouteCreateDryRunRequest returned nil without approved_firewall_confirmation")
+	}
+	if !strings.Contains(err.Error(), "approved_firewall_confirmation=true") {
+		t.Fatalf("error = %q, want approved_firewall_confirmation error", err.Error())
+	}
+}
+
 func TestTransitRouteCreateHaproxyDryRunRejectsSocatForwardingMethod(t *testing.T) {
 	payload := approvedTransitHaproxyRouteCreatePayload()
 	payload["forwarding_method"] = approvedTransitForwardingMethod
@@ -934,6 +992,23 @@ func TestTransitRouteCreateHaproxyRealRequestRejectsWrongPort(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "planned_listen_port is not approved") {
 		t.Fatalf("error = %q, want planned listen approval error", err.Error())
+	}
+}
+
+func TestTransitRouteCreateHaproxyRealRequestAllowsApprovedDynamicPort(t *testing.T) {
+	payload := approvedTransitHaproxyRouteCreateRealPayload()
+	payload["planned_listen_port"] = 25963
+	payload["approved_planned_listen_port"] = 25963
+	payload["landing_target_port"] = 28917
+	payload["approved_landing_target_port"] = 28917
+	payload["route_name"] = "haproxy-tcp-25963"
+	payload["planned_service_name"] = "liveline-haproxy-25963.service"
+	request, err := parseTransitRouteCreateRequest(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTransitRouteCreateHaproxyRequest(approvedTransitRouteCreateConfig(), request); err != nil {
+		t.Fatalf("validateTransitRouteCreateHaproxyRequest returned error for approved dynamic HAProxy port: %v", err)
 	}
 }
 
