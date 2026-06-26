@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -116,6 +118,44 @@ func TestValidateManagedXrayBaseDirForPreflightAllowsKnownManagedFiles(t *testin
 	}
 	if err := validateManagedXrayBaseDirForPreflight(baseDir); err != nil {
 		t.Fatalf("validateManagedXrayBaseDirForPreflight error = %v, want known managed file allowed", err)
+	}
+}
+
+func TestValidateManagedXrayBaseDirForPreflightAllowsStateBackupsAndZip(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+	stateDir := filepath.Join(baseDir, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"xray.zip", "xray.backup.20260626-192914"} {
+		if err := os.WriteFile(filepath.Join(stateDir, name), []byte("managed"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateManagedXrayBaseDirForPreflight(baseDir); err != nil {
+		t.Fatalf("validateManagedXrayBaseDirForPreflight error = %v, want state backup and xray.zip allowed", err)
+	}
+}
+
+func TestValidateManagedXrayBaseDirForPreflightRejectsUnknownStateFile(t *testing.T) {
+	for _, name := range []string{"unknown.txt", "xray.backup.random"} {
+		t.Run(name, func(t *testing.T) {
+			baseDir := filepath.Join(t.TempDir(), "liveline-xray")
+			stateDir := filepath.Join(baseDir, "state")
+			if err := os.MkdirAll(stateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stateDir, name), []byte("not managed"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := validateManagedXrayBaseDirForPreflight(baseDir)
+			if err == nil {
+				t.Fatal("validateManagedXrayBaseDirForPreflight returned nil for unknown state file")
+			}
+			if !strings.Contains(err.Error(), "unknown artifact") {
+				t.Fatalf("error = %q, want unknown artifact", err.Error())
+			}
+		})
 	}
 }
 
@@ -2317,6 +2357,7 @@ func TestLandingNodeCreateShareLinkIncludesHeaderTypeNone(t *testing.T) {
 		"fp=chrome",
 		"type=tcp",
 		"headerType=none",
+		"spx=%2F",
 	} {
 		if !strings.Contains(link, expected) {
 			t.Fatalf("share link missing %q: %s", expected, link)
@@ -2330,10 +2371,26 @@ func TestLandingNodeCreateShareLinkIncludesHeaderTypeNone(t *testing.T) {
 	}
 }
 
+func testManagedRealityInbound(port int) map[string]any {
+	return buildManagedXrayInbound(
+		landingNodeCreateRequest{
+			ListenPort: port,
+			Flow:       defaultRealityFlow,
+			Transport:  defaultRealityTransport,
+			Security:   defaultRealitySecurity,
+			ServerName: defaultRealitySNI,
+			Dest:       defaultRealityDest,
+		},
+		realityMaterial{UUID: fmt.Sprintf("uuid-%d", port), PrivateKey: "private-key", ShortID: "abcd"},
+	)
+}
+
 func TestAppendManagedXrayInboundAppendsDynamicPort(t *testing.T) {
-	var existing map[string]any
-	if err := json.Unmarshal([]byte(`{"inbounds":[{"listen":"0.0.0.0","port":27939,"protocol":"vless"}],"outbounds":[{"protocol":"freedom","tag":"direct"}]}`), &existing); err != nil {
-		t.Fatalf("json.Unmarshal error = %v", err)
+	existing := map[string]any{
+		"inbounds": []any{testManagedRealityInbound(27939)},
+		"outbounds": []any{
+			map[string]any{"protocol": "freedom", "tag": "direct"},
+		},
 	}
 	request := landingNodeCreateRequest{
 		ListenPort: 27940,
@@ -2362,9 +2419,8 @@ func TestAppendManagedXrayInboundAppendsDynamicPort(t *testing.T) {
 }
 
 func TestAppendManagedXrayInboundRejectsDuplicatePort(t *testing.T) {
-	var existing map[string]any
-	if err := json.Unmarshal([]byte(`{"inbounds":[{"port":27940,"protocol":"vless"}]}`), &existing); err != nil {
-		t.Fatalf("json.Unmarshal error = %v", err)
+	existing := map[string]any{
+		"inbounds": []any{testManagedRealityInbound(27940)},
 	}
 	_, _, err := appendManagedXrayInbound(existing, landingNodeCreateRequest{ListenPort: 27940}, realityMaterial{})
 	if err == nil {
@@ -2372,10 +2428,67 @@ func TestAppendManagedXrayInboundRejectsDuplicatePort(t *testing.T) {
 	}
 }
 
+func TestAppendManagedXrayInboundRejectsNonManagedConfig(t *testing.T) {
+	existing := map[string]any{
+		"inbounds": []any{
+			map[string]any{
+				"tag":      "manual-reality-27939",
+				"port":     27939,
+				"protocol": "vless",
+			},
+		},
+	}
+	_, _, err := appendManagedXrayInbound(existing, landingNodeCreateRequest{ListenPort: 27940}, realityMaterial{})
+	if err == nil {
+		t.Fatal("appendManagedXrayInbound accepted non-LiveLine config")
+	}
+}
+
 func TestManagedXrayConfigListenPortsRejectsInvalidConfig(t *testing.T) {
 	_, err := managedXrayConfigListenPorts(map[string]any{"inbounds": "not-an-array"})
 	if err == nil {
 		t.Fatal("managedXrayConfigListenPorts accepted invalid inbounds")
+	}
+}
+
+func TestParseXrayVersionOutput(t *testing.T) {
+	version := parseXrayVersionOutput("Xray 25.5.16 (Xray, Penetrates Everything.)\n")
+	if version != "25.5.16" {
+		t.Fatalf("version = %q, want 25.5.16", version)
+	}
+}
+
+func TestCompareXrayVersions(t *testing.T) {
+	cases := []struct {
+		left  string
+		right string
+		want  int
+	}{
+		{"25.1.1", "25.5.16", -1},
+		{"25.5.16", "25.5.16", 0},
+		{"25.6.1", "25.5.16", 1},
+		{"v25.5.16", "25.5.16", 0},
+	}
+	for _, item := range cases {
+		got := compareXrayVersions(item.left, item.right)
+		if got != item.want {
+			t.Fatalf("compareXrayVersions(%q, %q) = %d, want %d", item.left, item.right, got, item.want)
+		}
+	}
+}
+
+func TestVerifyFileSHA256(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "xray.zip")
+	if err := os.WriteFile(path, []byte("xray archive bytes"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile error = %v", err)
+	}
+	sum := sha256.Sum256([]byte("xray archive bytes"))
+	if err := verifyFileSHA256(path, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatalf("verifyFileSHA256 error = %v", err)
+	}
+	if err := verifyFileSHA256(path, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("verifyFileSHA256 accepted mismatched checksum")
 	}
 }
 

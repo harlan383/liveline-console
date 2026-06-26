@@ -85,6 +85,7 @@ class NodeShareLinkExportCompatTests(unittest.TestCase):
         data = response_payload(response)
         self.assertTrue(data["success"])
         self.assertIn("headerType=none", data["data"]["share_link"])
+        self.assertIn("spx=%2F", data["data"]["share_link"])
         self.assertEqual(node.share_link, stored_link)
 
 

@@ -203,7 +203,7 @@ function SafeDeleteModal({
 }
 
 const requiredTransitWorkerVersion = CURRENT_WORKER_INSTALL_VERSION;
-const transitWorkerBinaryChecksum = "385ffcf6e8da9bc0a5a613286f9831be7165d5c0b1f6d053cc9f64598928d040";
+const transitWorkerBinaryChecksum = "f045c96bae690dbfbf07fa03cfa6288b882de1ee38340a69e8696467c75cf379";
 const transitWorkerInstallCommandConfirmText = "CONFIRM_REAL_WORKER_INSTALL_COMMAND_GENERATION_NEXT_STAGE";
 const workerInterfaceNamePattern = /^[A-Za-z0-9_.-]+$/;
 
