@@ -439,6 +439,44 @@ class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
         }
         self.assertFalse(forbidden_keys.intersection(command_payload))
 
+    def test_dynamic_listen_and_landing_port_create_real_command(self):
+        db = FakeSession(
+            command_payload=dry_run_payload(
+                planned_listen_port=25867,
+                approved_planned_listen_port=25867,
+                landing_target_port=28917,
+                approved_landing_target_port=28917,
+                route_name="haproxy-tcp-25867",
+                planned_service_name="liveline-haproxy-25867.service",
+            ),
+            node_port=28917,
+        )
+        response = call_real_execution(
+            valid_payload(
+                planned_listen_port=25867,
+                landing_target_port=28917,
+                route_name="haproxy-tcp-25867",
+            ),
+            db,
+        )
+        data = response_payload(response)
+
+        self.assertTrue(data["success"])
+        self.assertTrue(data["data"]["ready_for_real_execution"])
+        self.assertFalse(data["data"]["blocked"])
+
+        commands = [item for item in db.added if isinstance(item, WorkerCommand)]
+        self.assertEqual(len(commands), 1)
+        command_payload = commands[0].payload_json
+        self.assertEqual(command_payload["planned_service_name"], "liveline-haproxy-25867.service")
+        self.assertEqual(command_payload["planned_listen_port"], 25867)
+        self.assertEqual(command_payload["approved_planned_listen_port"], 25867)
+        self.assertEqual(command_payload["landing_target_port"], 28917)
+        self.assertEqual(command_payload["approved_landing_target_port"], 28917)
+        self.assertEqual(command_payload["route_name"], "haproxy-tcp-25867")
+        self.assertFalse(command_payload["share_link_mutated"])
+        self.assertFalse(command_payload["cutover"])
+
 
 if __name__ == "__main__":
     unittest.main()
