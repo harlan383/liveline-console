@@ -340,27 +340,6 @@ function nodeServiceStatusLabel(node: ServerNodeSummary | NodeData) {
   return node.service_display_label ?? (status ? nodeStatusLabel(status) : "未返回");
 }
 
-function nodeConnectivityLabel(node: ServerNodeSummary | NodeData) {
-  const status = node.connectivity_status ?? "";
-  if (status === "not_checked" || status === "unknown" || status === "unchecked") {
-    return "待检测";
-  }
-  if (status === "connected" || status === "success" || status === "ok") {
-    return "连接正常";
-  }
-  if (status === "failed" || status === "error" || status === "disconnected") {
-    return "连接失败";
-  }
-  return node.connectivity_display_label ?? nodeStatusLabel(node.connectivity_status);
-}
-
-function nodeHealthSummary(node: ServerNodeSummary | NodeData) {
-  if (node.service_status === "active" && (node.connectivity_status === "not_checked" || node.connectivity_status === "unknown")) {
-    return "服务已启动，待连通性验证";
-  }
-  return node.node_health_summary ?? nodeConnectivityLabel(node);
-}
-
 function nodeClientConfigLabel(node: ServerNodeSummary | NodeData) {
   const hasShareLink = node.share_link_present ?? ("has_share_link" in node ? node.has_share_link : false);
   return hasShareLink ? "已生成" : "未生成";
@@ -1551,11 +1530,9 @@ export function ServerManagementPanel() {
                         </span>
                         <span>
                           <span className={`pill ${statusClass(node.status)}`}>{nodeStatusLabel(node.status)}</span>
-                          <small className="node-health-status">连通性：{nodeConnectivityLabel(node)}</small>
                         </span>
                         <span>
                           <span className="node-config-status">客户端配置：{nodeClientConfigLabel(node)}</span>
-                          <small className="node-share-status">{nodeHealthSummary(node)}</small>
                         </span>
                         <span className="server-actions">
                           <button className="secondary" type="button" onClick={() => void openNodeDetail(node)}>
@@ -2160,8 +2137,6 @@ export function ServerManagementPanel() {
             <strong>{nodeStatusLabel(selectedNodeDetail.status)}</strong>
             <span>服务状态</span>
             <strong>{nodeServiceStatusLabel(selectedNodeDetail)}</strong>
-            <span>连通性</span>
-            <strong>{nodeConnectivityLabel(selectedNodeDetail)}</strong>
             <span>客户端配置</span>
             <strong>
               {shareLinkAvailable
