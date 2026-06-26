@@ -71,7 +71,7 @@ def landing_worker(**overrides) -> Worker:
         "role": "landing",
         "status": "online",
         "interface_name": "ens17",
-        "worker_version": "0.1.33-stage-3.3.180-dynamic-landing-create-port",
+        "worker_version": "0.1.34-stage-3.3.181-xray-v25516-multi-inbound",
         "worker_secret_hash": "hash",
         "last_heartbeat_at": datetime.now(timezone.utc),
     }
@@ -120,7 +120,12 @@ def approved_payload(**overrides) -> LandingNodeCreateRequest:
 
 
 def fake_vless_link() -> str:
-    return "vless" + "://" + "fake-redacted-example"
+    return (
+        "vless"
+        + "://11111111-2222-3333-4444-555555555555@198.51.100.19:27939"
+        "?encryption=none&flow=xtls-rprx-vision&security=reality&sni=dash.cloudflare.com"
+        "&fp=chrome&pbk=fake-public-key&sid=fake-short-id&type=tcp#liveline-reality-27939"
+    )
 
 
 class LandingNodeCreateGuardrailTests(unittest.TestCase):
@@ -358,7 +363,9 @@ class LandingNodeCreateGuardrailTests(unittest.TestCase):
         created_nodes = [item for item in db.added if isinstance(item, Node)]
         self.assertEqual(len(created_nodes), 1)
         self.assertEqual(created_nodes[0].vps_id, SERVER_ID)
-        self.assertEqual(created_nodes[0].share_link, full_link)
+        self.assertIn("headerType=none", created_nodes[0].share_link)
+        self.assertIn("spx=%2F", created_nodes[0].share_link)
+        self.assertNotEqual(created_nodes[0].share_link, full_link)
         self.assertEqual(created_nodes[0].xray_port, APPROVED_FORMAL_LISTEN_PORT)
         self.assertEqual(db.vps.status, "active")
 

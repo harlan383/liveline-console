@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,7 +26,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.33-stage-3.3.180-dynamic-landing-create-port"
+const workerVersion = "0.1.34-stage-3.3.181-xray-v25516-multi-inbound"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -68,7 +69,10 @@ const approvedTransitSocatServiceName = "liveline-socat-23843.service"
 const approvedTransitSocatServicePath = "/etc/systemd/system/liveline-socat-23843.service"
 const transitSocatServicePrefix = "liveline-socat"
 const transitSystemdDir = "/etc/systemd/system"
-const xrayDownloadURL = "https://github.com/XTLS/Xray-core/releases/download/v25.1.1/Xray-linux-64.zip"
+const xrayTargetVersionTag = "v25.5.16"
+const xrayTargetVersion = "25.5.16"
+const xrayDownloadURL = "https://github.com/XTLS/Xray-core/releases/download/v25.5.16/Xray-linux-64.zip"
+const xrayDownloadSHA256 = "7679da6a3bb9dc2b3ce82d7f9f64ac1bb0e4bd6c3b9a0926613e5fc88abef25a"
 const managedXrayBaseDir = "/opt/liveline-xray"
 const managedXrayBinDir = "/opt/liveline-xray/bin"
 const managedXrayBinaryPath = "/opt/liveline-xray/bin/xray"
@@ -87,6 +91,9 @@ const defaultWorkerConfigDir = "/etc/liveline-worker"
 var postJSONHTTPClient = &http.Client{Timeout: postJSONTimeout}
 var postJSONFunc = postJSON
 var postJSONViaCurlFunc = postJSONViaCurl
+var runCommandFunc = runCommand
+var downloadFileFunc = downloadFile
+var extractZipFileFunc = extractZipFile
 var livelineSocatServiceNameRE = regexp.MustCompile(`^liveline-socat-[0-9]+\.service$`)
 var livelineWorkerServiceNameRE = regexp.MustCompile(`^liveline-worker(?:-[A-Za-z0-9_-]+)?\.service$`)
 var transitRouteNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`)
@@ -2222,20 +2229,24 @@ type landingNodeCreateRequest struct {
 }
 
 type landingNodeCreateArtifacts struct {
-	ConfigWritten    bool
-	ConfigExisted    bool
-	PreviousConfig   []byte
-	ServiceWritten   bool
-	ServiceExisted   bool
-	BinaryWritten    bool
-	BinaryExisted    bool
-	DaemonReloaded   bool
-	ServiceStarted   bool
-	ServiceWasActive bool
-	BaseDirCreated   bool
-	BinDirCreated    bool
-	ConfigDirCreated bool
-	StateDirCreated  bool
+	ConfigWritten        bool
+	ConfigExisted        bool
+	PreviousConfig       []byte
+	ServiceWritten       bool
+	ServiceExisted       bool
+	BinaryWritten        bool
+	BinaryExisted        bool
+	BinaryUpgraded       bool
+	BinaryBackupPath     string
+	CurrentXrayVersion   string
+	InstalledXrayVersion string
+	DaemonReloaded       bool
+	ServiceStarted       bool
+	ServiceWasActive     bool
+	BaseDirCreated       bool
+	BinDirCreated        bool
+	ConfigDirCreated     bool
+	StateDirCreated      bool
 }
 
 func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]any, error) {
@@ -2265,7 +2276,7 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 		rollbackLandingNodeCreate(artifacts)
 		return landingNodeFailureResult(request, phases), err
 	}
-	addPhase("install_xray_core", "passed", "Xray-core binary 已就绪于 LiveLine 管理路径。")
+	addPhase("install_xray_core", "passed", fmt.Sprintf("Xray-core binary 已就绪于 LiveLine 管理路径；target=%s upgraded=%v。", xrayTargetVersionTag, artifacts.BinaryUpgraded))
 
 	reality, err := generateRealityMaterial()
 	if err != nil {
@@ -2329,26 +2340,31 @@ func executeLandingNodeCreate(cfg config, payload map[string]any) (map[string]an
 
 	shareLink := buildVLESSRealityShareLink(request, reality)
 	return map[string]any{
-		"status":              "succeeded",
-		"phases":              phases,
-		"node_name":           request.NodeName,
-		"listen_port":         request.ListenPort,
-		"protocol":            request.Protocol,
-		"security":            request.Security,
-		"flow":                request.Flow,
-		"transport":           request.Transport,
-		"server_name":         request.ServerName,
-		"sni":                 request.ServerName,
-		"dest":                request.Dest,
-		"fingerprint":         request.Fingerprint,
-		"uuid":                reality.UUID,
-		"reality_public_key":  reality.PublicKey,
-		"reality_short_id":    reality.ShortID,
-		"managed_config_path": managedXrayConfigPath,
-		"managed_service":     managedXrayServiceName,
-		"share_link_present":  true,
-		"masked_share_link":   maskShareLink(shareLink),
-		"secure_share_link":   shareLink,
+		"status":                  "succeeded",
+		"phases":                  phases,
+		"node_name":               request.NodeName,
+		"listen_port":             request.ListenPort,
+		"protocol":                request.Protocol,
+		"security":                request.Security,
+		"flow":                    request.Flow,
+		"transport":               request.Transport,
+		"server_name":             request.ServerName,
+		"sni":                     request.ServerName,
+		"dest":                    request.Dest,
+		"fingerprint":             request.Fingerprint,
+		"uuid":                    reality.UUID,
+		"reality_public_key":      reality.PublicKey,
+		"reality_short_id":        reality.ShortID,
+		"managed_config_path":     managedXrayConfigPath,
+		"managed_service":         managedXrayServiceName,
+		"xray_version":            artifacts.InstalledXrayVersion,
+		"xray_target_version":     xrayTargetVersionTag,
+		"xray_upgrade_required":   artifacts.CurrentXrayVersion != "" && compareXrayVersions(artifacts.CurrentXrayVersion, xrayTargetVersion) < 0,
+		"xray_upgraded":           artifacts.BinaryUpgraded,
+		"xray_binary_backup_path": artifacts.BinaryBackupPath,
+		"share_link_present":      true,
+		"masked_share_link":       maskShareLink(shareLink),
+		"secure_share_link":       shareLink,
 		"safety_boundary": []any{
 			"node.share_link is written only by backend after this success result",
 			"Reality private key was not returned",
@@ -2642,11 +2658,41 @@ func installXrayBinary(artifacts *landingNodeCreateArtifacts) error {
 			return fmt.Errorf("%s exists but is not executable", managedXrayBinaryPath)
 		}
 		artifacts.BinaryExisted = true
-		return nil
+		currentVersion, err := xrayBinaryVersion(managedXrayBinaryPath)
+		if err != nil {
+			return err
+		}
+		artifacts.CurrentXrayVersion = currentVersion
+		if compareXrayVersions(currentVersion, xrayTargetVersion) >= 0 {
+			artifacts.InstalledXrayVersion = currentVersion
+			return nil
+		}
+		backupPath := filepath.Join(managedXrayStateDir, "xray.backup."+time.Now().UTC().Format("20060102-150405"))
+		if err := copyFileOverwrite(managedXrayBinaryPath, backupPath, 0o755); err != nil {
+			return fmt.Errorf("backup existing Xray binary failed: %w", err)
+		}
+		artifacts.BinaryBackupPath = backupPath
+		artifacts.BinaryUpgraded = true
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
+	if err := installTargetXrayBinary(); err != nil {
+		return err
+	}
+	artifacts.BinaryWritten = true
+	installedVersion, err := xrayBinaryVersion(managedXrayBinaryPath)
+	if err != nil {
+		return err
+	}
+	artifacts.InstalledXrayVersion = installedVersion
+	if compareXrayVersions(installedVersion, xrayTargetVersion) < 0 {
+		return fmt.Errorf("installed Xray version %s is below required %s", installedVersion, xrayTargetVersionTag)
+	}
+	return nil
+}
+
+func installTargetXrayBinary() error {
 	tmpDir, err := os.MkdirTemp("", "liveline-xray-*")
 	if err != nil {
 		return err
@@ -2654,20 +2700,109 @@ func installXrayBinary(artifacts *landingNodeCreateArtifacts) error {
 	defer os.RemoveAll(tmpDir)
 
 	zipPath := filepath.Join(tmpDir, "xray.zip")
-	if err := downloadFile(xrayDownloadURL, zipPath); err != nil {
+	if err := downloadFileFunc(xrayDownloadURL, zipPath); err != nil {
+		return err
+	}
+	if err := verifyFileSHA256(zipPath, xrayDownloadSHA256); err != nil {
 		return err
 	}
 	xrayPath := filepath.Join(tmpDir, "xray")
-	if err := extractZipFile(zipPath, "xray", xrayPath); err != nil {
+	if err := extractZipFileFunc(zipPath, "xray", xrayPath); err != nil {
 		return err
 	}
 	if err := os.Chmod(xrayPath, 0o755); err != nil {
 		return err
 	}
-	if err := copyFile(xrayPath, managedXrayBinaryPath, 0o755); err != nil {
+	nextPath := filepath.Join(managedXrayBinDir, ".xray.new."+strconv.FormatInt(time.Now().UnixNano(), 10))
+	if err := copyFileOverwrite(xrayPath, nextPath, 0o755); err != nil {
 		return err
 	}
-	artifacts.BinaryWritten = true
+	if err := os.Rename(nextPath, managedXrayBinaryPath); err != nil {
+		_ = os.Remove(nextPath)
+		return err
+	}
+	return os.Chmod(managedXrayBinaryPath, 0o755)
+}
+
+func xrayBinaryVersion(path string) (string, error) {
+	output, err := runCommandFunc(20*time.Second, path, "version")
+	if err != nil {
+		return "", err
+	}
+	version := parseXrayVersionOutput(output)
+	if version == "" {
+		return "", fmt.Errorf("could not parse Xray version output: %s", truncateCompactString(output, 180))
+	}
+	return version, nil
+}
+
+func parseXrayVersionOutput(output string) string {
+	for _, field := range strings.Fields(output) {
+		cleaned := strings.TrimPrefix(strings.TrimSpace(field), "v")
+		if _, ok := parseDottedVersion(cleaned); ok {
+			return cleaned
+		}
+	}
+	return ""
+}
+
+func compareXrayVersions(left string, right string) int {
+	leftParts, leftOK := parseDottedVersion(left)
+	rightParts, rightOK := parseDottedVersion(right)
+	if !leftOK && !rightOK {
+		return 0
+	}
+	if !leftOK {
+		return -1
+	}
+	if !rightOK {
+		return 1
+	}
+	for index := 0; index < len(leftParts) && index < len(rightParts); index++ {
+		if leftParts[index] < rightParts[index] {
+			return -1
+		}
+		if leftParts[index] > rightParts[index] {
+			return 1
+		}
+	}
+	return 0
+}
+
+func parseDottedVersion(version string) ([3]int, bool) {
+	var parts [3]int
+	cleaned := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	segments := strings.Split(cleaned, ".")
+	if len(segments) != 3 {
+		return parts, false
+	}
+	for index, segment := range segments {
+		if segment == "" {
+			return parts, false
+		}
+		value, err := strconv.Atoi(segment)
+		if err != nil || value < 0 {
+			return parts, false
+		}
+		parts[index] = value
+	}
+	return parts, true
+}
+
+func verifyFileSHA256(path string, expected string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return err
+	}
+	actual := hex.EncodeToString(hasher.Sum(nil))
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("Xray archive sha256 mismatch: got %s want %s", actual, expected)
+	}
 	return nil
 }
 
@@ -2772,6 +2907,26 @@ func copyFile(source string, destination string, mode os.FileMode) error {
 	}
 	defer input.Close()
 	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(output, input); err != nil {
+		output.Close()
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(destination, mode)
+}
+
+func copyFileOverwrite(source string, destination string, mode os.FileMode) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}
@@ -2896,7 +3051,7 @@ func baseManagedXrayConfig(inbound map[string]any) map[string]any {
 
 func managedXrayConfigListenPorts(config map[string]any) ([]int, error) {
 	rawInbounds, ok := config["inbounds"].([]any)
-	if !ok {
+	if !ok || len(rawInbounds) == 0 {
 		return nil, errors.New("managed Xray config has no inbounds array")
 	}
 	ports := []int{}
@@ -2905,6 +3060,9 @@ func managedXrayConfigListenPorts(config map[string]any) ([]int, error) {
 		inbound, ok := item.(map[string]any)
 		if !ok {
 			return nil, errors.New("managed Xray config contains invalid inbound")
+		}
+		if err := validateLiveLineManagedInbound(inbound); err != nil {
+			return nil, err
 		}
 		port := intResultValue(inbound["port"])
 		if !validTCPPort(port) {
@@ -2920,7 +3078,44 @@ func managedXrayConfigListenPorts(config map[string]any) ([]int, error) {
 	return ports, nil
 }
 
+func validateLiveLineManagedInbound(inbound map[string]any) error {
+	tag := stringResultValue(inbound["tag"])
+	if !strings.HasPrefix(tag, "liveline-reality-") {
+		return fmt.Errorf("managed Xray config contains non-LiveLine inbound tag %q", tag)
+	}
+	if stringResultValue(inbound["protocol"]) != "vless" {
+		return fmt.Errorf("managed Xray config inbound %q is not vless", tag)
+	}
+	settings, ok := inbound["settings"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("managed Xray config inbound %q has invalid settings", tag)
+	}
+	if stringResultValue(settings["decryption"]) != "none" {
+		return fmt.Errorf("managed Xray config inbound %q has unsupported decryption", tag)
+	}
+	streamSettings, ok := inbound["streamSettings"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("managed Xray config inbound %q has invalid streamSettings", tag)
+	}
+	if stringResultValue(streamSettings["network"]) != "tcp" || stringResultValue(streamSettings["security"]) != "reality" {
+		return fmt.Errorf("managed Xray config inbound %q is not Reality TCP", tag)
+	}
+	realitySettings, ok := streamSettings["realitySettings"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("managed Xray config inbound %q has invalid realitySettings", tag)
+	}
+	if stringResultValue(realitySettings["dest"]) == "" {
+		return fmt.Errorf("managed Xray config inbound %q has empty Reality dest", tag)
+	}
+	return nil
+}
+
 func appendManagedXrayInbound(config map[string]any, request landingNodeCreateRequest, reality realityMaterial) (map[string]any, []int, error) {
+	clonedConfig, err := cloneStringAnyMap(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	config = clonedConfig
 	ports, err := managedXrayConfigListenPorts(config)
 	if err != nil {
 		return nil, nil, err
@@ -2938,7 +3133,21 @@ func appendManagedXrayInbound(config map[string]any, request landingNodeCreateRe
 	if _, ok := config["outbounds"]; !ok {
 		config["outbounds"] = []any{map[string]any{"protocol": "freedom", "tag": "direct"}}
 	}
-	return config, append(ports, request.ListenPort), nil
+	ports = append(ports, request.ListenPort)
+	sort.Ints(ports)
+	return config, ports, nil
+}
+
+func cloneStringAnyMap(value map[string]any) (map[string]any, error) {
+	content, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var cloned map[string]any
+	if err := json.Unmarshal(content, &cloned); err != nil {
+		return nil, err
+	}
+	return cloned, nil
 }
 
 func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMaterial, artifacts *landingNodeCreateArtifacts) ([]int, error) {
@@ -2972,7 +3181,15 @@ func writeManagedXrayConfig(request landingNodeCreateRequest, reality realityMat
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(managedXrayConfigPath, append(content, '\n'), 0o600); err != nil {
+	tempPath := filepath.Join(managedXrayConfigDir, ".config.json."+strconv.FormatInt(time.Now().UnixNano(), 10)+".tmp")
+	if err := os.WriteFile(tempPath, append(content, '\n'), 0o600); err != nil {
+		return nil, err
+	}
+	defer os.Remove(tempPath)
+	if _, err := runCommandFunc(commandTimeout, managedXrayBinaryPath, "run", "-test", "-config", tempPath); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tempPath, managedXrayConfigPath); err != nil {
 		return nil, err
 	}
 	artifacts.ConfigWritten = true
@@ -3113,6 +3330,7 @@ func buildVLESSRealityShareLink(request landingNodeCreateRequest, reality realit
 	values.Set("sid", reality.ShortID)
 	values.Set("type", request.Transport)
 	values.Set("headerType", "none")
+	values.Set("spx", "/")
 	fragment := url.QueryEscape(request.NodeName)
 	return fmt.Sprintf(
 		"vless"+"://%s@%s:%d?%s#%s",
@@ -3164,6 +3382,13 @@ func landingNodeFailureResultWithDiagnostics(request landingNodeCreateRequest, p
 		for _, key := range []string{
 			"xray_service_active",
 			"xray_service_enabled",
+			"xray_version",
+			"xray_target_version",
+			"xray_upgrade_required",
+			"managed_config_detected",
+			"inbound_ports",
+			"inbound_tags",
+			"listening_ports",
 			"xray_config_exists",
 			"xray_binary_exists",
 			"xray_config_test_ok",
@@ -3197,6 +3422,13 @@ func landingNodeFailureResultWithDiagnostics(request landingNodeCreateRequest, p
 		"rollback_summary":             result["rollback_summary"],
 		"xray_service_active":          result["xray_service_active"],
 		"xray_service_enabled":         result["xray_service_enabled"],
+		"xray_version":                 result["xray_version"],
+		"xray_target_version":          result["xray_target_version"],
+		"xray_upgrade_required":        result["xray_upgrade_required"],
+		"managed_config_detected":      result["managed_config_detected"],
+		"inbound_ports":                result["inbound_ports"],
+		"inbound_tags":                 result["inbound_tags"],
+		"listening_ports":              result["listening_ports"],
 		"xray_config_exists":           result["xray_config_exists"],
 		"xray_binary_exists":           result["xray_binary_exists"],
 		"xray_config_test_ok":          result["xray_config_test_ok"],
@@ -3245,6 +3477,9 @@ func rollbackLandingNodeCreate(artifacts *landingNodeCreateArtifacts) []any {
 			add("remove", managedXrayConfigPath, os.Remove(managedXrayConfigPath))
 		}
 	}
+	if artifacts.BinaryUpgraded && artifacts.BinaryBackupPath != "" {
+		add("restore", managedXrayBinaryPath, copyFileOverwrite(artifacts.BinaryBackupPath, managedXrayBinaryPath, 0o755))
+	}
 	if artifacts.BinaryWritten && !artifacts.BinaryExisted {
 		add("remove", managedXrayBinaryPath, os.Remove(managedXrayBinaryPath))
 	}
@@ -3284,7 +3519,18 @@ func collectManagedXrayDiagnostics(port int) map[string]any {
 	diagnostics["xray_service_enabled"] = serviceStateText(enabledOutput, enabledErr)
 	diagnostics["xray_config_exists"] = pathExists(managedXrayConfigPath)
 	diagnostics["xray_binary_exists"] = pathExists(managedXrayBinaryPath)
-	diagnostics["xray_config_inbounds_summary"] = xrayConfigInboundsSummary(managedXrayConfigPath)
+	diagnostics["xray_target_version"] = xrayTargetVersionTag
+	if pathExists(managedXrayBinaryPath) {
+		if version, err := xrayBinaryVersion(managedXrayBinaryPath); err == nil {
+			diagnostics["xray_version"] = version
+			diagnostics["xray_upgrade_required"] = compareXrayVersions(version, xrayTargetVersion) < 0
+		}
+	}
+	inboundSummary := xrayConfigInboundsSummary(managedXrayConfigPath)
+	diagnostics["xray_config_inbounds_summary"] = inboundSummary
+	diagnostics["managed_config_detected"] = len(inboundSummary) > 0
+	diagnostics["inbound_ports"] = inboundSummaryValues(inboundSummary, "port")
+	diagnostics["inbound_tags"] = inboundSummaryValues(inboundSummary, "tag")
 	configTestOK := false
 	if pathExists(managedXrayBinaryPath) && pathExists(managedXrayConfigPath) {
 		_, configErr := runCommand(20*time.Second, managedXrayBinaryPath, "run", "-test", "-config", managedXrayConfigPath)
@@ -3294,9 +3540,11 @@ func collectManagedXrayDiagnostics(port int) map[string]any {
 
 	if output, err := runCommand(10*time.Second, "ss", "-lntp"); err != nil {
 		diagnostics["ss_listen_summary"] = ssListenSummaryStrings(output, 30)
+		diagnostics["listening_ports"] = listeningPortsFromSSOutput(output)
 		diagnostics["ss_error"] = truncateCompactString(err.Error(), 180)
 	} else {
 		diagnostics["ss_listen_summary"] = ssListenSummaryStrings(output, 30)
+		diagnostics["listening_ports"] = listeningPortsFromSSOutput(output)
 		diagnostics["ss_matching_lines"] = ssMatchingLinesForPort(output, port)
 	}
 	if output, err := runCommand(12*time.Second, "systemctl", "status", "--no-pager", "-l", managedXrayServiceName); err != nil {
@@ -3310,6 +3558,42 @@ func collectManagedXrayDiagnostics(port int) map[string]any {
 		diagnostics["journal_tail_summary"] = truncateCompactString(strings.TrimSpace(output), 4000)
 	}
 	return diagnostics
+}
+
+func inboundSummaryValues(summary []any, key string) []any {
+	values := []any{}
+	for _, item := range summary {
+		inbound, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if value, ok := inbound[key]; ok {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func listeningPortsFromSSOutput(output string) []any {
+	rows, _ := listeningPortRows(output)
+	ports := []int{}
+	seen := map[int]bool{}
+	for _, row := range rows {
+		port := intResultValue(row["port"])
+		if validTCPPort(port) && !seen[port] {
+			ports = append(ports, port)
+			seen[port] = true
+		}
+	}
+	sort.Ints(ports)
+	result := []any{}
+	for _, port := range ports {
+		result = append(result, port)
+		if len(result) >= 50 {
+			break
+		}
+	}
+	return result
 }
 
 func serviceStateText(output string, err error) string {
@@ -3509,27 +3793,32 @@ func sanitizeLandingNodeCreateResult(result map[string]any) map[string]any {
 	if stringResultValue(result["status"]) == "succeeded" {
 		// Success result must keep secure_share_link for the backend-only ingest path.
 		return map[string]any{
-			"status":              "succeeded",
-			"phases":              sanitizeResultValue(result["phases"]),
-			"node_name":           stringResultValue(result["node_name"]),
-			"listen_port":         intResultValue(result["listen_port"]),
-			"protocol":            stringResultValue(result["protocol"]),
-			"security":            stringResultValue(result["security"]),
-			"flow":                stringResultValue(result["flow"]),
-			"transport":           stringResultValue(result["transport"]),
-			"server_name":         stringResultValue(result["server_name"]),
-			"sni":                 stringResultValue(result["sni"]),
-			"dest":                stringResultValue(result["dest"]),
-			"fingerprint":         stringResultValue(result["fingerprint"]),
-			"uuid":                stringResultValue(result["uuid"]),
-			"reality_public_key":  stringResultValue(result["reality_public_key"]),
-			"reality_short_id":    stringResultValue(result["reality_short_id"]),
-			"managed_config_path": stringResultValue(result["managed_config_path"]),
-			"managed_service":     stringResultValue(result["managed_service"]),
-			"share_link_present":  boolResultValue(result["share_link_present"]),
-			"masked_share_link":   stringResultValue(result["masked_share_link"]),
-			"secure_share_link":   rawStringResultValue(result["secure_share_link"]),
-			"safety_boundary":     sanitizeResultValue(result["safety_boundary"]),
+			"status":                  "succeeded",
+			"phases":                  sanitizeResultValue(result["phases"]),
+			"node_name":               stringResultValue(result["node_name"]),
+			"listen_port":             intResultValue(result["listen_port"]),
+			"protocol":                stringResultValue(result["protocol"]),
+			"security":                stringResultValue(result["security"]),
+			"flow":                    stringResultValue(result["flow"]),
+			"transport":               stringResultValue(result["transport"]),
+			"server_name":             stringResultValue(result["server_name"]),
+			"sni":                     stringResultValue(result["sni"]),
+			"dest":                    stringResultValue(result["dest"]),
+			"fingerprint":             stringResultValue(result["fingerprint"]),
+			"uuid":                    stringResultValue(result["uuid"]),
+			"reality_public_key":      stringResultValue(result["reality_public_key"]),
+			"reality_short_id":        stringResultValue(result["reality_short_id"]),
+			"managed_config_path":     stringResultValue(result["managed_config_path"]),
+			"managed_service":         stringResultValue(result["managed_service"]),
+			"xray_version":            stringResultValue(result["xray_version"]),
+			"xray_target_version":     stringResultValue(result["xray_target_version"]),
+			"xray_upgrade_required":   boolResultValue(result["xray_upgrade_required"]),
+			"xray_upgraded":           boolResultValue(result["xray_upgraded"]),
+			"xray_binary_backup_path": stringResultValue(result["xray_binary_backup_path"]),
+			"share_link_present":      boolResultValue(result["share_link_present"]),
+			"masked_share_link":       stringResultValue(result["masked_share_link"]),
+			"secure_share_link":       rawStringResultValue(result["secure_share_link"]),
+			"safety_boundary":         sanitizeResultValue(result["safety_boundary"]),
 		}
 	}
 	return compactLandingNodeCreateFailureResult(result)
@@ -3562,6 +3851,13 @@ func compactLandingNodeCreateFailureResult(result map[string]any) map[string]any
 		"listen_port":                  intResultValue(result["listen_port"]),
 		"xray_service_active":          truncateCompactString(stringResultValue(result["xray_service_active"]), 80),
 		"xray_service_enabled":         truncateCompactString(stringResultValue(result["xray_service_enabled"]), 80),
+		"xray_version":                 truncateCompactString(stringResultValue(result["xray_version"]), 80),
+		"xray_target_version":          xrayTargetVersionTag,
+		"xray_upgrade_required":        boolResultValue(result["xray_upgrade_required"]),
+		"managed_config_detected":      boolResultValue(result["managed_config_detected"]),
+		"inbound_ports":                compactAnyList(result["inbound_ports"], 20),
+		"inbound_tags":                 compactStringList(result["inbound_tags"], 20, 80),
+		"listening_ports":              compactAnyList(result["listening_ports"], 50),
 		"xray_config_exists":           boolResultValue(result["xray_config_exists"]),
 		"xray_binary_exists":           boolResultValue(result["xray_binary_exists"]),
 		"xray_config_test_ok":          boolResultValue(result["xray_config_test_ok"]),
@@ -3646,6 +3942,31 @@ func compactStringList(value any, limit int, itemLimit int) []any {
 		text := truncateCompactString(stringResultValue(item), itemLimit)
 		if text != "" {
 			result = append(result, text)
+		}
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
+
+func compactAnyList(value any, limit int) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return []any{}
+	}
+	result := []any{}
+	for _, item := range items {
+		switch typed := item.(type) {
+		case int:
+			result = append(result, typed)
+		case float64:
+			result = append(result, int(typed))
+		case string:
+			text := truncateCompactString(typed, 80)
+			if text != "" {
+				result = append(result, text)
+			}
 		}
 		if limit > 0 && len(result) >= limit {
 			break

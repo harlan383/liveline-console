@@ -16,8 +16,13 @@ def ensure_vless_tcp_header_type_none(share_link: str) -> str:
 
     query_items = parse_qsl(parsed.query, keep_blank_values=True)
     lowered_keys = {key.lower() for key, _value in query_items}
-    if "headertype" in lowered_keys:
+    changed = False
+    if "headertype" not in lowered_keys:
+        query_items.append(("headerType", "none"))
+        changed = True
+    if "spx" not in lowered_keys:
+        query_items.append(("spx", "/"))
+        changed = True
+    if not changed:
         return share_link
-
-    query_items.append(("headerType", "none"))
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query_items), parsed.fragment))
