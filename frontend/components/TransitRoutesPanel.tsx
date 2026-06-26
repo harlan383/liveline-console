@@ -90,6 +90,7 @@ type TransitRouteCreateStep =
   | "preflight_running"
   | "command_create"
   | "command_running"
+  | "real_create_confirm"
   | "refresh"
   | "export_link"
   | "complete"
@@ -116,6 +117,13 @@ type WorkerInstallPollingContext = {
   targetWorkerVersion: string;
   generatedAt: string;
   interfaceName: string;
+};
+
+type HaproxyCreateRealCreateContext = {
+  transitResourceId: string;
+  landingNodeId: string;
+  dryRun: TransitHaproxyRouteCreateDryRunResult;
+  finalApproval: TransitHaproxyRouteCreateFinalApprovalResult;
 };
 
 type HaproxyReadinessConfirmations = {
@@ -272,6 +280,7 @@ const transitRouteCreateProgressLabels: Record<TransitRouteCreateStep, string> =
   preflight_running: "预检中",
   command_create: "创建中转命令",
   command_running: "创建 socat 服务 / 检查监听",
+  real_create_confirm: "预检成功，等待确认真实创建",
   refresh: "刷新中转链路",
   export_link: "生成客户端链接",
   complete: "完成",
@@ -306,6 +315,12 @@ function transitRouteCreateProgressLabel(step: TransitRouteCreateStep, method: T
     return method === "haproxy_tcp" ? "创建 HAProxy TCP 服务 / 检查监听" : "创建 socat 服务 / 检查监听";
   }
   return transitRouteCreateProgressLabels[step];
+}
+
+function transitRouteCreateProgressSteps(method: TransitCreateForwardingMethod): TransitRouteCreateStep[] {
+  const baseSteps: TransitRouteCreateStep[] = ["preflight_create", "preflight_running", "command_create", "command_running"];
+  const finalSteps: TransitRouteCreateStep[] = ["refresh", "export_link", "complete"];
+  return method === "haproxy_tcp" ? [...baseSteps, "real_create_confirm", ...finalSteps] : [...baseSteps, ...finalSteps];
 }
 
 function findTransitPortConflictRoute(
@@ -1403,6 +1418,9 @@ export function TransitRoutesPanel() {
   const [createStep, setCreateStep] = useState<TransitRouteCreateStep>("idle");
   const [createCommand, setCreateCommand] = useState<WorkerCommandData | null>(null);
   const [createExecuteResult, setCreateExecuteResult] = useState<TransitRouteWorkerCreateExecuteResponse | null>(null);
+  const [createHaproxyRealCreateContext, setCreateHaproxyRealCreateContext] = useState<HaproxyCreateRealCreateContext | null>(null);
+  const [createHaproxyRealExecution, setCreateHaproxyRealExecution] = useState<TransitHaproxyRouteCreateRealExecutionResult | null>(null);
+  const [createHaproxyRealExecutionLoading, setCreateHaproxyRealExecutionLoading] = useState(false);
   const [createdRoute, setCreatedRoute] = useState<TransitRouteData | null>(null);
   const [createExport, setCreateExport] = useState<TransitRouteCandidateExportResult | null>(null);
   const [createError, setCreateError] = useState("");
@@ -1467,6 +1485,7 @@ export function TransitRoutesPanel() {
     createStep !== "preflight_running" &&
     createStep !== "command_create" &&
     createStep !== "command_running" &&
+    createStep !== "real_create_confirm" &&
     createStep !== "refresh" &&
     createStep !== "export_link";
 
@@ -1592,6 +1611,9 @@ export function TransitRoutesPanel() {
     setCreateStep("idle");
     setCreateCommand(null);
     setCreateExecuteResult(null);
+    setCreateHaproxyRealCreateContext(null);
+    setCreateHaproxyRealExecution(null);
+    setCreateHaproxyRealExecutionLoading(false);
     setCreatedRoute(null);
     setCreateExport(null);
     setCreateError("");
@@ -1606,6 +1628,9 @@ export function TransitRoutesPanel() {
     setCreateStep("idle");
     setCreateCommand(null);
     setCreateExecuteResult(null);
+    setCreateHaproxyRealCreateContext(null);
+    setCreateHaproxyRealExecution(null);
+    setCreateHaproxyRealExecutionLoading(false);
     setCreatedRoute(null);
     setCreateExport(null);
     setCreateError("");
@@ -1752,6 +1777,9 @@ export function TransitRoutesPanel() {
     setCreateStep("preflight_create");
     setCreateCommand(null);
     setCreateExecuteResult(null);
+    setCreateHaproxyRealCreateContext(null);
+    setCreateHaproxyRealExecution(null);
+    setCreateHaproxyRealExecutionLoading(false);
     setCreatedRoute(null);
     setCreateExport(null);
     setCreateError("");
@@ -1759,7 +1787,7 @@ export function TransitRoutesPanel() {
     setCreateQrVisible(false);
     setMessage(
       createForm.forwardingMethod === "haproxy_tcp"
-        ? "正在自动执行 HAProxy TCP 审批、dry-run、最终确认和受保护创建流程。"
+        ? "正在执行 HAProxy TCP 审批和 dry-run；预检成功后需要确认真实创建。"
         : "正在自动执行中转只读预检和受保护创建流程。成功后才会临时生成客户端链接和二维码。",
     );
 
@@ -1853,66 +1881,14 @@ export function TransitRoutesPanel() {
           throw new Error(finalApprovalResult.data.summary || "HAProxy TCP 最终审批未通过。");
         }
 
-        const realExecutionResult = await createTransitHaproxyRouteRealExecution(
-          {
-            dry_run_command_id: dryRunResult.data.command.id,
-            transit_resource_id: createResource.id,
-            landing_node_id: createNode.id,
-            planned_listen_port: createListenPort,
-            landing_target_host: landingTargetHost,
-            landing_target_port: createTargetPort,
-            forwarding_method: "haproxy_tcp",
-            route_name: routeName,
-            approval_stage: "Stage 3.3.139-new-transit-haproxy-route-create-real-execution",
-            final_approval_text: HAPROXY_FINAL_APPROVAL_TEXT,
-            real_execution_text: HAPROXY_REAL_EXECUTION_TEXT,
-            firewall_security_group_confirmed: createForm.firewallConfirmed,
-            cloud_firewall_confirmed: createForm.firewallConfirmed,
-            server_firewall_confirmed: createForm.firewallConfirmed,
-            no_cutover_confirmed: true,
-            no_node_share_link_change_confirmed: true,
-            no_full_client_link_confirmed: true,
-          },
-          csrfToken,
-        );
-        if (!realExecutionResult.success) {
-          throw new Error(`${realExecutionResult.error_code}: ${realExecutionResult.message}`);
-        }
-        if (!realExecutionResult.data.command) {
-          throw new Error("HAProxy TCP 真实创建命令未返回，请刷新任务中心检查。");
-        }
-        setCreateCommand(realExecutionResult.data.command);
-        const realCreateCommand = await waitForTransitCommandCompletion(realExecutionResult.data.command.id, "command_running");
-        if (realCreateCommand.status !== "succeeded") {
-          throw new Error(realCreateCommand.error_message || "HAProxy TCP 真实创建命令执行失败。");
-        }
-
-        setCreateStep("refresh");
-        const refreshed = await loadData();
-        const route = findCreatedTransitRoute(refreshed.routes);
-        if (!route) {
-          throw new Error("HAProxy TCP 创建命令已成功，但列表刷新后未找到 active 链路。请刷新页面确认。");
-        }
-        setCreatedRoute(route);
-
-        setCreateStep("export_link");
-        const exportResult = await exportTransitRouteCandidate(
-          route.id,
-          {
-            confirm_transient_export: true,
-            confirm_no_database_write: true,
-            confirm_no_share_link_mutation: true,
-            confirm_no_cutover: true,
-            reason: "haproxy_transit_route_create_success",
-          },
-          csrfToken,
-        );
-        if (!exportResult.success) {
-          throw new Error(`${exportResult.error_code}: ${exportResult.message}`);
-        }
-        setCreateExport(exportResult.data);
-        setCreateStep("complete");
-        setMessage("HAProxy TCP 中转链路创建完成。可以复制客户端链接或临时显示二维码。");
+        setCreateHaproxyRealCreateContext({
+          transitResourceId: createResource.id,
+          landingNodeId: createNode.id,
+          dryRun: dryRunResult.data,
+          finalApproval: finalApprovalResult.data,
+        });
+        setCreateStep("real_create_confirm");
+        setMessage("预检成功，等待确认真实创建。");
         return;
       }
 
@@ -2002,6 +1978,92 @@ export function TransitRoutesPanel() {
       setCreateStep("failed");
       setCreateError(friendly);
       setMessage(`${friendly} 失败时不会写入 transit_routes.share_link，不会 cutover，也不会显示完整客户端链接。`);
+    }
+  }
+
+  async function confirmHaproxyRealCreateFromModal() {
+    if (!createHaproxyRealCreateContext) {
+      setCreateStep("failed");
+      setCreateError("缺少已通过的 HAProxy TCP dry-run / final approval，不能发起真实创建。");
+      return;
+    }
+
+    const { transitResourceId, landingNodeId, dryRun, finalApproval } = createHaproxyRealCreateContext;
+    setCreateHaproxyRealExecutionLoading(true);
+    setCreateError("");
+    setCreateStep("command_create");
+    setMessage("正在创建 HAProxy TCP 真实创建 Worker command。");
+
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const realExecutionResult = await createTransitHaproxyRouteRealExecution(
+        {
+          dry_run_command_id: dryRun.command.id,
+          transit_resource_id: transitResourceId,
+          landing_node_id: landingNodeId,
+          planned_listen_port: finalApproval.planned_listen_port,
+          landing_target_host: finalApproval.landing_target_host,
+          landing_target_port: finalApproval.landing_target_port,
+          forwarding_method: "haproxy_tcp",
+          route_name: finalApproval.route_name,
+          approval_stage: "Stage 3.3.139-new-transit-haproxy-route-create-real-execution",
+          final_approval_text: HAPROXY_FINAL_APPROVAL_TEXT,
+          real_execution_text: HAPROXY_REAL_EXECUTION_TEXT,
+          firewall_security_group_confirmed: true,
+          cloud_firewall_confirmed: true,
+          server_firewall_confirmed: true,
+          no_cutover_confirmed: true,
+          no_node_share_link_change_confirmed: true,
+          no_full_client_link_confirmed: true,
+        },
+        csrfToken,
+      );
+      if (!realExecutionResult.success) {
+        throw new Error(`${realExecutionResult.error_code}: ${realExecutionResult.message}`);
+      }
+      if (!realExecutionResult.data.command) {
+        throw new Error(realExecutionResult.data.summary || "HAProxy TCP 真实创建命令未返回，请刷新任务中心检查。");
+      }
+      setCreateHaproxyRealExecution(realExecutionResult.data);
+      setCreateCommand(realExecutionResult.data.command);
+      const realCreateCommand = await waitForTransitCommandCompletion(realExecutionResult.data.command.id, "command_running");
+      if (realCreateCommand.status !== "succeeded") {
+        throw new Error(realCreateCommand.error_message || "HAProxy TCP 真实创建命令执行失败。");
+      }
+
+      setCreateStep("refresh");
+      const refreshed = await loadData();
+      const route = findCreatedTransitRoute(refreshed.routes);
+      if (!route) {
+        throw new Error("HAProxy TCP 创建命令已成功，但列表刷新后未找到 active 链路。请刷新页面确认。");
+      }
+      setCreatedRoute(route);
+
+      setCreateStep("export_link");
+      const exportResult = await exportTransitRouteCandidate(
+        route.id,
+        {
+          confirm_transient_export: true,
+          confirm_no_database_write: true,
+          confirm_no_share_link_mutation: true,
+          confirm_no_cutover: true,
+          reason: "haproxy_transit_route_create_success",
+        },
+        csrfToken,
+      );
+      if (!exportResult.success) {
+        throw new Error(`${exportResult.error_code}: ${exportResult.message}`);
+      }
+      setCreateExport(exportResult.data);
+      setCreateStep("complete");
+      setMessage("HAProxy TCP 中转链路创建完成。可以复制客户端链接或临时显示二维码。");
+    } catch (error) {
+      const friendly = error instanceof Error ? error.message : "HAProxy TCP 真实创建失败。";
+      setCreateStep("failed");
+      setCreateError(friendly);
+      setMessage(`${friendly} 失败时不会写入 transit_routes.share_link，不会 cutover，也不会显示完整客户端链接。`);
+    } finally {
+      setCreateHaproxyRealExecutionLoading(false);
     }
   }
 
@@ -3464,7 +3526,7 @@ export function TransitRoutesPanel() {
 
                     {createStep !== "failed" ? (
                       <div className="node-create-progress" aria-label="中转链路创建进度">
-                        {(["preflight_create", "preflight_running", "command_create", "command_running", "refresh", "export_link", "complete"] as TransitRouteCreateStep[]).map(
+                        {transitRouteCreateProgressSteps(createForm.forwardingMethod).map(
                           (step, index, steps) => {
                             const currentIndex = steps.indexOf(createStep);
                             return (
@@ -3494,6 +3556,27 @@ export function TransitRoutesPanel() {
                         <span>目标 Worker：{createExecuteResult.target_worker_id}</span>
                         <span>Worker 版本：{createExecuteResult.target_worker_version || "未返回"}</span>
                         <span>执行模式：{createExecuteResult.execution_mode}</span>
+                      </div>
+                    ) : null}
+
+                    {createHaproxyRealCreateContext && createStep === "real_create_confirm" ? (
+                      <div className="worker-command-panel">
+                        <strong>预检成功，等待确认真实创建</strong>
+                        <span>dry-run command：{createHaproxyRealCreateContext.dryRun.command.id}</span>
+                        <span>计划监听端口：{createHaproxyRealCreateContext.finalApproval.planned_listen_port}</span>
+                        <span>
+                          目标落地：{createHaproxyRealCreateContext.finalApproval.landing_target_host}:{createHaproxyRealCreateContext.finalApproval.landing_target_port}
+                        </span>
+                        <span>点击“确认真实创建”后才会创建 HAProxy TCP real_create Worker command。</span>
+                      </div>
+                    ) : null}
+
+                    {createHaproxyRealExecution ? (
+                      <div className="worker-command-panel">
+                        <strong>HAProxy TCP 真实创建命令已提交</strong>
+                        <span>目标 Worker：{createHaproxyRealExecution.target_worker_id || "未返回"}</span>
+                        <span>Worker 版本：{createHaproxyRealExecution.target_worker_version || "未返回"}</span>
+                        <span>监听端口：{createHaproxyRealExecution.planned_listen_port}</span>
                       </div>
                     ) : null}
 
@@ -3576,6 +3659,15 @@ export function TransitRoutesPanel() {
               <div className="modal-actions node-create-modal-footer">
                 <button className="success-button" type="button" onClick={() => void closeCreateRouteModal(true)}>
                   完成并关闭
+                </button>
+              </div>
+            ) : createStep === "real_create_confirm" ? (
+              <div className="modal-actions node-create-modal-footer">
+                <button className="secondary" type="button" onClick={() => void closeCreateRouteModal(false)}>
+                  取消
+                </button>
+                <button className="danger" disabled={createHaproxyRealExecutionLoading || !createHaproxyRealCreateContext} type="button" onClick={() => void confirmHaproxyRealCreateFromModal()}>
+                  {createHaproxyRealExecutionLoading ? "创建中..." : "确认真实创建"}
                 </button>
               </div>
             ) : createStep === "failed" ? (

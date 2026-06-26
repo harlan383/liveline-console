@@ -1509,6 +1509,7 @@ def haproxy_route_create_final_approval(
         and command_payload.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP
     )
     dry_run_succeeded = bool(command and command.status == "succeeded")
+    dry_run_worker_matches_target = bool(command and target_worker and command.worker_id == target_worker.id)
     final_text_ok = payload.final_approval_text.strip() == HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT
     worker_version_supported = worker_supports_transit_forwarding_method(
         target_worker,
@@ -1547,6 +1548,14 @@ def haproxy_route_create_final_approval(
             message="dry-run command payload 是 HAProxy route create dry-run。" if dry_run_shape_ok else "dry-run command payload 不是合法 HAProxy dry-run。",
             next_action="重新生成 HAProxy route create dry-run。" if not dry_run_shape_ok else "继续检查。",
             evidence_summary=command_payload.get("command_intent") if command_payload else None,
+        ),
+        make_haproxy_readiness_check(
+            check_id="dry_run_worker_matches_current_transit_worker",
+            label="dry-run Worker 匹配当前 Transit Worker",
+            passed=dry_run_worker_matches_target,
+            message="dry-run command 来自当前 Transit Worker。" if dry_run_worker_matches_target else "dry-run command 不是当前 Transit Worker 创建的。",
+            next_action="使用当前在线 Transit Worker 重新生成 HAProxy route dry-run。" if not dry_run_worker_matches_target else "继续检查。",
+            evidence_summary=command.worker_id if command else None,
         ),
         make_haproxy_readiness_check(
             check_id="dry_run_verified",
@@ -1868,6 +1877,7 @@ def create_haproxy_route_create_real_execution(
         and command_payload.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP
     )
     dry_run_succeeded = bool(command and command.status == "succeeded")
+    dry_run_worker_matches_target = bool(command and target_worker and command.worker_id == target_worker.id)
     final_text_ok = payload.final_approval_text.strip() == HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT
     real_execution_text_ok = payload.real_execution_text.strip() == HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT
     worker_version_supported = worker_supports_transit_forwarding_method(
@@ -1926,6 +1936,14 @@ def create_haproxy_route_create_real_execution(
             message="dry-run payload 是 HAProxy TCP dry-run。" if dry_run_shape_ok else "dry-run payload 不是合法 HAProxy TCP dry-run。",
             next_action="使用 Stage 3.3.137 重新生成 HAProxy route dry-run。" if not dry_run_shape_ok else "继续检查。",
             evidence_summary=command_payload.get("command_intent") if command_payload else None,
+        ),
+        make_haproxy_readiness_check(
+            check_id="dry_run_worker_matches_current_transit_worker",
+            label="dry-run Worker 匹配当前 Transit Worker",
+            passed=dry_run_worker_matches_target,
+            message="dry-run command 来自当前 Transit Worker。" if dry_run_worker_matches_target else "dry-run command 不是当前 Transit Worker 创建的。",
+            next_action="使用当前在线 Transit Worker 重新生成 HAProxy route dry-run。" if not dry_run_worker_matches_target else "继续检查。",
+            evidence_summary=command.worker_id if command else None,
         ),
         make_haproxy_readiness_check(
             check_id="dry_run_payload_matches_real_request",
@@ -2159,10 +2177,16 @@ def create_haproxy_route_create_real_execution(
         "dry_run": False,
         "approval_required": False,
         "execution_mode": "real_create",
+        "real_execution": True,
         "approved_real_execution": True,
         "user_approved_real_execution": True,
         "route_name": payload.route_name,
         "planned_service_name": planned_service_name,
+        "route_created": False,
+        "haproxy_installed": False,
+        "listener_bound": False,
+        "firewall_modified": False,
+        "share_link_mutated": False,
         "firewall_security_group_confirmed": True,
         "cloud_firewall_confirmed": True,
         "server_firewall_confirmed": True,

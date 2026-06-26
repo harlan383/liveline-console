@@ -101,6 +101,7 @@ class FakeSession:
         command_payload: dict | None = None,
         command_type: str = "transit_route_create",
         command_status: str = "succeeded",
+        command_worker_id: str = TRANSIT_WORKER_ID,
         resource_present: bool = True,
         resource_deleted: bool = False,
         node_present: bool = True,
@@ -167,7 +168,7 @@ class FakeSession:
         self.command = (
             WorkerCommand(
                 id=DRY_RUN_COMMAND_ID,
-                worker_id=TRANSIT_WORKER_ID,
+                worker_id=command_worker_id,
                 server_type="transit",
                 server_id=TRANSIT_RESOURCE_ID,
                 command_type=command_type,
@@ -293,6 +294,12 @@ class TransitHaproxyRouteCreateFinalApprovalTests(unittest.TestCase):
             "dry_run_payload_matches_final_request",
         )
 
+    def test_dry_run_worker_mismatch_blocks_approval(self):
+        self.assert_blocked_by(
+            FakeSession(command_worker_id="older-transit-worker"),
+            "dry_run_worker_matches_current_transit_worker",
+        )
+
     def test_final_approval_text_mismatch_blocks_approval(self):
         self.assert_blocked_by(
             FakeSession(),
@@ -399,6 +406,7 @@ class TransitHaproxyRouteCreateFinalApprovalTests(unittest.TestCase):
         self.assertFalse(data["data"]["share_link_mutated"])
         self.assertFalse(data["data"]["cutover"])
         self.assertTrue(check_map(data)["dry_run_command_succeeded"]["passed"])
+        self.assertTrue(check_map(data)["dry_run_worker_matches_current_transit_worker"]["passed"])
         self.assertTrue(check_map(data)["worker_command_not_created"]["passed"])
         self.assertTrue(check_map(data)["haproxy_not_created"]["passed"])
         self.assertTrue(check_map(data)["firewall_not_modified"]["passed"])
