@@ -26,6 +26,33 @@ function workerGroupSummary(group: HTMLElement) {
   return { name, status, worker };
 }
 
+function createHistoryItem(group: HTMLElement) {
+  const item = document.createElement("div");
+  const { name, status, worker } = workerGroupSummary(group);
+  item.style.border = "1px solid rgba(148, 163, 184, 0.18)";
+  item.style.borderRadius = "12px";
+  item.style.padding = "10px";
+  item.style.background = "rgba(2, 6, 23, 0.35)";
+
+  const title = document.createElement("strong");
+  title.textContent = name;
+  item.appendChild(title);
+
+  const statusLine = document.createElement("span");
+  statusLine.textContent = `状态：${status}`;
+  statusLine.style.display = "block";
+  statusLine.style.marginTop = "4px";
+  item.appendChild(statusLine);
+
+  const workerLine = document.createElement("small");
+  workerLine.textContent = worker;
+  workerLine.style.display = "block";
+  workerLine.style.marginTop = "4px";
+  item.appendChild(workerLine);
+
+  return item;
+}
+
 function createHistoryPanel(groups: HTMLElement[]) {
   const details = document.createElement("details");
   details.id = historyPanelId;
@@ -54,14 +81,7 @@ function createHistoryPanel(groups: HTMLElement[]) {
   list.style.display = "grid";
   list.style.gap = "8px";
   groups.forEach((group) => {
-    const item = document.createElement("div");
-    const { name, status, worker } = workerGroupSummary(group);
-    item.style.border = "1px solid rgba(148, 163, 184, 0.18)";
-    item.style.borderRadius = "12px";
-    item.style.padding = "10px";
-    item.style.background = "rgba(2, 6, 23, 0.35)";
-    item.innerHTML = `<strong>${name}</strong><br><span>状态：${status}</span><br><small>${worker}</small>`;
-    list.appendChild(item);
+    list.appendChild(createHistoryItem(group));
   });
   details.appendChild(list);
 
