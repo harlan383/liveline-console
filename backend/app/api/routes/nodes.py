@@ -103,7 +103,6 @@ def list_nodes(request: Request, db: Session = Depends(get_db)):
 
 def serialize_deleted_node_share_link_candidate(node: Node) -> dict:
     return {
-        "id": node.id,
         "node_name": node.node_name,
         "xray_port": node.xray_port,
         "status": node.status,
