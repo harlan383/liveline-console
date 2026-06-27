@@ -1115,12 +1115,6 @@ export function TransitServersPanel() {
                         <span>HAProxy readiness：后续检查，当前未验证</span>
                       </div>
                     ) : null}
-                    {commands[0] ? (
-                      <div className="worker-command-status">
-                        最近命令：{commands[0].command_type} / {displayStatusLabel(commands[0].status)}
-                        {commands[0].result_summary ? ` / ${commands[0].result_summary}` : ""}
-                      </div>
-                    ) : null}
                   </div>
                 </div>
               );
@@ -2738,8 +2732,6 @@ export function TransitRoutesPanel() {
               const entryLabel = routeEntry(route);
               const targetLabel = `${route.target_host}:${route.target_port}`;
               const serviceLabel = route.service_name || "-";
-              const shareLinkLabel = routeHasShareLink(route) ? "已写入" : "未写入";
-              const cutoverLabel = routeCutoverStatusLabel(route.id);
 
               return (
                 <div className="server-table-group transit-route-table-group" key={route.id}>
@@ -2769,7 +2761,7 @@ export function TransitRoutesPanel() {
                         type="button"
                         onClick={() => {
                           selectCandidateRoute(route.id);
-                          setCandidateMessage(`链路详情：服务 ${serviceLabel}；SHARE_LINK ${shareLinkLabel}；CUTOVER ${cutoverLabel}。`);
+                          setCandidateMessage(`链路详情：服务 ${serviceLabel}。`);
                         }}
                       >
                         详情
@@ -2784,8 +2776,8 @@ export function TransitRoutesPanel() {
                   </div>
 
                   <div className="server-row-worker transit-route-detail-row">
-                    <span className="transit-route-detail-text" title={`服务：${serviceLabel}；SHARE_LINK：${shareLinkLabel}；CUTOVER：${cutoverLabel}`}>
-                      服务：{serviceLabel}；SHARE_LINK：{shareLinkLabel}；CUTOVER：{cutoverLabel}
+                    <span className="transit-route-detail-text" title={`服务：${serviceLabel}`}>
+                      服务：{serviceLabel}
                     </span>
                   </div>
 
@@ -2799,10 +2791,6 @@ export function TransitRoutesPanel() {
                       <strong>{candidateSummary.target_host}:{candidateSummary.target_port}</strong>
                       <span>服务</span>
                       <strong>{candidateSummary.service_name}</strong>
-                      <span>share_link</span>
-                      <strong>{candidateSummary.route_share_link_present ? "已写入" : "NULL / 未写入"}</strong>
-                      <span>cutover</span>
-                      <strong>{candidateSummary.cutover_status === "not_cutover" ? "未切换" : candidateSummary.cutover_status}</strong>
                     </div>
                   ) : null}
 
