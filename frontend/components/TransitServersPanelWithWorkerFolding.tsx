@@ -167,7 +167,7 @@ export function TransitServersPanelWithWorkerFolding() {
   }, []);
 
   return (
-    <div ref={rootRef}>
+    <div className="wide" ref={rootRef}>
       <TransitServersPanel />
     </div>
   );
