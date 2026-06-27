@@ -30,6 +30,14 @@ class NodeShareLinkExportRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=120)
 
 
+DELETED_NODE_SHARE_LINK_SCRUB_CONFIRMATION = "CONFIRM_SCRUB_DELETED_NODE_SHARE_LINKS_ONLY"
+
+
+class DeletedNodeShareLinkScrubRequest(BaseModel):
+    dry_run: bool = True
+    confirm: str | None = Field(default=None, max_length=120)
+
+
 def serialize_node(node: Node, *, include_share_link: bool = False) -> dict:
     vps = node.vps
     has_share_link = bool(node.share_link)
@@ -91,6 +99,92 @@ def list_nodes(request: Request, db: Session = Depends(get_db)):
         {"nodes": [serialize_node(node, include_share_link=False) for node in nodes]},
         "ok",
     )
+
+
+def serialize_deleted_node_share_link_candidate(node: Node) -> dict:
+    return {
+        "id": node.id,
+        "node_name": node.node_name,
+        "xray_port": node.xray_port,
+        "status": node.status,
+        "deleted_at": node.deleted_at.isoformat() if node.deleted_at else None,
+        "share_link_present": bool(node.share_link),
+        "share_link_length": len(node.share_link) if node.share_link else None,
+        "updated_at": node.updated_at.isoformat() if node.updated_at else None,
+    }
+
+
+@router.post("/deleted-share-links/scrub")
+def scrub_deleted_node_share_links(
+    payload: DeletedNodeShareLinkScrubRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    candidates = db.scalars(
+        select(Node)
+        .where(Node.status == "deleted", Node.share_link.is_not(None))
+        .order_by(Node.created_at.desc())
+    ).all()
+    candidate_summaries = [serialize_deleted_node_share_link_candidate(node) for node in candidates]
+    safety_boundary = [
+        "only nodes with status=deleted and share_link present are matched",
+        "active nodes are not modified",
+        "node rows are not deleted",
+        "transit_routes and transit_resources are not modified",
+        "no worker command is created",
+        "no remote command is executed",
+        "no Xray/HAProxy/socat service is restarted",
+        "no port is changed",
+        "no cutover is performed",
+    ]
+
+    result = {
+        "dry_run": payload.dry_run,
+        "matched_count": len(candidates),
+        "scrubbed_count": 0,
+        "confirmation_required": DELETED_NODE_SHARE_LINK_SCRUB_CONFIRMATION,
+        "candidates": candidate_summaries,
+        "safety_boundary": safety_boundary,
+    }
+
+    if payload.dry_run:
+        return success_response(result, "dry-run only; no deleted node share_link was scrubbed.")
+
+    if payload.confirm != DELETED_NODE_SHARE_LINK_SCRUB_CONFIRMATION:
+        return error_response(
+            400,
+            "CONFIRMATION_REQUIRED",
+            "清理 deleted 节点 share_link 前必须提交确认文本。",
+            result,
+        )
+
+    scrubbed_at = datetime.now(UTC)
+    for node in candidates:
+        node.share_link = None
+        node.updated_at = scrubbed_at
+        db.add(node)
+
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="scrub_deleted_node_share_links",
+        result="success",
+        request=request,
+        resource_type="node",
+        resource_id="deleted-node-share-link-scrub",
+    )
+    db.commit()
+
+    result["dry_run"] = False
+    result["scrubbed_count"] = len(candidates)
+    result["scrubbed_at"] = scrubbed_at.isoformat()
+    return success_response(result, "deleted node share_link scrub completed.")
 
 
 @router.get("/{node_id}")
