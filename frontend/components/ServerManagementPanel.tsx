@@ -1521,18 +1521,14 @@ export function ServerManagementPanel() {
                     {server.nodes.map((node) => (
                       <div className="server-table-row node-child-row" key={node.id}>
                         <span>
-                          <strong>直连节点：{node.name}</strong>
-                          <small className="node-meta-line">协议：{nodeProtocolSummary(node)}</small>
+                          <strong>{node.name}</strong>
                         </span>
+                        <span>{node.ip || node.address || server.ip}</span>
+                        <span>{node.port ?? "-"}</span>
                         <span>
-                          <span className="node-entry-label">入口地址：{nodeEntryLabel(node, server.ip)}</span>
-                          <small className="node-meta-line">服务状态：{nodeServiceStatusLabel(node)}</small>
-                        </span>
-                        <span>
-                          <span className={`pill ${statusClass(node.status)}`}>{nodeStatusLabel(node.status)}</span>
-                        </span>
-                        <span>
-                          <span className="node-config-status">客户端配置：{nodeClientConfigLabel(node)}</span>
+                          <span className={`pill ${statusClass(node.status)}`}>
+                            {node.status === "active" ? "在线" : nodeStatusLabel(node.status)}
+                          </span>
                         </span>
                         <span className="server-actions">
                           <button className="secondary" type="button" onClick={() => void openNodeDetail(node)}>
