@@ -6,7 +6,8 @@ import { LoginScreen } from "@/components/LoginScreen";
 import { ServerManagementPanel } from "@/components/ServerManagementPanel";
 import { SystemStatus } from "@/components/SystemStatus";
 import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
-import { TransitRoutesPanel, TransitServersPanel } from "@/components/TransitRoutesPanel";
+import { TransitRoutesPanel } from "@/components/TransitRoutesPanel";
+import { TransitServersPanelWithWorkerFolding } from "@/components/TransitServersPanelWithWorkerFolding";
 import { TransitTopologyPreviewPanel } from "@/components/TransitTopologyPreviewPanel";
 import {
   AUTH_EXPIRED_EVENT,
@@ -186,7 +187,7 @@ export function AppShell() {
         <div className="grid">
           {activePanel === "dashboard" ? <DashboardPanel onNavigate={setActivePanel} /> : null}
           {activePanel === "servers" ? <ServerManagementPanel /> : null}
-          {activePanel === "transitRoutes" ? <TransitServersPanel /> : null}
+          {activePanel === "transitRoutes" ? <TransitServersPanelWithWorkerFolding /> : null}
           {activePanel === "transitLinks" ? <TransitRoutesPanel /> : null}
           {activePanel === "tasks" ? <TaskHistoryPanel /> : null}
           {activePanel === "diagnostics" ? (
