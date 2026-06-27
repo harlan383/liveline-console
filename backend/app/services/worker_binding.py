@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import shlex
 import re
 from urllib.parse import urlparse
 
@@ -79,6 +80,37 @@ def validate_worker_interface_name(interface_name: str | None) -> str:
     return cleaned
 
 
+def worker_install_curl_bootstrap_shell(setup_url: str, interface_name: str, role: str) -> str:
+    setup_url_q = shlex.quote(setup_url)
+    interface_q = shlex.quote(interface_name)
+    role_q = shlex.quote(role)
+    return f"""set -e
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "LiveLine Worker install: curl not found, installing curl and ca-certificates."
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update && apt-get install -y curl ca-certificates
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y curl ca-certificates
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y curl ca-certificates
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache curl ca-certificates
+  else
+    echo "LiveLine Worker install: curl is missing and no supported package manager was found." >&2
+    exit 1
+  fi
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "LiveLine Worker install: curl install failed or curl is still unavailable." >&2
+  exit 1
+fi
+
+curl -fsSL {setup_url_q} | bash -s {interface_q} {role_q}
+"""
+
+
 def build_worker_install_command(
     raw_token: str,
     role: str,
@@ -87,7 +119,8 @@ def build_worker_install_command(
 ) -> str:
     console_url = base_url or worker_public_base_url()
     setup_url = console_url + f"/worker_setup_script/{raw_token}"
-    return f"curl -s {setup_url} | bash -s {validate_worker_interface_name(interface_name)} {role}"
+    interface = validate_worker_interface_name(interface_name)
+    return worker_install_curl_bootstrap_shell(setup_url, interface, role)
 
 
 def create_bound_worker_token(
