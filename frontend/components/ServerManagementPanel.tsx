@@ -1148,6 +1148,7 @@ export function ServerManagementPanel() {
     const xrayService = serviceByName(resultJson.services, "xray");
     const firewall = resultJson.firewall && typeof resultJson.firewall === "object" ? (resultJson.firewall as Record<string, unknown>) : {};
     const xray = resultJson.xray_discovery && typeof resultJson.xray_discovery === "object" ? (resultJson.xray_discovery as Record<string, unknown>) : {};
+    const bbr = resultJson.bbr && typeof resultJson.bbr === "object" ? (resultJson.bbr as Record<string, unknown>) : {};
     const warnings = Array.isArray(resultJson.warnings) ? resultJson.warnings.length : 0;
     const listenCount = typeof ports.listening_count === "number" ? ports.listening_count : 0;
     const importantPorts = ports.important_ports && typeof ports.important_ports === "object" ? (ports.important_ports as Record<string, unknown>) : {};
@@ -1161,6 +1162,13 @@ export function ServerManagementPanel() {
       .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>).port : undefined))
       .filter((port) => typeof port === "number" && port > 0)
       .map((port) => String(port));
+    const bbrRecommendationLabels: Record<string, string> = {
+      already_enabled: "已开启",
+      can_enable_with_approval: "可审批开启",
+      not_available_or_needs_manual_check: "未确认支持",
+    };
+    const bbrRecommendation =
+      typeof bbr.recommendation === "string" ? bbrRecommendationLabels[bbr.recommendation] ?? bbr.recommendation : "未返回";
 
     return (
       <div className="worker-preflight-summary" aria-label="落地服务器只读预检摘要">
@@ -1175,6 +1183,10 @@ export function ServerManagementPanel() {
         <span title={validListeningPorts.join(", ")}>有效监听：{validListeningPorts.length ? validListeningPorts.join(", ") : "无"}</span>
         <span>443：{stringValue((importantPorts["443"] as Record<string, unknown> | undefined)?.status)}</span>
         <span>Xray：{stringValue(xrayService.active)}</span>
+        <span>BBR：{bbrRecommendation}</span>
+        <span title={stringValue(bbr.available_congestion_control)}>BBR 可用算法：{stringValue(bbr.available_congestion_control)}</span>
+        <span>当前拥塞控制：{stringValue(bbr.current_congestion_control)}</span>
+        <span>默认队列：{stringValue(bbr.default_qdisc)}</span>
         <span>防火墙：ufw {firewall.ufw_status ? "已返回摘要" : "未返回"}</span>
         <span>配置发现：{Array.isArray(xray.paths) ? "已返回元数据" : "未返回"}</span>
         <span>警告：{numericValue(warnings)}</span>
