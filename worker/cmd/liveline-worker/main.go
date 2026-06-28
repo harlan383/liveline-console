@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.36-stage-3.3.188-transit-port-approval"
+const workerVersion = "0.1.37-stage-3.3.199-bbr-readonly"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -5870,10 +5870,11 @@ func collectLandingPreflight(cfg config, hostname string) map[string]any {
 		})
 	}
 	return map[string]any{
-		"preflight_version": "0.2",
+		"preflight_version": "0.3",
 		"worker_version":    workerVersion,
 		"system":            landingSystemSummary(cfg, hostname),
 		"network":           network,
+		"bbr":               landingBBRReadonlySummary(),
 		"ports":             landingPortSummary(ssOutput),
 		"services":          landingServiceChecks(),
 		"binaries":          binaryChecks([]string{"xray", "x-ui", "3x-ui", "nginx", "caddy", "socat", "gost", "docker", "iptables", "ufw", "firewall-cmd"}),
@@ -5897,6 +5898,54 @@ func landingSystemSummary(cfg config, hostname string) map[string]any {
 		"role":                    cfg.Role,
 		"interface_name":          cfg.InterfaceName,
 		"worker_config_interface": cfg.InterfaceName,
+	}
+}
+
+func landingBBRReadonlySummary() map[string]any {
+	kernel := readonlyCommandValue("uname", "-r")
+	available := readonlyCommandValue("sysctl", "-n", "net.ipv4.tcp_available_congestion_control")
+	current := readonlyCommandValue("sysctl", "-n", "net.ipv4.tcp_congestion_control")
+	qdisc := readonlyCommandValue("sysctl", "-n", "net.core.default_qdisc")
+
+	lsmodOutput, lsmodErr := readonlyCommandOutput("lsmod")
+	moduleLoaded := false
+	moduleStatus := "not_loaded"
+	if lsmodErr != "" {
+		moduleStatus = "unavailable: " + lsmodErr
+	} else {
+		for _, line := range strings.Split(lsmodOutput, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && fields[0] == "tcp_bbr" {
+				moduleLoaded = true
+				moduleStatus = "loaded"
+				break
+			}
+		}
+	}
+
+	availableHasBBR := strings.Contains(" "+available+" ", " bbr ")
+	currentIsBBR := strings.TrimSpace(current) == "bbr"
+	qdiscIsFQ := strings.TrimSpace(qdisc) == "fq"
+
+	recommendation := "not_available_or_needs_manual_check"
+	if currentIsBBR {
+		recommendation = "already_enabled"
+	} else if availableHasBBR {
+		recommendation = "can_enable_with_approval"
+	}
+
+	return map[string]any{
+		"readonly":                          true,
+		"kernel":                            kernel,
+		"available_congestion_control":      available,
+		"current_congestion_control":        current,
+		"default_qdisc":                     qdisc,
+		"module_status":                     moduleStatus,
+		"module_loaded":                     moduleLoaded,
+		"available_contains_bbr":            availableHasBBR,
+		"current_congestion_control_is_bbr": currentIsBBR,
+		"default_qdisc_is_fq":               qdiscIsFQ,
+		"recommendation":                    recommendation,
 	}
 }
 
