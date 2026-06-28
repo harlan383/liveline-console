@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -26,7 +27,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.37-stage-3.3.199-bbr-readonly"
+const workerVersion = "0.1.38-stage-3.3.201-bbr-module-readonly"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -5923,6 +5924,19 @@ func landingBBRReadonlySummary() map[string]any {
 		}
 	}
 
+	modinfoOutput, modinfoErr := readonlyCommandOutput("modinfo", "tcp_bbr")
+	modinfoStatus := "unavailable: empty_output"
+	modinfoAvailable := false
+	if modinfoErr == "" && strings.TrimSpace(modinfoOutput) != "" {
+		modinfoStatus = "available"
+		modinfoAvailable = true
+	} else if modinfoErr != "" {
+		modinfoStatus = "unavailable: " + truncateCompactString(modinfoErr, 160)
+	}
+	moduleFiles := readonlyBBRModuleFiles(kernel)
+	kernelConfigBBR := readonlyKernelConfigBBRLine(kernel)
+	moduleAvailable := modinfoAvailable || len(moduleFiles) > 0
+
 	availableHasBBR := strings.Contains(" "+available+" ", " bbr ")
 	currentIsBBR := strings.TrimSpace(current) == "bbr"
 	qdiscIsFQ := strings.TrimSpace(qdisc) == "fq"
@@ -5932,6 +5946,8 @@ func landingBBRReadonlySummary() map[string]any {
 		recommendation = "already_enabled"
 	} else if availableHasBBR {
 		recommendation = "can_enable_with_approval"
+	} else if moduleAvailable || len(moduleFiles) > 0 {
+		recommendation = "module_available_needs_load_approval"
 	}
 
 	return map[string]any{
@@ -5942,11 +5958,90 @@ func landingBBRReadonlySummary() map[string]any {
 		"default_qdisc":                     qdisc,
 		"module_status":                     moduleStatus,
 		"module_loaded":                     moduleLoaded,
+		"modinfo_status":                    modinfoStatus,
+		"module_available":                  moduleAvailable,
+		"module_files":                      moduleFiles,
+		"kernel_config_bbr":                 kernelConfigBBR,
 		"available_contains_bbr":            availableHasBBR,
 		"current_congestion_control_is_bbr": currentIsBBR,
 		"default_qdisc_is_fq":               qdiscIsFQ,
 		"recommendation":                    recommendation,
 	}
+}
+
+func readonlyBBRModuleFiles(kernel string) []string {
+	cleanedKernel := strings.TrimSpace(kernel)
+	if cleanedKernel == "" || strings.HasPrefix(cleanedKernel, "unavailable:") {
+		return []string{}
+	}
+	root := filepath.Join("/lib/modules", cleanedKernel)
+	entries := []string{}
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.Contains(strings.ToLower(d.Name()), "bbr") {
+			entries = append(entries, path)
+		}
+		if len(entries) >= 20 {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	sort.Strings(entries)
+	return entries
+}
+
+func readonlyKernelConfigBBRLine(kernel string) string {
+	cleanedKernel := strings.TrimSpace(kernel)
+	if cleanedKernel != "" && !strings.HasPrefix(cleanedKernel, "unavailable:") {
+		if line := firstBBRKernelConfigLineFromPath(filepath.Join("/boot", "config-"+cleanedKernel)); line != "" {
+			return line
+		}
+	}
+	if line := firstBBRKernelConfigLineFromGzipPath("/proc/config.gz"); line != "" {
+		return line
+	}
+	return "not_found"
+}
+
+func firstBBRKernelConfigLineFromPath(path string) string {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return firstBBRKernelConfigLine(string(body))
+}
+
+func firstBBRKernelConfigLineFromGzipPath(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		return ""
+	}
+	defer reader.Close()
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return ""
+	}
+	return firstBBRKernelConfigLine(string(body))
+}
+
+func firstBBRKernelConfigLine(config string) string {
+	for _, line := range strings.Split(config, "\n") {
+		cleaned := strings.TrimSpace(line)
+		if strings.Contains(cleaned, "TCP_CONG_BBR") || strings.Contains(cleaned, "CONFIG_TCP_CONG_BBR") {
+			return truncateCompactString(cleaned, 240)
+		}
+	}
+	return ""
 }
 
 func landingNetworkSummary(interfaceName string, ssOutput string) map[string]any {
