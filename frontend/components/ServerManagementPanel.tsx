@@ -1165,10 +1165,12 @@ export function ServerManagementPanel() {
     const bbrRecommendationLabels: Record<string, string> = {
       already_enabled: "已开启",
       can_enable_with_approval: "可审批开启",
+      module_available_needs_load_approval: "模块存在，需审批加载",
       not_available_or_needs_manual_check: "未确认支持",
     };
     const bbrRecommendation =
       typeof bbr.recommendation === "string" ? bbrRecommendationLabels[bbr.recommendation] ?? bbr.recommendation : "未返回";
+    const bbrModuleFiles = Array.isArray(bbr.module_files) ? bbr.module_files.filter((item) => typeof item === "string") as string[] : [];
 
     return (
       <div className="worker-preflight-summary" aria-label="落地服务器只读预检摘要">
@@ -1187,6 +1189,10 @@ export function ServerManagementPanel() {
         <span title={stringValue(bbr.available_congestion_control)}>BBR 可用算法：{stringValue(bbr.available_congestion_control)}</span>
         <span>当前拥塞控制：{stringValue(bbr.current_congestion_control)}</span>
         <span>默认队列：{stringValue(bbr.default_qdisc)}</span>
+        <span>BBR 模块：{stringValue(bbr.module_status)}</span>
+        <span>modinfo：{stringValue(bbr.modinfo_status)}</span>
+        <span title={bbrModuleFiles.join("\n")}>模块文件：{bbrModuleFiles.length ? `${bbrModuleFiles.length} 个` : "未返回"}</span>
+        <span title={stringValue(bbr.kernel_config_bbr)}>内核配置：{stringValue(bbr.kernel_config_bbr)}</span>
         <span>防火墙：ufw {firewall.ufw_status ? "已返回摘要" : "未返回"}</span>
         <span>配置发现：{Array.isArray(xray.paths) ? "已返回元数据" : "未返回"}</span>
         <span>警告：{numericValue(warnings)}</span>
