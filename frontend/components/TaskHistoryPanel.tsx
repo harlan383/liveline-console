@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { ProductIcon } from "@/components/ProductIcons";
 import { apiFetch, type TaskData, type TaskListResult, type TaskLogData } from "@/lib/api";
 
 const terminalStatuses = new Set(["success", "completed", "failed", "cancelled", "timeout"]);
@@ -9,14 +10,13 @@ const secretKeyPattern = /(private|private_key|passphrase|password|passwd|secret
 const linkPattern = /(vless|vmess|trojan|ss):\/\//i;
 const privateKeyPattern = /BEGIN (OPENSSH|RSA|EC|DSA)? ?PRIVATE KEY/i;
 
-type TaskCategory = "all" | "create" | "delete" | "check" | "other";
+type TaskCategory = "all" | "create" | "check" | "failed";
 
 const taskCategories: Array<{ label: string; value: TaskCategory }> = [
   { label: "全部任务", value: "all" },
   { label: "创建任务", value: "create" },
-  { label: "删除任务", value: "delete" },
   { label: "检测任务", value: "check" },
-  { label: "其他任务", value: "other" },
+  { label: "失败任务", value: "failed" },
 ];
 
 function shortId(id: string) {
@@ -73,13 +73,10 @@ function categoryForTask(taskType: string): TaskCategory {
   if (/create|install|enable/i.test(taskType)) {
     return "create";
   }
-  if (/cleanup|delete|remove/i.test(taskType)) {
-    return "delete";
-  }
   if (/preflight|status|check|read/i.test(taskType)) {
     return "check";
   }
-  return "other";
+  return "check";
 }
 
 function relatedObject(task: TaskData) {
@@ -101,7 +98,7 @@ function resultAdvice(task: TaskData) {
   }
   const failure = taskFailureSummary(task);
   if (/端口|监听/.test(failure)) {
-    return `${failure} 请检查云安全组、云防火墙、服务器防火墙是否放行。`;
+    return `创建失败：端口未通过检测。建议：检查云安全组、云防火墙、服务器防火墙是否放行。`;
   }
   return failure;
 }
@@ -158,19 +155,19 @@ function taskFailureSummary(task: TaskData) {
 
   const source = `${task.error_code ?? ""} ${task.error_message ?? ""} ${task.current_step ?? ""}`.toLowerCase();
   if (source.includes("ssh") || source.includes("banner") || source.includes("authentication")) {
-    return "SSH 连接、协议握手或认证失败。";
+    return "服务器登录连接失败。";
   }
   if (source.includes("port") || source.includes("listen") || source.includes("listening")) {
     return "端口监听、端口占用或监听验证异常。";
   }
   if (source.includes("process") || source.includes("service") || source.includes("systemd")) {
-    return "远端进程或 systemd 服务状态异常。";
+    return "服务器服务状态异常。";
   }
   if (source.includes("health")) {
-    return "本地健康检查异常。";
+    return "系统健康检查异常。";
   }
   if (source.includes("auth") || source.includes("csrf") || source.includes("login")) {
-    return "认证、登录状态或 CSRF 校验异常。";
+    return "登录状态或安全校验异常。";
   }
   if (source.includes("required") || source.includes("missing") || source.includes("invalid")) {
     return "参数缺失或参数格式不符合要求。";
@@ -199,6 +196,8 @@ export function TaskHistoryPanel() {
   const [category, setCategory] = useState<TaskCategory>("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [dateRange, setDateRange] = useState("全部日期");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -251,12 +250,15 @@ export function TaskHistoryPanel() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
-      const categoryMatches = category === "all" || categoryForTask(task.task_type) === category;
+      const categoryMatches = category === "all" || category === "failed" || categoryForTask(task.task_type) === category;
+      const failedMatches = category !== "failed" || task.status === "failed" || task.status === "timeout";
       const statusMatches = statusFilter === "all" || task.status === statusFilter;
       const typeMatches = typeFilter === "all" || task.task_type === typeFilter;
-      return categoryMatches && statusMatches && typeMatches;
+      const keyword = search.trim().toLowerCase();
+      const searchMatches = !keyword || `${businessTaskName(task.task_type)} ${relatedObject(task)} ${resultAdvice(task)}`.toLowerCase().includes(keyword);
+      return categoryMatches && failedMatches && statusMatches && typeMatches && searchMatches;
     });
-  }, [category, statusFilter, tasks, typeFilter]);
+  }, [category, search, statusFilter, tasks, typeFilter]);
 
   const availableTypes = Array.from(new Set(tasks.map((task) => task.task_type))).sort();
   const availableStatuses = Array.from(new Set(tasks.map((task) => task.status))).sort();
@@ -295,38 +297,50 @@ export function TaskHistoryPanel() {
               </option>
             ))}
           </select>
-          <select aria-label="类型筛选" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
-            <option value="all">类型筛选</option>
-            {availableTypes.map((taskType) => (
-              <option key={taskType} value={taskType}>
-                {businessTaskName(taskType)}
-              </option>
-            ))}
-          </select>
-          <select aria-label="日期范围" value={dateRange} onChange={(event) => setDateRange(event.target.value)}>
-            <option>全部日期</option>
-            <option>今天</option>
-            <option>最近 7 天</option>
-            <option>最近 30 天</option>
-          </select>
-          <div className="date-range-inputs">
-            <input aria-label="开始日期" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-            <span>-</span>
-            <input aria-label="结束日期" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-          </div>
+          <input aria-label="搜索任务" placeholder="搜索任务或关联对象" value={search} onChange={(event) => setSearch(event.target.value)} />
+          <button className="secondary" type="button" onClick={() => setShowMoreFilters((open) => !open)}>
+            更多筛选
+          </button>
+          {showMoreFilters ? (
+            <div className="more-filter-panel">
+              <select aria-label="类型筛选" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+                <option value="all">类型筛选</option>
+                {availableTypes.map((taskType) => (
+                  <option key={taskType} value={taskType}>
+                    {businessTaskName(taskType)}
+                  </option>
+                ))}
+              </select>
+              <select aria-label="日期范围" value={dateRange} onChange={(event) => setDateRange(event.target.value)}>
+                <option>全部日期</option>
+                <option>今天</option>
+                <option>最近 7 天</option>
+                <option>最近 30 天</option>
+              </select>
+              <div className="date-range-inputs">
+                <input aria-label="开始日期" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+                <span>-</span>
+                <input aria-label="结束日期" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="product-table task-product-table">
           <div className="product-table-row product-table-head">
-            <span>任务ID</span>
-            <span>任务类型</span>
-            <span>任务内容</span>
+            <span>时间</span>
+            <span>任务名称</span>
+            <span>关联对象</span>
             <span>状态</span>
-            <span>开始时间</span>
+            <span>结果说明</span>
             <span>操作</span>
           </div>
           {filteredTasks.length === 0 ? (
-            <div className="product-table-empty">暂无匹配任务记录。</div>
+            <div className="product-empty-state inline">
+              <ProductIcon name="tasks" tone="blue" />
+              <strong>暂无任务</strong>
+              <p>当你创建线路或检测线路后，任务会显示在这里。</p>
+            </div>
           ) : (
             filteredTasks.map((task) => (
               <button
@@ -335,11 +349,11 @@ export function TaskHistoryPanel() {
                 type="button"
                 onClick={() => setSelectedTaskId(task.id)}
               >
-                <span>{shortId(task.id)}</span>
+                <span>{formatDate(task.started_at ?? task.created_at)}</span>
                 <strong>{businessTaskName(task.task_type)}</strong>
                 <span>{relatedObject(task)}</span>
                 <span className={`product-badge ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
-                <span>{formatDate(task.started_at ?? task.created_at)}</span>
+                <span>{resultAdvice(task)}</span>
                 <span className="task-row-action">查看详情</span>
               </button>
             ))

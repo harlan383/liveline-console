@@ -16,6 +16,7 @@ import {
 
 type ServerModal = "landing" | "transit" | "direct" | "transitLine" | null;
 type DetailTarget = { kind: "landing"; data: VpsServerData } | { kind: "transit"; data: TransitResourceData } | null;
+type ResourceTab = "landing" | "transit" | "provider";
 
 function helperStatusLabel(resource: { worker_online?: boolean; worker_display_status?: string | null; display_status?: string | null }) {
   if (resource.worker_online) {
@@ -63,6 +64,7 @@ export function ServerResourcesPanel() {
   const [activeModal, setActiveModal] = useState<ServerModal>(null);
   const [detailTarget, setDetailTarget] = useState<DetailTarget>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<ResourceTab>("landing");
   const [message, setMessage] = useState("正在读取服务器资源。");
 
   async function loadData() {
@@ -121,6 +123,9 @@ export function ServerResourcesPanel() {
               <button type="button" onClick={() => openModal("transit")}>
                 添加中转服务器
               </button>
+              <button disabled type="button">
+                添加商家中转入口
+              </button>
             </div>
           ) : null}
         </div>
@@ -133,10 +138,23 @@ export function ServerResourcesPanel() {
         <ResourceMiniStat label="商家中转入口" value={`${providerTransitResources.length} 个`} />
       </div>
 
+      <div className="product-tab-strip">
+        <button className={activeTab === "landing" ? "selected" : ""} type="button" onClick={() => setActiveTab("landing")}>
+          落地服务器
+        </button>
+        <button className={activeTab === "transit" ? "selected" : ""} type="button" onClick={() => setActiveTab("transit")}>
+          中转服务器
+        </button>
+        <button className={activeTab === "provider" ? "selected" : ""} type="button" onClick={() => setActiveTab("provider")}>
+          商家中转入口
+        </button>
+      </div>
+
+      {activeTab === "landing" ? (
       <section className="product-section-card">
         <div className="product-section-head">
           <h3>落地服务器</h3>
-          <span className="product-badge info">服务器助手</span>
+          <span className="product-badge info">可创建直连节点</span>
         </div>
         {visibleServers.length ? (
           <div className="resource-management-grid">
@@ -172,16 +190,23 @@ export function ServerResourcesPanel() {
             ))}
           </div>
         ) : (
-          <div className="empty">暂无落地服务器记录。</div>
+          <div className="product-empty-state inline">
+            <ProductIcon name="server" tone="blue" />
+            <strong>暂无落地服务器</strong>
+            <p>你可以先添加一台落地服务器，再创建直连节点。</p>
+            <button type="button" onClick={() => setActiveModal("landing")}>添加落地服务器</button>
+          </div>
         )}
       </section>
+      ) : null}
 
+      {activeTab === "transit" ? (
       <section className="product-section-card">
         <div className="product-section-head">
           <h3>中转服务器</h3>
-          <span className="product-badge info">自建与商家入口</span>
+          <span className="product-badge info">自建中转</span>
         </div>
-        {selfTransitResources.length || providerTransitResources.length ? (
+        {selfTransitResources.length ? (
           <div className="resource-management-grid">
             {selfTransitResources.map((resource) => (
               <TransitResourceCard
@@ -192,6 +217,26 @@ export function ServerResourcesPanel() {
                 onOpenTransitLine={() => setActiveModal("transitLine")}
               />
             ))}
+          </div>
+        ) : (
+          <div className="product-empty-state inline">
+            <ProductIcon name="servers" tone="orange" />
+            <strong>暂无中转服务器</strong>
+            <p>你可以先添加一台中转服务器，再创建中转线路。</p>
+            <button type="button" onClick={() => setActiveModal("transit")}>添加中转服务器</button>
+          </div>
+        )}
+      </section>
+      ) : null}
+
+      {activeTab === "provider" ? (
+      <section className="product-section-card">
+        <div className="product-section-head">
+          <h3>商家中转入口</h3>
+          <span className="product-badge info">后续接入</span>
+        </div>
+        {providerTransitResources.length ? (
+          <div className="resource-management-grid">
             {providerTransitResources.map((resource) => (
               <TransitResourceCard
                 key={resource.id}
@@ -203,9 +248,15 @@ export function ServerResourcesPanel() {
             ))}
           </div>
         ) : (
-          <div className="empty">暂无中转服务器或商家入口记录。</div>
+          <div className="product-empty-state inline">
+            <ProductIcon name="route" tone="purple" />
+            <strong>暂无商家中转入口</strong>
+            <p>后续可以在这里添加线路商提供的中转入口。</p>
+            <button disabled type="button">添加商家中转入口</button>
+          </div>
         )}
       </section>
+      ) : null}
 
       <p className="message">{message}</p>
 
@@ -296,7 +347,7 @@ function ResourceDetailModal({ onClose, target }: { onClose: () => void; target:
           <span>最近心跳</span>
           <strong>{heartbeat(isLanding ? target.data.worker_last_heartbeat_at : target.data.worker_last_heartbeat_at)}</strong>
         </div>
-        <p className="message">当前详情为前端展示，不会保存数据、不会安装助手、不会创建任务。</p>
+        <p className="message">当前详情仅用于查看资源信息，不会保存数据、不会安装助手、不会创建任务。</p>
       </div>
     </div>
   );

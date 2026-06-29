@@ -34,7 +34,7 @@ function endpoint(host: string | null | undefined, port: number | null | undefin
 
 function taskName(task: TaskData | null) {
   if (!task) {
-    return "暂无任务";
+    return "暂无记录";
   }
   const labels: Record<string, string> = {
     landing_node_create: "创建直连节点",
@@ -44,7 +44,7 @@ function taskName(task: TaskData | null) {
     cleanup_transit_route: "清理中转线路",
     cleanup_transit_resource: "清理中转服务器",
   };
-  return `${labels[task.task_type] ?? "系统任务"} / ${task.status}`;
+  return labels[task.task_type] ?? "系统操作";
 }
 
 export function LineBuilderPanel() {
@@ -137,7 +137,7 @@ export function LineBuilderPanel() {
       <div className="product-page-header">
         <div>
           <h2>线路搭建流程中心</h2>
-          <p>先接入服务器，再创建直连节点或中转线路。本阶段所有新增流程均为前端演示，不触发真实执行。</p>
+          <p>先准备服务器，再创建给客户使用的直连节点或中转线路。</p>
         </div>
         <button className="secondary" type="button" onClick={() => void loadData()}>
           刷新
@@ -165,7 +165,7 @@ export function LineBuilderPanel() {
               />
               <BuilderActionCard
                 buttonLabel="添加中转服务器"
-                detail="用于给已有落地节点前面加 IEPL / 香港 / 广州中转。"
+                detail="用于给客户提供更稳定的入口，再转到落地节点。"
                 icon="servers"
                 tone="orange"
                 title="添加中转服务器"
@@ -185,7 +185,7 @@ export function LineBuilderPanel() {
             <div className="builder-action-grid">
               <BuilderActionCard
                 buttonLabel="新建直连节点"
-                detail="在落地服务器上安装直连节点服务，生成客户端连接地址。"
+                detail="适合看视频、日常使用或客户备用线路。"
                 icon="builder"
                 tone="green"
                 title="新建直连节点"
@@ -193,7 +193,7 @@ export function LineBuilderPanel() {
               />
               <BuilderActionCard
                 buttonLabel="新建中转线路"
-                detail="在中转服务器上创建转发服务，将流量转发到落地节点。"
+                detail="适合直播主线或需要更稳定入口的客户。"
                 icon="route"
                 tone="purple"
                 title="新建中转线路"
@@ -201,17 +201,13 @@ export function LineBuilderPanel() {
               />
             </div>
           </section>
-
-          <div className="port-reminder product-port-reminder">
-            新增或变更客户连接端口后，请务必同步检查云服务器安全组、云防火墙、服务器防火墙是否放行。
-          </div>
         </main>
 
         <aside className="builder-aside">
           <section className="product-section-card">
             <div className="product-section-head">
-              <h3>资源状态</h3>
-              <span className="product-badge info">实时读取</span>
+              <h3>准备情况</h3>
+              <span className="product-badge info">当前可用</span>
             </div>
             <div className="builder-resource-metrics">
               <ResourceMetric icon="server" label="落地服务器" value={`${onlineLandingServers.length} 台可用`} />
@@ -223,13 +219,14 @@ export function LineBuilderPanel() {
 
           <section className="product-section-card">
             <div className="product-section-head">
-              <h3>搭建提示</h3>
-              <span className="product-badge warning">端口</span>
+              <h3>适合我选哪个？</h3>
+              <span className="product-badge warning">新手提示</span>
             </div>
             <ul className="product-tip-list">
-              <li>中转线路需要中转服务器和至少一个直连节点。</li>
-              <li>客户连接端口必须在云安全组、云防火墙、服务器防火墙放行。</li>
-              <li>真实创建入口会在后续阶段接入，本页目前不发起后台任务。</li>
+              <li>看视频 / 日常使用：优先选择新建直连节点。</li>
+              <li>客户直播主线：优先选择新建中转线路。</li>
+              <li>还没有服务器：先添加落地服务器或中转服务器。</li>
+              <li>新增或变更客户连接端口后，请务必检查云安全组、云防火墙、服务器防火墙是否放行。</li>
             </ul>
           </section>
 
