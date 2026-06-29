@@ -42,7 +42,7 @@ const panels: Array<{
     icon: "dashboard",
     tone: "blue",
     label: "总览",
-    title: "业务总览",
+    title: "总览",
     subtitle: "查看线路、服务器和待处理事项。",
   },
   {
@@ -203,10 +203,14 @@ export function AppShell() {
     <main className="page product-console">
       <aside className="sidebar product-sidebar">
         <div className="brand-lockup product-brand">
-          <div className="brand-mark">LC</div>
+          <div className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M9.2 20.7 5 16.4 16.4 5l4.3 4.2-7.1 7.2 2.8 2.8 7.1-7.1 4.2 4.3L16.4 27.8l-7.2-7.1Z" />
+              <path d="m22.8 11.3 4.2 4.3L15.6 27 11.3 22.8l7.1-7.2-2.8-2.8-7.1 7.1-4.2-4.3L15.6 4.2l7.2 7.1Z" opacity=".72" />
+            </svg>
+          </div>
           <div>
-            <div className="brand">LiveLine</div>
-            <div className="stage">线路运营控制台</div>
+            <div className="brand">LiveLine Console</div>
           </div>
         </div>
         <nav className="nav product-nav">
@@ -241,12 +245,13 @@ export function AppShell() {
           <div className="topbar-actions product-topbar-actions">
             <button className="topbar-tool" aria-label="通知" type="button">
               <ProductIcon name="bell" tone="slate" />
+              <span className="notification-dot" aria-hidden="true" />
             </button>
             <button className="topbar-tool" aria-label="帮助" type="button">
               <ProductIcon name="help" tone="slate" />
             </button>
             <span className="product-avatar" aria-hidden="true">
-              {currentAdmin.username.slice(0, 1).toUpperCase()}
+              张
             </span>
             <span className="admin-badge">{currentAdmin.username}</span>
             <span className="topbar-caret" aria-hidden="true">⌄</span>
@@ -403,16 +408,6 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
 
   return (
     <section className="dashboard-panel product-dashboard wide">
-      <div className="product-page-header compact">
-        <div>
-          <h2>运营看板</h2>
-          <p>{message}</p>
-        </div>
-        <button className="secondary" type="button" onClick={() => void loadDashboard()}>
-          刷新看板
-        </button>
-      </div>
-
       <div className="product-stat-grid four">
         <DashboardStat icon="lines" title="正常线路" value={`${normalLines}`} detail="当前可正常使用" tone="success" />
         <DashboardStat icon="alert" title="风险线路" value={`${riskLines}`} detail="建议尽快检查" tone="warning" />
@@ -530,6 +525,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           </div>
         </section>
       </div>
+      <p className="message subtle-message">{message}</p>
     </section>
   );
 }
@@ -581,13 +577,6 @@ function SettingsPanel() {
 
   return (
     <section className="settings-product wide">
-      <div className="product-page-header">
-        <div>
-          <h2>设置</h2>
-          <p>设置项用于简化日常创建流程，本阶段仅在当前页面展示。</p>
-        </div>
-      </div>
-
       <div className="settings-product-layout">
         <aside className="settings-menu">
           {["默认创建配置", "提醒设置", "界面设置"].map((item) => (

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { ProductIcon } from "@/components/ProductIcons";
+import { PlatformIcon, ProductIcon } from "@/components/ProductIcons";
 import {
   apiFetch,
   type NodeData,
@@ -215,16 +215,6 @@ export function CustomerLinesPanel() {
 
   return (
     <section className="my-lines-page wide">
-      <div className="product-page-header">
-        <div>
-          <h2>我的线路</h2>
-          <p>按客户和用途查看可用线路，普通页面不会展示完整客户端链接。</p>
-        </div>
-        <button className="secondary" type="button" onClick={() => void loadData()}>
-          刷新
-        </button>
-      </div>
-
       <div className="product-stat-grid three">
         <LineStat icon="lines" title="正常" value={normalCount} detail="可以继续使用" tone="success" />
         <LineStat icon="alert" title="风险" value={riskCount} detail="建议尽快检查" tone="warning" />
@@ -261,6 +251,7 @@ export function CustomerLinesPanel() {
             <span>类型</span>
             <span>当前状态</span>
             <span>当前建议</span>
+            <span>最近异常</span>
             <span>操作</span>
           </div>
           {filteredLines.length ? (
@@ -268,12 +259,13 @@ export function CustomerLinesPanel() {
               <div className="product-table-row" key={line.id}>
                 <strong>{line.name}</strong>
                 <span>{line.customer}</span>
-                <span>{line.platform} / {line.lineRole}</span>
+                <span className="platform-cell"><PlatformIcon platform={line.platform} />{line.platform} / {line.lineRole}</span>
                 <span>{line.lineType}</span>
                 <span className={`product-badge ${line.health === "normal" ? "success" : line.health === "risk" ? "warning" : "danger"}`}>
                   {line.statusLabel}
                 </span>
                 <span>{line.suggestion}</span>
+                <span>{line.lastIssue}</span>
                 <button className="secondary" type="button" onClick={() => setSelectedLine(line)}>
                   查看详情
                 </button>
@@ -296,7 +288,7 @@ export function CustomerLinesPanel() {
         </div>
       </div>
 
-      <p className="message">{message}</p>
+      <p className="message subtle-message">{message}</p>
 
       {selectedLine ? (
         <div className="modal-backdrop" role="presentation">
