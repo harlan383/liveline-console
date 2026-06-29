@@ -179,6 +179,13 @@ export function LineBuilderPanel() {
             </div>
           </div>
 
+          <div className="wizard-progress-strip" aria-label="线路搭建步骤">
+            <span className="active">选择客户</span>
+            <span className="active">选择用途</span>
+            <span className="active">选择类型</span>
+            <span>确认预览</span>
+          </div>
+
           <WizardStep number="1" title="这条线路给谁用？">
             <SegmentedChoices options={customerOptions} value={customer} onChange={setCustomer} />
           </WizardStep>
