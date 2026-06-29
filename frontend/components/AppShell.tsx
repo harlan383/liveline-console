@@ -91,7 +91,7 @@ const panels: Array<{
     tone: "red",
     label: "高级调试",
     title: "高级调试",
-    subtitle: "保留原技术面板，用于审计和排查。",
+    subtitle: "仅技术支持使用。",
   },
 ];
 
@@ -343,24 +343,63 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
     ...activeRoutes.map((route) => ({ created_at: route.created_at, name: route.name, type: "中转线路" })),
   ]);
   const attentionItems = useMemo(() => {
-    const items: string[] = [];
+    const items: Array<{ title: string; problem: string; advice: string; tone: "warning" | "danger" | "success" }> = [];
     if (staleResources.length) {
-      items.push(`${staleResources[0].name}：服务器助手心跳过期，建议检查服务器助手状态。`);
+      items.push({
+        title: staleResources[0].name,
+        problem: "服务器状态长时间未更新",
+        advice: "建议检查服务器是否正常运行",
+        tone: "warning",
+      });
     }
     if (failedTasks.length) {
-      items.push(`${failedTasks[0].task_type}：最近任务失败，建议到任务记录查看结果说明。`);
+      items.push({
+        title: businessTaskTitle(failedTasks[0].task_type),
+        problem: "最近一次操作失败",
+        advice: "建议到任务记录查看处理建议",
+        tone: "danger",
+      });
     }
     if (!activeRoutes.length) {
-      items.push("客户B - TikTok新加坡线：中转端口未通过检测，建议检查端口放行。");
+      items.push({
+        title: "客户B - TikTok新加坡线",
+        problem: "中转端口未通过检测",
+        advice: "检查云安全组、云防火墙和服务器防火墙",
+        tone: "warning",
+      });
     }
     if (!activeNodes.length) {
-      items.push("客户A - Facebook越南主线：还没有可用直连节点，建议先添加落地服务器并创建节点。");
+      items.push({
+        title: "客户A - Facebook越南主线",
+        problem: "还没有可用直连节点",
+        advice: "先添加落地服务器，再创建直连节点",
+        tone: "warning",
+      });
     }
     if (!items.length) {
-      items.push("当前没有紧急异常，建议保持观察并定期查看任务记录。");
+      items.push({
+        title: "当前线路整体正常",
+        problem: "没有需要立即处理的问题",
+        advice: "建议定期查看任务记录和线路状态",
+        tone: "success",
+      });
     }
     return items.slice(0, 3);
   }, [activeNodes.length, activeRoutes.length, failedTasks, staleResources]);
+
+  const nextStepTips = useMemo(() => {
+    const tips: string[] = [];
+    if (servers.length > 0 && !activeNodes.length) {
+      tips.push("你已接入落地服务器，可以继续创建第一条直连节点。");
+    }
+    if (!resources.some((resource) => resource.resource_type === "server" && !resource.deleted_at)) {
+      tips.push("如果要搭建中转线路，请先添加一台中转服务器。");
+    }
+    if (activeNodes.length > 0 && !activeRoutes.length) {
+      tips.push("已有直连节点，客户直播主线可以继续规划中转线路。");
+    }
+    return tips.length ? tips : ["当前基础资源已就绪，可以在“我的线路”查看客户线路状态。"];
+  }, [activeNodes.length, activeRoutes.length, resources, servers.length]);
 
   return (
     <section className="dashboard-panel product-dashboard wide">
@@ -375,10 +414,10 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
       </div>
 
       <div className="product-stat-grid four">
-        <DashboardStat icon="lines" title="正常线路" value={`${normalLines}`} detail="可用直连节点和 active 中转线路" tone="success" />
-        <DashboardStat icon="alert" title="风险线路" value={`${riskLines}`} detail="心跳过期或创建中项目" tone="warning" />
-        <DashboardStat icon="alert" title="异常线路" value={`${abnormalLines}`} detail="失败任务或异常线路" tone="danger" />
-        <DashboardStat icon="tasks" title="待处理" value={`${pendingItems}`} detail={healthOk ? "本地服务正常" : "本地健康需检查"} tone="info" />
+        <DashboardStat icon="lines" title="正常线路" value={`${normalLines}`} detail="当前可正常使用" tone="success" />
+        <DashboardStat icon="alert" title="风险线路" value={`${riskLines}`} detail="建议尽快检查" tone="warning" />
+        <DashboardStat icon="alert" title="异常线路" value={`${abnormalLines}`} detail="需要处理" tone="danger" />
+        <DashboardStat icon="tasks" title="待处理" value={`${pendingItems}`} detail={healthOk ? "暂无紧急待办" : "有待办事项"} tone="info" />
       </div>
 
       <div className="product-dashboard-layout">
@@ -391,14 +430,16 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           </div>
           <div className="attention-list">
             {attentionItems.map((item) => (
-              <div className="attention-item" key={item}>
-                <ProductIcon name="alert" tone={abnormalLines ? "red" : "orange"} />
+              <button className={`attention-item ${item.tone}`} key={`${item.title}-${item.problem}`} type="button" onClick={() => onNavigate("tasks")}>
+                <ProductIcon name="alert" tone={item.tone === "danger" ? "red" : item.tone === "success" ? "green" : "orange"} />
                 <div>
-                  <strong>{item}</strong>
-                  <small>刚刚更新</small>
+                  <strong>{item.title}</strong>
+                  <small>问题：{item.problem}</small>
+                  <small>建议：{item.advice}</small>
                 </div>
+                <span>去查看</span>
                 <ProductIcon name="arrow" tone="slate" />
-              </div>
+              </button>
             ))}
           </div>
         </section>
@@ -473,9 +514,36 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
             <li>如需帮助，可点击右上角“帮助”查看说明。</li>
           </ul>
         </section>
+
+        <section className="product-section-card next-step-card">
+          <div className="product-section-head">
+            <h3>下一步建议</h3>
+            <span className="product-badge info">新手推荐</span>
+          </div>
+          <div className="next-step-list">
+            {nextStepTips.map((tip) => (
+              <button key={tip} type="button" onClick={() => onNavigate("lineBuilder")}>
+                <ProductIcon name="arrow" tone="blue" />
+                <span>{tip}</span>
+              </button>
+            ))}
+          </div>
+        </section>
       </div>
     </section>
   );
+}
+
+function businessTaskTitle(taskType: string) {
+  const labels: Record<string, string> = {
+    landing_node_create: "创建直连节点",
+    transit_route_create: "创建中转线路",
+    cleanup_landing_node: "删除节点",
+    cleanup_landing_server: "清理落地服务器",
+    cleanup_transit_route: "清理中转线路",
+    cleanup_transit_resource: "清理中转服务器",
+  };
+  return labels[taskType] ?? "系统操作";
 }
 
 function DashboardStat({
@@ -499,7 +567,7 @@ function DashboardStat({
         <strong>{value}</strong>
       </div>
       <p>{detail}</p>
-      <small className="stat-footnote"><span />状态已同步</small>
+      <small className="stat-footnote"><span />点击对应模块查看详情</small>
     </article>
   );
 }
@@ -516,13 +584,13 @@ function SettingsPanel() {
       <div className="product-page-header">
         <div>
           <h2>设置</h2>
-          <p>本阶段只做前端静态偏好，不接入后端持久化。</p>
+          <p>设置项用于简化日常创建流程，本阶段仅在当前页面展示。</p>
         </div>
       </div>
 
       <div className="settings-product-layout">
         <aside className="settings-menu">
-          {["基本设置", "默认创建配置", "提醒设置", "界面设置"].map((item) => (
+          {["默认创建配置", "提醒设置", "界面设置"].map((item) => (
             <button className={activeSetting === item ? "active" : ""} key={item} type="button" onClick={() => setActiveSetting(item)}>
               {item}
             </button>
@@ -533,6 +601,7 @@ function SettingsPanel() {
           <div className="settings-form-grid">
             <label>
               默认直播平台
+              <small>创建线路时优先选择的平台。</small>
               <select value={platform} onChange={(event) => setPlatform(event.target.value)}>
                 <option>Facebook</option>
                 <option>TikTok</option>
@@ -542,6 +611,7 @@ function SettingsPanel() {
             </label>
             <label>
               默认落地地区
+              <small>用于自动推荐服务器地区。</small>
               <select value={region} onChange={(event) => setRegion(event.target.value)}>
                 <option>香港</option>
                 <option>新加坡</option>
@@ -551,22 +621,26 @@ function SettingsPanel() {
             </label>
             <label>
               默认创建端口范围
+              <small>创建线路时优先推荐的客户连接端口。</small>
               <input value={portRange} onChange={(event) => setPortRange(event.target.value)} />
             </label>
             <label className="settings-check product-switch">
               <input defaultChecked type="checkbox" />
               <span />
-              默认开启端口放行提醒
+              <strong>默认开启端口放行提醒</strong>
+              <small>创建线路时提醒你检查端口是否已开放。</small>
             </label>
             <label className="settings-check product-switch">
               <input type="checkbox" />
               <span />
-              默认显示高级设置
+              <strong>默认显示高级设置</strong>
+              <small>关闭后，界面会更简洁，更适合新手。</small>
             </label>
             <label className="settings-check product-switch">
               <input defaultChecked type="checkbox" />
               <span />
-              创建完成后自动显示客户端链接
+              <strong>创建完成后自动显示客户端链接</strong>
+              <small>方便快速复制给客户。</small>
             </label>
           </div>
 
@@ -588,9 +662,14 @@ function SettingsPanel() {
               创建失败提醒
             </label>
           </div>
-          <button className="settings-save-button" type="button" onClick={() => setMessage("设置已在当前页面临时保存。")}>
-            保存设置
-          </button>
+          <div className="settings-action-row">
+            <button className="secondary" type="button" onClick={() => setMessage("已恢复为页面默认展示。")}>
+              恢复默认
+            </button>
+            <button className="settings-save-button" type="button" onClick={() => setMessage("设置已在当前页面临时保存。")}>
+              保存设置
+            </button>
+          </div>
           <p className="message">{message}</p>
         </section>
       </div>

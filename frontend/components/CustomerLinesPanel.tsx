@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { PlatformIcon, ProductIcon } from "@/components/ProductIcons";
+import { ProductIcon } from "@/components/ProductIcons";
 import {
   apiFetch,
   type NodeData,
@@ -118,7 +118,7 @@ function lineFromNode(node: NodeData): CustomerLine {
     target: entry(node.vps_ip, node.port),
     health,
     statusLabel: healthLabel(health),
-    suggestion: health === "normal" ? "当前线路运行正常" : "建议检查节点服务和客户端配置",
+    suggestion: health === "normal" ? "可继续使用" : "建议检查服务状态和客户端配置",
     lastIssue: health === "normal" ? "-" : "最近状态未完全正常",
     configStatus: hasConfig ? "客户端配置：已生成" : "客户端配置：未生成",
     detail: "直连落地线路。服务状态和客户端配置来自当前节点记录。",
@@ -150,7 +150,7 @@ function lineFromRoute(route: TransitRouteData, resource: TransitResourceData | 
     target: entry(route.target_host, route.target_port),
     health,
     statusLabel: healthLabel(health),
-    suggestion: health === "normal" ? "当前线路运行正常" : "建议检查中转端口",
+    suggestion: health === "normal" ? "可继续使用" : "建议检查客户连接端口",
     lastIssue: health === "normal" ? "-" : "中转状态需复核",
     configStatus: hasConfig ? "客户端配置：已生成" : "客户端配置：未保存，可临时导出",
     detail: "经中转入口访问落地节点。正式线路状态不在本阶段变更。",
@@ -218,7 +218,7 @@ export function CustomerLinesPanel() {
       <div className="product-page-header">
         <div>
           <h2>我的线路</h2>
-          <p>按客户、平台和主备关系查看当前可用线路。普通页面不展示完整客户端链接。</p>
+          <p>按客户和用途查看可用线路，普通页面不会展示完整客户端链接。</p>
         </div>
         <button className="secondary" type="button" onClick={() => void loadData()}>
           刷新
@@ -226,9 +226,9 @@ export function CustomerLinesPanel() {
       </div>
 
       <div className="product-stat-grid three">
-        <LineStat icon="lines" title="正常" value={normalCount} detail="运行状态正常的线路" tone="success" />
-        <LineStat icon="alert" title="风险" value={riskCount} detail="需要关注或缺少配置的线路" tone="warning" />
-        <LineStat icon="alert" title="异常" value={abnormalCount} detail="失败或不可用线路" tone="danger" />
+        <LineStat icon="lines" title="正常" value={normalCount} detail="可以继续使用" tone="success" />
+        <LineStat icon="alert" title="风险" value={riskCount} detail="建议尽快检查" tone="warning" />
+        <LineStat icon="alert" title="异常" value={abnormalCount} detail="需要处理" tone="danger" />
       </div>
 
       <div className="product-section-card">
@@ -256,12 +256,11 @@ export function CustomerLinesPanel() {
         <div className="product-table my-lines-table">
           <div className="product-table-row product-table-head">
             <span>线路名称</span>
-            <span>客户</span>
-            <span>平台</span>
-            <span>主线/备用</span>
+            <span>分配给谁</span>
+            <span>用途</span>
+            <span>类型</span>
             <span>当前状态</span>
             <span>当前建议</span>
-            <span>最近异常</span>
             <span>操作</span>
           </div>
           {filteredLines.length ? (
@@ -269,20 +268,24 @@ export function CustomerLinesPanel() {
               <div className="product-table-row" key={line.id}>
                 <strong>{line.name}</strong>
                 <span>{line.customer}</span>
-                <span className="platform-cell"><PlatformIcon platform={line.platform} />{line.platform}</span>
-                <span>{line.lineRole}</span>
+                <span>{line.platform} / {line.lineRole}</span>
+                <span>{line.lineType}</span>
                 <span className={`product-badge ${line.health === "normal" ? "success" : line.health === "risk" ? "warning" : "danger"}`}>
                   {line.statusLabel}
                 </span>
                 <span>{line.suggestion}</span>
-                <span>{line.lastIssue}</span>
                 <button className="secondary" type="button" onClick={() => setSelectedLine(line)}>
                   查看详情
                 </button>
               </div>
             ))
           ) : (
-            <div className="product-table-empty">暂无匹配线路。可调整筛选条件，或到“线路搭建”查看下一步入口。</div>
+            <div className="product-empty-state inline">
+              <ProductIcon name="lines" tone="blue" />
+              <strong>还没有线路</strong>
+              <p>你可以先去“线路搭建”创建第一条直连节点或中转线路。</p>
+              <button type="button">去创建线路</button>
+            </div>
           )}
         </div>
         <div className="product-pagination">
@@ -321,6 +324,12 @@ export function CustomerLinesPanel() {
               <strong>{selectedLine.statusLabel}</strong>
               <span>客户端配置</span>
               <strong>{selectedLine.configStatus.replace("客户端配置：", "")}</strong>
+            </div>
+            <div className="modal-actions compact-actions">
+              <button className="secondary" type="button">复制链接</button>
+              <button className="secondary" type="button">显示二维码</button>
+              <button className="secondary" type="button">切换备用</button>
+              <button type="button">测试线路</button>
             </div>
             <p className="message">{selectedLine.detail}</p>
           </div>
