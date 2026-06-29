@@ -704,6 +704,28 @@ export type VpsServerUpdateResult = {
   ssh_status_reset: boolean;
 };
 
+export type BbrEnablePlanAction = {
+  step: string;
+  executed: boolean;
+  command_preview?: string;
+  path_preview?: string;
+};
+
+export type BbrEnablePlanResult = {
+  ready: boolean;
+  already_enabled: boolean;
+  server_id: string;
+  latest_preflight_id: string | null;
+  latest_preflight_at: string | null;
+  bbr: Record<string, unknown>;
+  recommendation: string;
+  blocked_reasons: string[];
+  warnings: string[];
+  planned_actions: BbrEnablePlanAction[];
+  required_confirmations: string[];
+  safety_boundary: string[];
+};
+
 export type SafeDeleteResult = {
   id: string;
   deleted: boolean;
@@ -1036,6 +1058,16 @@ export async function createLandingNodeExecution(
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
+  });
+}
+
+export async function requestBbrEnablePlan(
+  serverId: string,
+  csrfToken: string,
+): Promise<ApiResponse<BbrEnablePlanResult>> {
+  return apiFetch<BbrEnablePlanResult>(`/api/vps/${serverId}/bbr/enable-plan`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
   });
 }
 
