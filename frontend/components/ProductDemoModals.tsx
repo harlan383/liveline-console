@@ -121,12 +121,13 @@ export function AddLandingServerModal({ onClose }: ModalProps) {
           <li>这里只是接入服务器，不会立即创建线路。</li>
         </InfoCard>
       </div>
+      <p className="demo-safety-note">当前仅展示接入流程，不会保存数据或安装服务。</p>
       <div className="modal-actions">
         <button className="secondary" type="button" onClick={onClose}>
           取消
         </button>
         <button type="button" onClick={() => setStep((current) => Math.min(current + 1, serverSteps.length - 1))}>
-          {step >= serverSteps.length - 1 ? "完成" : "下一步"}
+          {step >= serverSteps.length - 1 ? "完成演示" : "下一步"}
         </button>
       </div>
     </ModalShell>
@@ -193,12 +194,13 @@ export function AddTransitServerModal({ onClose }: ModalProps) {
           <li>添加完成后，才能继续创建中转线路。</li>
         </InfoCard>
       </div>
+      <p className="demo-safety-note">当前仅展示接入流程，不会保存数据或安装服务。</p>
       <div className="modal-actions">
         <button className="secondary" type="button" onClick={onClose}>
           取消
         </button>
         <button type="button" onClick={() => setStep((current) => Math.min(current + 1, serverSteps.length - 1))}>
-          {step >= serverSteps.length - 1 ? "完成" : "下一步"}
+          {step >= serverSteps.length - 1 ? "完成演示" : "下一步"}
         </button>
       </div>
     </ModalShell>
@@ -349,6 +351,9 @@ export function CreateTransitLineModal({
         </aside>
       </div>
       )}
+      <p className="demo-safety-note">
+        {lineMode === "provider" ? "商家中转当前仅展示入口位置，不会保存数据或创建正式线路。" : "当前仅展示流程，不会触发真实创建或 Worker 任务。"}
+      </p>
       <div className="modal-actions">
         <button className="secondary" type="button" onClick={() => setStep((current) => Math.max(current - 1, 0))}>
           上一步
@@ -357,7 +362,7 @@ export function CreateTransitLineModal({
           下一步
         </button>
         <button disabled={lineMode === "provider" || step < transitLineSteps.length - 2} type="button" onClick={() => setStep(transitLineSteps.length - 1)}>
-          创建中转线路
+          {lineMode === "provider" ? "后续接入" : "完成演示流程"}
         </button>
       </div>
     </ModalShell>
@@ -436,6 +441,7 @@ export function CreateDirectNodeModal({
           <li>用途：{purpose}</li>
         </InfoCard>
       </div>
+      <p className="demo-safety-note">当前仅为前端演示，不会创建真实节点。</p>
       <div className="modal-actions">
         <button className="secondary" type="button" onClick={onClose}>
           取消
@@ -444,7 +450,7 @@ export function CreateDirectNodeModal({
           下一步
         </button>
         <button type="button" onClick={() => setStep(3)}>
-          创建直连节点
+          完成演示流程
         </button>
       </div>
     </ModalShell>
