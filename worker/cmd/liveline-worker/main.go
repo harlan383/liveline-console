@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.39-stage-3.3.204-bbr-enable-dry-run"
+const workerVersion = "0.1.40-stage-3.3.205-bbr-real-enable"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -584,6 +584,15 @@ func executeWorkerCommand(cfg config, command workerCommand) (map[string]any, er
 		}
 		result["timestamp"] = now
 		return result, nil
+	case "bbr_enable_real_execution":
+		if cfg.Role != "landing" {
+			return nil, fmt.Errorf("bbr_enable_real_execution requires landing worker role")
+		}
+		result, err := executeBBREnableRealExecution(cfg, hostname, command.Payload)
+		if result != nil {
+			result["timestamp"] = now
+		}
+		return result, err
 	case "landing_node_create":
 		if cfg.Role != "landing" {
 			return nil, fmt.Errorf("landing_node_create requires landing worker role")
@@ -5980,6 +5989,10 @@ func landingBBRReadonlySummary() map[string]any {
 }
 
 const bbrEnableDryRunStage = "Stage 3.3.204-bbr-enable-protected-execution-dry-run"
+const bbrEnableRealExecutionStage = "Stage 3.3.205-bbr-enable-protected-real-execution"
+const bbrEnableRealExecutionConfirmation = "CONFIRM_ENABLE_BBR_ON_LANDING_VPS"
+const bbrSysctlConfigPath = "/etc/sysctl.d/99-liveline-bbr.conf"
+const bbrSysctlConfigContent = "net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr\n"
 
 var bbrEnableDryRunUnsafePayloadKeys = map[string]bool{
 	"shell":           true,
@@ -6000,6 +6013,26 @@ var bbrEnableDryRunUnsafePayloadKeys = map[string]bool{
 	"rm_rf":           true,
 }
 
+var bbrEnableRealExecutionUnsafePayloadKeys = map[string]bool{
+	"shell":             true,
+	"command":           true,
+	"commands":          true,
+	"args":              true,
+	"argv":              true,
+	"script":            true,
+	"exec":              true,
+	"exec_start":        true,
+	"systemd_unit":      true,
+	"unit_content":      true,
+	"service_content":   true,
+	"write_file":        true,
+	"rm_rf":             true,
+	"arbitrary_command": true,
+	"arbitrary_script":  true,
+	"path":              true,
+	"content":           true,
+}
+
 func executeBBREnableDryRun(cfg config, hostname string, payload map[string]any) (map[string]any, error) {
 	if err := validateBBREnableDryRunPayload(cfg, payload); err != nil {
 		return nil, err
@@ -6011,6 +6044,180 @@ func executeBBREnableDryRun(cfg config, hostname string, payload map[string]any)
 		sysctlDirExists = true
 	}
 	return buildBBREnableDryRunResult(cfg, hostname, bbr, modprobeOutput, modprobeErr, os.Geteuid() == 0, sysctlDirExists), nil
+}
+
+func executeBBREnableRealExecution(cfg config, hostname string, payload map[string]any) (map[string]any, error) {
+	if err := validateBBREnableRealExecutionPayload(cfg, payload); err != nil {
+		return nil, err
+	}
+	preState := landingBBRReadonlySummary()
+	if os.Geteuid() != 0 {
+		result := buildBBREnableRealExecutionBaseResult(cfg, hostname, preState)
+		result["status"] = "failed"
+		result["blocked_reasons"] = []string{"root_required"}
+		result["post_state"] = landingBBRReadonlySummary()
+		return result, fmt.Errorf("bbr_enable_real_execution requires root")
+	}
+	return runBBREnableRealExecution(cfg, hostname, preState)
+}
+
+func validateBBREnableRealExecutionPayload(cfg config, payload map[string]any) error {
+	if foundPath, ok := firstUnsafeBBREnableRealExecutionPayloadKey(payload); ok {
+		return fmt.Errorf("bbr_enable_real_execution payload contains unsupported execution field %s", foundPath)
+	}
+	if stringPayload(payload, "stage") != bbrEnableRealExecutionStage {
+		return fmt.Errorf("bbr_enable_real_execution stage does not match %s", bbrEnableRealExecutionStage)
+	}
+	serverID := stringPayload(payload, "server_id")
+	if serverID == "" || serverID != cfg.ServerID {
+		return fmt.Errorf("bbr_enable_real_execution server_id does not match worker binding")
+	}
+	if stringPayload(payload, "preflight_id") == "" {
+		return fmt.Errorf("bbr_enable_real_execution requires preflight_id")
+	}
+	if stringPayload(payload, "dry_run_command_id") == "" {
+		return fmt.Errorf("bbr_enable_real_execution requires dry_run_command_id")
+	}
+	recommendation := stringPayload(payload, "recommendation")
+	if recommendation != "can_enable_with_approval" && recommendation != "module_available_needs_load_approval" {
+		return fmt.Errorf("bbr_enable_real_execution recommendation is not approved")
+	}
+	if stringPayload(payload, "confirmation_text") != bbrEnableRealExecutionConfirmation {
+		return fmt.Errorf("bbr_enable_real_execution requires exact confirmation_text")
+	}
+	for _, key := range []string{
+		"confirm_enable_bbr_real_execution",
+		"confirm_load_tcp_bbr_module",
+		"confirm_write_sysctl_config",
+		"confirm_reload_sysctl",
+		"confirm_no_network_restart_expected",
+		"confirm_rollback_plan_understood",
+	} {
+		if !boolPayload(payload, key) {
+			return fmt.Errorf("bbr_enable_real_execution requires %s=true", key)
+		}
+	}
+	return nil
+}
+
+func firstUnsafeBBREnableRealExecutionPayloadKey(value any) (string, bool) {
+	return firstUnsafePayloadKeyAt(value, "$", bbrEnableRealExecutionUnsafePayloadKeys)
+}
+
+func runBBREnableRealExecution(cfg config, hostname string, preState map[string]any) (map[string]any, error) {
+	result := buildBBREnableRealExecutionBaseResult(cfg, hostname, preState)
+	actions := []any{}
+	blockedReasons := []string{}
+
+	appendAction := func(action map[string]any) {
+		actions = append(actions, action)
+		result["actions"] = actions
+	}
+	fail := func(reason string, err error) (map[string]any, error) {
+		blockedReasons = append(blockedReasons, reason)
+		result["blocked_reasons"] = blockedReasons
+		result["post_state"] = landingBBRReadonlySummary()
+		result["verification"] = bbrEnableRealExecutionVerification(result["post_state"].(map[string]any))
+		if len(actions) > 0 {
+			result["status"] = "partial"
+		} else {
+			result["status"] = "failed"
+		}
+		return result, err
+	}
+
+	output, err := runCommandFunc(30*time.Second, "modprobe", "tcp_bbr")
+	loadAction := map[string]any{
+		"step":    "load_tcp_bbr_module",
+		"command": "modprobe tcp_bbr",
+		"status":  passFailStatus(err == nil),
+		"output":  truncateReadonlyOutput(output, commandOutputLimit),
+	}
+	if err != nil {
+		loadAction["error"] = truncateCompactString(err.Error(), 400)
+		appendAction(loadAction)
+		return fail("modprobe_tcp_bbr_failed", err)
+	}
+	appendAction(loadAction)
+
+	if err := os.WriteFile(bbrSysctlConfigPath, []byte(bbrSysctlConfigContent), 0o644); err != nil {
+		appendAction(map[string]any{
+			"step":   "write_sysctl_config",
+			"path":   bbrSysctlConfigPath,
+			"status": "failed",
+			"error":  truncateCompactString(err.Error(), 400),
+		})
+		return fail("write_sysctl_config_failed", err)
+	}
+	appendAction(map[string]any{
+		"step":   "write_sysctl_config",
+		"path":   bbrSysctlConfigPath,
+		"status": "succeeded",
+		"mode":   "0644",
+	})
+
+	output, err = runCommandFunc(60*time.Second, "sysctl", "--system")
+	reloadAction := map[string]any{
+		"step":    "reload_sysctl",
+		"command": "sysctl --system",
+		"status":  passFailStatus(err == nil),
+		"output":  truncateReadonlyOutput(output, commandOutputLimit),
+	}
+	if err != nil {
+		reloadAction["error"] = truncateCompactString(err.Error(), 400)
+		appendAction(reloadAction)
+		return fail("sysctl_reload_failed", err)
+	}
+	appendAction(reloadAction)
+
+	postState := landingBBRReadonlySummary()
+	verification := bbrEnableRealExecutionVerification(postState)
+	result["post_state"] = postState
+	result["verification"] = verification
+	if !boolResultValue(verification["available_contains_bbr"]) ||
+		!boolResultValue(verification["current_is_bbr"]) ||
+		!boolResultValue(verification["default_qdisc_is_fq"]) {
+		result["status"] = "failed"
+		result["blocked_reasons"] = []string{"bbr_verification_failed"}
+		return result, fmt.Errorf("bbr_enable_real_execution verification failed")
+	}
+	result["status"] = "succeeded"
+	return result, nil
+}
+
+func buildBBREnableRealExecutionBaseResult(cfg config, hostname string, preState map[string]any) map[string]any {
+	return map[string]any{
+		"status":          "running",
+		"real_execution":  true,
+		"worker_version":  workerVersion,
+		"role":            cfg.Role,
+		"interface_name":  cfg.InterfaceName,
+		"hostname":        hostname,
+		"pre_state":       preState,
+		"actions":         []any{},
+		"post_state":      map[string]any{},
+		"verification":    map[string]any{},
+		"blocked_reasons": []string{},
+		"rollback_hint":   "如需人工回滚：删除 /etc/sysctl.d/99-liveline-bbr.conf 后执行 sysctl --system；如需恢复 cubic，请设置 net.ipv4.tcp_congestion_control=cubic。",
+		"safety_boundary": []string{
+			"fixed BBR enable workflow only",
+			"no arbitrary shell accepted",
+			"no network service restart",
+			"no Xray/HAProxy restart",
+			"no port/share_link/cutover changes",
+		},
+	}
+}
+
+func bbrEnableRealExecutionVerification(postState map[string]any) map[string]any {
+	return map[string]any{
+		"available_contains_bbr": boolResultValue(postState["available_contains_bbr"]) ||
+			strings.Contains(" "+stringResultValue(postState["available_congestion_control"])+" ", " bbr "),
+		"current_is_bbr": strings.TrimSpace(stringResultValue(postState["current_congestion_control"])) == "bbr" ||
+			boolResultValue(postState["current_congestion_control_is_bbr"]),
+		"default_qdisc_is_fq": strings.TrimSpace(stringResultValue(postState["default_qdisc"])) == "fq" ||
+			boolResultValue(postState["default_qdisc_is_fq"]),
+	}
 }
 
 func validateBBREnableDryRunPayload(cfg config, payload map[string]any) error {
@@ -6046,24 +6253,24 @@ func validateBBREnableDryRunPayload(cfg config, payload map[string]any) error {
 }
 
 func firstUnsafeBBREnableDryRunPayloadKey(value any) (string, bool) {
-	return firstUnsafeBBREnableDryRunPayloadKeyAt(value, "$")
+	return firstUnsafePayloadKeyAt(value, "$", bbrEnableDryRunUnsafePayloadKeys)
 }
 
-func firstUnsafeBBREnableDryRunPayloadKeyAt(value any, path string) (string, bool) {
+func firstUnsafePayloadKeyAt(value any, path string, unsafeKeys map[string]bool) (string, bool) {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, item := range typed {
 			childPath := path + "." + key
-			if bbrEnableDryRunUnsafePayloadKeys[strings.ToLower(key)] {
+			if unsafeKeys[strings.ToLower(key)] {
 				return childPath, true
 			}
-			if foundPath, ok := firstUnsafeBBREnableDryRunPayloadKeyAt(item, childPath); ok {
+			if foundPath, ok := firstUnsafePayloadKeyAt(item, childPath, unsafeKeys); ok {
 				return foundPath, true
 			}
 		}
 	case []any:
 		for index, item := range typed {
-			if foundPath, ok := firstUnsafeBBREnableDryRunPayloadKeyAt(item, fmt.Sprintf("%s[%d]", path, index)); ok {
+			if foundPath, ok := firstUnsafePayloadKeyAt(item, fmt.Sprintf("%s[%d]", path, index), unsafeKeys); ok {
 				return foundPath, true
 			}
 		}

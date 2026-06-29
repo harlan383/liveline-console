@@ -14,6 +14,9 @@ from app.services.worker_targeting import WorkerTargetResolution, resolve_comman
 
 BBR_ENABLE_DRY_RUN_COMMAND = "bbr_enable_dry_run"
 BBR_ENABLE_DRY_RUN_STAGE = "Stage 3.3.204-bbr-enable-protected-execution-dry-run"
+BBR_ENABLE_REAL_EXECUTION_COMMAND = "bbr_enable_real_execution"
+BBR_ENABLE_REAL_EXECUTION_STAGE = "Stage 3.3.205-bbr-enable-protected-real-execution"
+BBR_ENABLE_REAL_EXECUTION_CONFIRMATION = "CONFIRM_ENABLE_BBR_ON_LANDING_VPS"
 DANGEROUS_BBR_DRY_RUN_PAYLOAD_FIELDS = {
     "shell",
     "command",
@@ -31,6 +34,25 @@ DANGEROUS_BBR_DRY_RUN_PAYLOAD_FIELDS = {
     "sysctl_reload",
     "write_file",
     "rm_rf",
+}
+DANGEROUS_BBR_REAL_EXECUTION_PAYLOAD_FIELDS = {
+    "shell",
+    "command",
+    "commands",
+    "args",
+    "argv",
+    "script",
+    "exec",
+    "exec_start",
+    "systemd_unit",
+    "unit_content",
+    "service_content",
+    "write_file",
+    "rm_rf",
+    "arbitrary_command",
+    "arbitrary_script",
+    "path",
+    "content",
 }
 
 
@@ -62,6 +84,19 @@ def latest_landing_preflight_command(db: Session, server_id: str) -> WorkerComma
             WorkerCommand.server_id == server_id,
             WorkerCommand.command_type == "landing_preflight",
             WorkerCommand.status == "succeeded",
+        )
+        .order_by(WorkerCommand.completed_at.desc().nullslast(), WorkerCommand.created_at.desc())
+        .limit(1)
+    )
+
+
+def latest_bbr_enable_dry_run_command(db: Session, server_id: str) -> WorkerCommand | None:
+    return db.scalar(
+        select(WorkerCommand)
+        .where(
+            WorkerCommand.server_type == "landing",
+            WorkerCommand.server_id == server_id,
+            WorkerCommand.command_type == BBR_ENABLE_DRY_RUN_COMMAND,
         )
         .order_by(WorkerCommand.completed_at.desc().nullslast(), WorkerCommand.created_at.desc())
         .limit(1)
@@ -272,6 +307,72 @@ def build_bbr_enable_dry_run_payload(plan: dict) -> dict:
     return payload
 
 
+def build_bbr_enable_real_execution_payload(plan: dict, dry_run_command: WorkerCommand, confirmation_text: str) -> dict:
+    if confirmation_text != BBR_ENABLE_REAL_EXECUTION_CONFIRMATION:
+        raise BbrEnablePlanError(
+            400,
+            "BBR_ENABLE_CONFIRMATION_REQUIRED",
+            "请输入完整确认文本后才能创建 BBR 真实开启命令。",
+        )
+    payload = {
+        "stage": BBR_ENABLE_REAL_EXECUTION_STAGE,
+        "server_id": plan["server_id"],
+        "preflight_id": plan["latest_preflight_id"],
+        "dry_run_command_id": dry_run_command.id,
+        "recommendation": plan["recommendation"],
+        "confirm_enable_bbr_real_execution": True,
+        "confirm_load_tcp_bbr_module": True,
+        "confirm_write_sysctl_config": True,
+        "confirm_reload_sysctl": True,
+        "confirm_no_network_restart_expected": True,
+        "confirm_rollback_plan_understood": True,
+        "confirmation_text": BBR_ENABLE_REAL_EXECUTION_CONFIRMATION,
+    }
+    unexpected = DANGEROUS_BBR_REAL_EXECUTION_PAYLOAD_FIELDS.intersection(payload)
+    if unexpected:
+        raise BbrEnablePlanError(
+            500,
+            "BBR_REAL_EXECUTION_PAYLOAD_UNSAFE",
+            "BBR real execution payload contains unsafe fields.",
+        )
+    return payload
+
+
+def _validate_latest_bbr_enable_dry_run(dry_run: WorkerCommand | None, server_id: str) -> WorkerCommand:
+    if not dry_run:
+        raise BbrEnablePlanError(400, "BBR_ENABLE_DRY_RUN_REQUIRED", "需要先完成 BBR dry-run。")
+    if dry_run.server_id != server_id or dry_run.server_type != "landing":
+        raise BbrEnablePlanError(400, "BBR_ENABLE_DRY_RUN_REQUIRED", "最新 BBR dry-run 不属于当前落地服务器。")
+    if dry_run.status != "succeeded":
+        raise BbrEnablePlanError(
+            400,
+            "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL",
+            "最新 BBR dry-run 未成功，不能创建真实开启命令。",
+        )
+    result_json = dry_run.result_json if isinstance(dry_run.result_json, dict) else {}
+    if result_json.get("status") != "succeeded":
+        raise BbrEnablePlanError(
+            400,
+            "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL",
+            "最新 BBR dry-run 结果未通过，不能创建真实开启命令。",
+        )
+    blocked_reasons = result_json.get("blocked_reasons")
+    if isinstance(blocked_reasons, list) and blocked_reasons:
+        raise BbrEnablePlanError(
+            400,
+            "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL",
+            "最新 BBR dry-run 仍有阻塞项，不能创建真实开启命令。",
+        )
+    payload = dry_run.payload_json if isinstance(dry_run.payload_json, dict) else {}
+    if payload.get("confirm_dry_run_only") is not True:
+        raise BbrEnablePlanError(
+            400,
+            "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL",
+            "最新 BBR dry-run payload 不完整，不能创建真实开启命令。",
+        )
+    return dry_run
+
+
 def create_bbr_enable_dry_run_command(db: Session, server_id: str) -> tuple[WorkerCommand, Worker, dict, WorkerTargetResolution]:
     plan = build_bbr_enable_plan(db, server_id)
     if plan.get("already_enabled") or not plan.get("ready"):
@@ -287,3 +388,31 @@ def create_bbr_enable_dry_run_command(db: Session, server_id: str) -> tuple[Work
     payload = build_bbr_enable_dry_run_payload(plan)
     command = create_worker_command(db, target.worker, BBR_ENABLE_DRY_RUN_COMMAND, payload)
     return command, target.worker, plan, target
+
+
+def create_bbr_enable_real_execution_command(
+    db: Session,
+    server_id: str,
+    confirmation_text: str,
+) -> tuple[WorkerCommand, Worker, dict, WorkerTargetResolution, WorkerCommand]:
+    plan = build_bbr_enable_plan(db, server_id)
+    if plan.get("already_enabled") or not plan.get("ready"):
+        raise BbrEnablePlanError(400, "BBR_ENABLE_PLAN_NOT_READY", "BBR 开启方案未就绪，不能创建真实执行命令。")
+
+    dry_run = _validate_latest_bbr_enable_dry_run(latest_bbr_enable_dry_run_command(db, server_id), server_id)
+    target = resolve_command_target_worker(
+        db,
+        server_type="landing",
+        server_id=server_id,
+        role="landing",
+        command_type=BBR_ENABLE_REAL_EXECUTION_COMMAND,
+    )
+    if dry_run.worker_id != target.worker.id:
+        raise BbrEnablePlanError(
+            400,
+            "BBR_ENABLE_DRY_RUN_REQUIRED",
+            "最新 BBR dry-run 不是由当前目标 Worker 执行，不能创建真实开启命令。",
+        )
+    payload = build_bbr_enable_real_execution_payload(plan, dry_run, confirmation_text)
+    command = create_worker_command(db, target.worker, BBR_ENABLE_REAL_EXECUTION_COMMAND, payload)
+    return command, target.worker, plan, target, dry_run

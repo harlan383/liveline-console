@@ -7,10 +7,14 @@ from app.models.worker import Worker
 from app.models.worker_command import WorkerCommand
 from app.services.bbr_enable_plan import (
     BBR_ENABLE_DRY_RUN_COMMAND,
+    BBR_ENABLE_REAL_EXECUTION_COMMAND,
+    BBR_ENABLE_REAL_EXECUTION_CONFIRMATION,
     BbrEnablePlanError,
     build_bbr_enable_dry_run_payload,
+    build_bbr_enable_real_execution_payload,
     build_bbr_enable_plan,
     create_bbr_enable_dry_run_command,
+    create_bbr_enable_real_execution_command,
 )
 from app.services.worker_targeting import WorkerTargetError, WorkerTargetResolution
 
@@ -207,6 +211,140 @@ class BbrEnablePlanTests(unittest.TestCase):
             ):
                 with self.assertRaises(WorkerTargetError):
                     create_bbr_enable_dry_run_command(FakeDb(), SERVER_ID)
+
+    def test_real_execution_payload_contains_no_arbitrary_execution_fields(self):
+        plan = {
+            "server_id": SERVER_ID,
+            "latest_preflight_id": "preflight-1",
+            "recommendation": "module_available_needs_load_approval",
+        }
+        dry_run = WorkerCommand(id="dry-run-1", worker_id="worker-1", command_type=BBR_ENABLE_DRY_RUN_COMMAND)
+
+        payload = build_bbr_enable_real_execution_payload(plan, dry_run, BBR_ENABLE_REAL_EXECUTION_CONFIRMATION)
+
+        self.assertEqual(payload["stage"], "Stage 3.3.205-bbr-enable-protected-real-execution")
+        self.assertEqual(payload["server_id"], SERVER_ID)
+        self.assertEqual(payload["dry_run_command_id"], "dry-run-1")
+        self.assertTrue(payload["confirm_enable_bbr_real_execution"])
+        self.assertEqual(payload["confirmation_text"], BBR_ENABLE_REAL_EXECUTION_CONFIRMATION)
+        for forbidden in ["shell", "command", "commands", "args", "argv", "script", "exec", "path", "content"]:
+            self.assertNotIn(forbidden, payload)
+
+    def test_real_execution_rejects_wrong_confirmation(self):
+        plan = {"server_id": SERVER_ID, "latest_preflight_id": "preflight-1", "recommendation": "can_enable_with_approval"}
+        dry_run = WorkerCommand(id="dry-run-1", worker_id="worker-1", command_type=BBR_ENABLE_DRY_RUN_COMMAND)
+
+        with self.assertRaises(BbrEnablePlanError) as context:
+            build_bbr_enable_real_execution_payload(plan, dry_run, "wrong")
+
+        self.assertEqual(context.exception.code, "BBR_ENABLE_CONFIRMATION_REQUIRED")
+
+    def test_real_execution_command_rejects_plan_not_ready(self):
+        plan = {"ready": False, "already_enabled": False, "server_id": SERVER_ID}
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with self.assertRaises(BbrEnablePlanError) as context:
+                create_bbr_enable_real_execution_command(FakeDb(), SERVER_ID, BBR_ENABLE_REAL_EXECUTION_CONFIRMATION)
+
+        self.assertEqual(context.exception.code, "BBR_ENABLE_PLAN_NOT_READY")
+
+    def test_real_execution_command_requires_dry_run(self):
+        plan = {"ready": True, "already_enabled": False, "server_id": SERVER_ID}
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with patch("app.services.bbr_enable_plan.latest_bbr_enable_dry_run_command", return_value=None):
+                with self.assertRaises(BbrEnablePlanError) as context:
+                    create_bbr_enable_real_execution_command(FakeDb(), SERVER_ID, BBR_ENABLE_REAL_EXECUTION_CONFIRMATION)
+
+        self.assertEqual(context.exception.code, "BBR_ENABLE_DRY_RUN_REQUIRED")
+
+    def test_real_execution_command_rejects_failed_dry_run(self):
+        plan = {"ready": True, "already_enabled": False, "server_id": SERVER_ID}
+        dry_run = WorkerCommand(
+            id="dry-run-1",
+            worker_id="worker-1",
+            server_type="landing",
+            server_id=SERVER_ID,
+            command_type=BBR_ENABLE_DRY_RUN_COMMAND,
+            status="failed",
+            result_json={"status": "failed", "blocked_reasons": ["modprobe_dry_run_failed"]},
+            payload_json={"confirm_dry_run_only": True},
+        )
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with patch("app.services.bbr_enable_plan.latest_bbr_enable_dry_run_command", return_value=dry_run):
+                with self.assertRaises(BbrEnablePlanError) as context:
+                    create_bbr_enable_real_execution_command(FakeDb(), SERVER_ID, BBR_ENABLE_REAL_EXECUTION_CONFIRMATION)
+
+        self.assertEqual(context.exception.code, "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL")
+
+    def test_real_execution_command_rejects_blocked_dry_run(self):
+        plan = {"ready": True, "already_enabled": False, "server_id": SERVER_ID}
+        dry_run = WorkerCommand(
+            id="dry-run-1",
+            worker_id="worker-1",
+            server_type="landing",
+            server_id=SERVER_ID,
+            command_type=BBR_ENABLE_DRY_RUN_COMMAND,
+            status="succeeded",
+            result_json={"status": "succeeded", "blocked_reasons": ["sysctl_d_directory_missing"]},
+            payload_json={"confirm_dry_run_only": True},
+        )
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with patch("app.services.bbr_enable_plan.latest_bbr_enable_dry_run_command", return_value=dry_run):
+                with self.assertRaises(BbrEnablePlanError) as context:
+                    create_bbr_enable_real_execution_command(FakeDb(), SERVER_ID, BBR_ENABLE_REAL_EXECUTION_CONFIRMATION)
+
+        self.assertEqual(context.exception.code, "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL")
+
+    def test_real_execution_command_creates_fixed_worker_command_after_successful_dry_run(self):
+        plan = {
+            "ready": True,
+            "already_enabled": False,
+            "server_id": SERVER_ID,
+            "latest_preflight_id": "preflight-1",
+            "recommendation": "module_available_needs_load_approval",
+        }
+        worker = Worker(
+            id="worker-1",
+            server_id=SERVER_ID,
+            role="landing",
+            status="online",
+            worker_version="0.1.40-stage-3.3.205-bbr-real-enable",
+            worker_secret_hash="hash",
+        )
+        dry_run = WorkerCommand(
+            id="dry-run-1",
+            worker_id=worker.id,
+            server_type="landing",
+            server_id=SERVER_ID,
+            command_type=BBR_ENABLE_DRY_RUN_COMMAND,
+            status="succeeded",
+            result_json={"status": "succeeded", "blocked_reasons": []},
+            payload_json={"confirm_dry_run_only": True},
+        )
+        command = WorkerCommand(id="command-1", worker_id=worker.id, command_type=BBR_ENABLE_REAL_EXECUTION_COMMAND)
+
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with patch("app.services.bbr_enable_plan.latest_bbr_enable_dry_run_command", return_value=dry_run):
+                with patch(
+                    "app.services.bbr_enable_plan.resolve_command_target_worker",
+                    return_value=WorkerTargetResolution(worker=worker, changed=False, requested_worker_id=None),
+                ):
+                    with patch("app.services.bbr_enable_plan.create_worker_command", return_value=command) as create_command:
+                        created, selected_worker, returned_plan, _target, returned_dry_run = create_bbr_enable_real_execution_command(
+                            FakeDb(),
+                            SERVER_ID,
+                            BBR_ENABLE_REAL_EXECUTION_CONFIRMATION,
+                        )
+
+        self.assertEqual(created, command)
+        self.assertEqual(selected_worker, worker)
+        self.assertEqual(returned_plan, plan)
+        self.assertEqual(returned_dry_run, dry_run)
+        _db, _worker, command_type, payload = create_command.call_args.args
+        self.assertEqual(command_type, BBR_ENABLE_REAL_EXECUTION_COMMAND)
+        self.assertEqual(payload["dry_run_command_id"], "dry-run-1")
+        self.assertTrue(payload["confirm_enable_bbr_real_execution"])
+        self.assertTrue(payload["confirm_reload_sysctl"])
+        self.assertNotIn("command", payload)
 
 
 if __name__ == "__main__":

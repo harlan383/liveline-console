@@ -19,6 +19,7 @@ import {
   remoteCleanupDeleteVpsServer,
   requestBbrEnableDryRun,
   requestBbrEnablePlan,
+  requestBbrEnableRealExecution,
   REMOTE_CLEANUP_CONFIRM_TEXT,
   type BbrEnablePlanResult,
   type LandingNodePlanResponse,
@@ -37,6 +38,7 @@ import {
 type ModalMode = "add" | "edit" | "delete" | "deleteNode" | "nodePlan" | "workerCommand" | null;
 type DeleteFlowMode = "remote_cleanup" | "offline_local_remove";
 type WorkerInstallPollingMode = "install" | "upgrade";
+const BBR_REAL_EXECUTION_CONFIRM_TEXT = "CONFIRM_ENABLE_BBR_ON_LANDING_VPS";
 
 type WorkerInstallPollingContext = {
   mode: WorkerInstallPollingMode;
@@ -342,6 +344,7 @@ function workerCommandTypeLabel(commandType: string) {
     service_status: "服务状态",
     landing_preflight: "只读预检",
     bbr_enable_dry_run: "BBR 开启 dry-run",
+    bbr_enable_real_execution: "BBR 受保护开启",
     landing_node_create: "正式创建落地节点",
   };
   return labels[commandType] ?? commandType;
@@ -464,6 +467,10 @@ export function ServerManagementPanel() {
   const [bbrEnablePlanByServerId, setBbrEnablePlanByServerId] = useState<Record<string, BbrEnablePlanResult>>({});
   const [bbrEnablePlanLoadingServerId, setBbrEnablePlanLoadingServerId] = useState<string | null>(null);
   const [bbrEnableDryRunLoadingServerId, setBbrEnableDryRunLoadingServerId] = useState<string | null>(null);
+  const [bbrEnableRealExecutionLoadingServerId, setBbrEnableRealExecutionLoadingServerId] = useState<string | null>(null);
+  const [bbrRealExecutionConfirmServer, setBbrRealExecutionConfirmServer] = useState<VpsServerData | null>(null);
+  const [bbrRealExecutionConfirmText, setBbrRealExecutionConfirmText] = useState("");
+  const [bbrRealExecutionConfirmError, setBbrRealExecutionConfirmError] = useState<string | null>(null);
   const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [selectedNodeForDelete, setSelectedNodeForDelete] = useState<ServerNodeSummary | null>(null);
   const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
@@ -1043,6 +1050,26 @@ export function ServerManagementPanel() {
     setMessage("BBR 开启 dry-run 仍在执行，最近命令已刷新；请稍后查看任务中心。");
   }
 
+  async function refreshBbrRealExecutionUntilTerminal(command: WorkerCommandData, serverId: string) {
+    for (let attempt = 0; attempt < CLEANUP_COMMAND_MAX_POLLS; attempt += 1) {
+      await sleep(CLEANUP_COMMAND_POLL_INTERVAL_MS);
+      const result = await getWorkerCommand(command.id);
+      if (!result.success) {
+        continue;
+      }
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [serverId]: result.data }));
+      if (CLEANUP_COMMAND_TERMINAL_STATUSES.has(result.data.status)) {
+        const workerId = result.data.target_worker_id || result.data.worker_id;
+        await loadWorkerCommands(workerId, serverId);
+        const summary = result.data.result_summary ? ` / ${result.data.result_summary}` : "";
+        setMessage(`BBR 受保护开启命令已进入终态：${workerCommandStatusLabel(result.data.status)}${summary}。`);
+        return;
+      }
+    }
+    await loadWorkerCommands(command.target_worker_id || command.worker_id, serverId);
+    setMessage("BBR 受保护开启命令仍在执行，最近命令已刷新；请稍后查看任务中心。");
+  }
+
   async function openBbrEnableDryRun(server: VpsServerData) {
     setBbrEnableDryRunLoadingServerId(server.id);
     setMessage("正在创建 BBR 开启 dry-run 命令。该命令不会真正开启 BBR。");
@@ -1062,6 +1089,54 @@ export function ServerManagementPanel() {
       setMessage(error instanceof Error ? error.message : "创建 BBR 开启 dry-run 命令失败。");
     } finally {
       setBbrEnableDryRunLoadingServerId(null);
+    }
+  }
+
+  function openBbrRealExecutionConfirm(server: VpsServerData) {
+    setBbrRealExecutionConfirmServer(server);
+    setBbrRealExecutionConfirmText("");
+    setBbrRealExecutionConfirmError(null);
+  }
+
+  function closeBbrRealExecutionConfirm() {
+    setBbrRealExecutionConfirmServer(null);
+    setBbrRealExecutionConfirmText("");
+    setBbrRealExecutionConfirmError(null);
+  }
+
+  async function submitBbrRealExecution() {
+    const server = bbrRealExecutionConfirmServer;
+    if (!server) {
+      return;
+    }
+    if (bbrRealExecutionConfirmText.trim() !== BBR_REAL_EXECUTION_CONFIRM_TEXT) {
+      setBbrRealExecutionConfirmError(`请输入 ${BBR_REAL_EXECUTION_CONFIRM_TEXT} 以确认开启 BBR。`);
+      return;
+    }
+    setBbrEnableRealExecutionLoadingServerId(server.id);
+    setBbrRealExecutionConfirmError(null);
+    setMessage("正在创建 BBR 受保护真实开启命令。该命令会等待 Worker 按固定流程执行。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await requestBbrEnableRealExecution(server.id, csrfToken, bbrRealExecutionConfirmText.trim());
+      if (!result.success) {
+        const text = `${result.error_code}: ${result.message}`;
+        setBbrRealExecutionConfirmError(text);
+        setMessage(text);
+        return;
+      }
+      setBbrEnablePlanByServerId((current) => ({ ...current, [server.id]: result.data.plan }));
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [server.id]: result.data.command }));
+      setMessage(`BBR 受保护开启命令已创建：${result.data.command.id}。不会重启网络服务，不会修改端口、share_link 或 cutover。`);
+      closeBbrRealExecutionConfirm();
+      await loadWorkerCommands(result.data.target_worker_id, server.id);
+      void refreshBbrRealExecutionUntilTerminal(result.data.command, server.id);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "创建 BBR 受保护开启命令失败。";
+      setBbrRealExecutionConfirmError(text);
+      setMessage(text);
+    } finally {
+      setBbrEnableRealExecutionLoadingServerId(null);
     }
   }
 
@@ -1322,6 +1397,11 @@ export function ServerManagementPanel() {
     const statusText = plan.already_enabled ? "已开启" : plan.ready ? "可进入后续审批" : "暂不可开启";
     const blockedReasons = plan.blocked_reasons.length ? plan.blocked_reasons : [];
     const warnings = plan.warnings.length ? plan.warnings : [];
+    const latestCommand = latestWorkerCommandByServerId[server.id];
+    const dryRunSucceeded =
+      latestCommand?.command_type === "bbr_enable_dry_run" &&
+      latestCommand.status === "succeeded" &&
+      latestCommand.result_json?.status === "succeeded";
 
     return (
       <div className="worker-command-status">
@@ -1338,14 +1418,29 @@ export function ServerManagementPanel() {
         </div>
         <p className="field-hint">这是只读审批方案：不会创建 Worker command，不会加载模块，不会写 sysctl，不会远程执行。</p>
         {plan.ready && !plan.already_enabled ? (
-          <button
-            className="secondary"
-            disabled={bbrEnableDryRunLoadingServerId === server.id}
-            type="button"
-            onClick={() => void openBbrEnableDryRun(server)}
-          >
-            {bbrEnableDryRunLoadingServerId === server.id ? "创建 dry-run 中..." : "BBR 开启 dry-run，不会真正开启"}
-          </button>
+          <div className="modal-actions">
+            <button
+              className="secondary"
+              disabled={bbrEnableDryRunLoadingServerId === server.id}
+              type="button"
+              onClick={() => void openBbrEnableDryRun(server)}
+            >
+              {bbrEnableDryRunLoadingServerId === server.id ? "创建 dry-run 中..." : "BBR 开启 dry-run，不会真正开启"}
+            </button>
+            {dryRunSucceeded ? (
+              <button
+                className="danger"
+                disabled={bbrEnableRealExecutionLoadingServerId === server.id}
+                type="button"
+                onClick={() => openBbrRealExecutionConfirm(server)}
+              >
+                {bbrEnableRealExecutionLoadingServerId === server.id ? "创建开启命令中..." : "开启 BBR（受保护执行）"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {plan.ready && !plan.already_enabled && !dryRunSucceeded ? (
+          <p className="field-hint">真实开启按钮会在 BBR dry-run 成功后显示。</p>
         ) : null}
         {blockedReasons.length ? (
           <div className="field-hint danger-text">阻塞原因：{blockedReasons.map(bbrRecommendationLabel).join("、")}</div>
@@ -1789,6 +1884,7 @@ export function ServerManagementPanel() {
       </div>
 
       {modalMode ? renderModal() : null}
+      {renderBbrRealExecutionConfirmModal()}
       {selectedNodeDetail ? renderNodeDetailModal() : null}
     </section>
   );
@@ -1843,6 +1939,56 @@ export function ServerManagementPanel() {
           {mode === "edit" ? renderServerForm(submitEdit) : null}
           {mode === "delete" ? renderDeleteConfirm() : null}
           {mode === "deleteNode" ? renderDeleteNodeConfirm() : null}
+        </div>
+      </div>
+    );
+  }
+
+  function renderBbrRealExecutionConfirmModal() {
+    const server = bbrRealExecutionConfirmServer;
+    if (!server) {
+      return null;
+    }
+    return (
+      <div className="modal-backdrop" role="presentation">
+        <div className="modal-card" role="dialog" aria-modal="true" aria-label="确认开启 BBR">
+          <div className="modal-header">
+            <h3>开启 BBR（受保护执行）</h3>
+            <button className="ghost-button" type="button" onClick={closeBbrRealExecutionConfirm}>
+              取消
+            </button>
+          </div>
+          <div className="form server-modal-form">
+            <div className="warning-box wide-field">
+              <strong>请输入确认文本后创建真实执行命令</strong>
+              <span>此操作会真实执行固定流程：modprobe tcp_bbr。</span>
+              <span>此操作会写入 /etc/sysctl.d/99-liveline-bbr.conf。</span>
+              <span>此操作会执行 sysctl --system。</span>
+              <span>不会重启网络服务，不会重启 Xray / HAProxy，不会修改端口、share_link 或 cutover。</span>
+            </div>
+            <label className="wide-field">
+              确认文本
+              <input
+                value={bbrRealExecutionConfirmText}
+                onChange={(event) => setBbrRealExecutionConfirmText(event.target.value)}
+                placeholder={BBR_REAL_EXECUTION_CONFIRM_TEXT}
+              />
+            </label>
+            {bbrRealExecutionConfirmError ? <p className="message error wide-field">{bbrRealExecutionConfirmError}</p> : null}
+            <div className="modal-actions wide-field">
+              <button
+                className="danger"
+                disabled={bbrEnableRealExecutionLoadingServerId === server.id}
+                type="button"
+                onClick={() => void submitBbrRealExecution()}
+              >
+                {bbrEnableRealExecutionLoadingServerId === server.id ? "创建命令中..." : "确认开启 BBR"}
+              </button>
+              <button className="secondary" type="button" onClick={closeBbrRealExecutionConfirm}>
+                取消
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );

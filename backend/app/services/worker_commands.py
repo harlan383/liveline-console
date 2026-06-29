@@ -664,6 +664,17 @@ def result_summary(command: WorkerCommand) -> str | None:
         blocked_reasons = result.get("blocked_reasons")
         blocked_count = len(blocked_reasons) if isinstance(blocked_reasons, list) else 0
         return f"bbr_enable_dry_run status={status} recommendation={recommendation} blocked={blocked_count}"
+    if command.command_type == "bbr_enable_real_execution":
+        status = result.get("status") or "-"
+        verification = result.get("verification")
+        current = "-"
+        qdisc = "-"
+        if isinstance(verification, dict):
+            current = "bbr" if verification.get("current_is_bbr") is True else "-"
+            qdisc = "fq" if verification.get("default_qdisc_is_fq") is True else "-"
+        blocked_reasons = result.get("blocked_reasons")
+        blocked_count = len(blocked_reasons) if isinstance(blocked_reasons, list) else 0
+        return f"bbr_enable_real_execution status={status} current={current} qdisc={qdisc} blocked={blocked_count}"
     if command.command_type == "landing_node_create":
         node_id = result.get("node_id") or "-"
         listen_port = result.get("listen_port") or "-"

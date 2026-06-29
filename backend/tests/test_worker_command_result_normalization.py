@@ -125,6 +125,25 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
         )
         self.assertLess(parse_worker_version("0.1.38-stage-3.3.201-bbr-module-readonly"), (0, 1, 39, 3, 3, 204))
 
+    def test_bbr_enable_real_execution_command_type_is_registered(self):
+        command = WorkerCommandCreate(
+            command_type="bbr_enable_real_execution",
+            payload={"confirm_enable_bbr_real_execution": True},
+        )
+        self.assertEqual(command.command_type, "bbr_enable_real_execution")
+        self.assertEqual(
+            minimum_worker_version_for_command("bbr_enable_real_execution"),
+            "0.1.40-stage-3.3.205-bbr-real-enable",
+        )
+        self.assertEqual(
+            minimum_worker_version_key_for_command("bbr_enable_real_execution"),
+            (0, 1, 40, 3, 3, 205),
+        )
+        self.assertLess(
+            parse_worker_version("0.1.39-stage-3.3.204-bbr-enable-dry-run"),
+            (0, 1, 40, 3, 3, 205),
+        )
+
     def test_haproxy_tcp_minimum_worker_version_requires_dynamic_approval_worker(self):
         self.assertEqual(
             minimum_worker_version_for_transit_forwarding_method("haproxy_tcp"),
