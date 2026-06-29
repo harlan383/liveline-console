@@ -41,6 +41,48 @@ function statusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+function businessTaskName(taskType: string) {
+  const labels: Record<string, string> = {
+    landing_node_create: "创建直连节点",
+    transit_route_create: "创建中转线路",
+    cleanup_landing_node: "删除节点",
+    cleanup_landing_server: "清理落地服务器",
+    cleanup_transit_route: "清理中转线路",
+    cleanup_transit_resource: "清理中转服务器",
+    bbr_enable_dry_run: "网络加速试运行",
+    bbr_enable_real_execution: "启用网络加速",
+    landing_preflight: "创建前检查",
+    transit_readonly_preflight: "中转创建前检查",
+    collect_status: "读取服务器状态",
+    service_status: "读取服务状态",
+  };
+  return labels[taskType] ?? "系统任务";
+}
+
+function relatedObject(task: TaskData) {
+  if (task.node_id) {
+    return `节点 ${shortId(task.node_id)}`;
+  }
+  if (task.vps_id) {
+    return `服务器 ${shortId(task.vps_id)}`;
+  }
+  return "本地系统";
+}
+
+function resultAdvice(task: TaskData) {
+  if (task.status === "success" || task.status === "completed") {
+    return "任务已完成。";
+  }
+  if (task.status === "pending" || task.status === "running") {
+    return "任务正在处理中。";
+  }
+  const failure = taskFailureSummary(task);
+  if (/端口|监听/.test(failure)) {
+    return `${failure} 请检查云安全组、云防火墙、服务器防火墙是否放行。`;
+  }
+  return failure;
+}
+
 function redactString(value: string) {
   if (privateKeyPattern.test(value)) {
     return "[redacted private key]";
@@ -184,13 +226,13 @@ export function TaskHistoryPanel() {
   }, [selectedTask?.id]);
 
   return (
-    <section className="panel wide">
+    <section className="panel wide task-record-panel">
       <div className="status-row">
         <div>
-          <h2>本地任务记录</h2>
+          <h2>任务记录</h2>
         </div>
         <button className="secondary" disabled={loading} type="button" onClick={() => void loadTasks()}>
-          刷新任务记录
+          刷新
         </button>
       </div>
 
@@ -199,6 +241,14 @@ export function TaskHistoryPanel() {
       ) : (
         <div className="task-history-layout">
           <div className="task-history-list">
+            <div className="task-history-row task-history-head">
+              <span>时间</span>
+              <span>任务名称</span>
+              <span>关联对象</span>
+              <span>当前状态</span>
+              <span>结果说明</span>
+              <span>操作</span>
+            </div>
             {tasks.map((task) => (
               <button
                 className={`task-history-row${selectedTask?.id === task.id ? " active" : ""}`}
@@ -206,12 +256,11 @@ export function TaskHistoryPanel() {
                 type="button"
                 onClick={() => setSelectedTaskId(task.id)}
               >
-                <span className={`pill ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
-                <strong>{task.task_type}</strong>
-                <span>{shortId(task.id)}</span>
-                <span>{task.current_step ?? "-"}</span>
-                <span>{task.progress}%</span>
                 <span>{formatDate(task.updated_at ?? task.created_at)}</span>
+                <strong>{businessTaskName(task.task_type)}</strong>
+                <span>{relatedObject(task)}</span>
+                <span className={`pill ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
+                <span>{resultAdvice(task)}</span>
                 <span className="task-row-action">查看详情</span>
               </button>
             ))}
@@ -221,8 +270,8 @@ export function TaskHistoryPanel() {
             <div className="task-history-detail">
               <div className="status-row">
                 <div>
-                  <h3>{selectedTask.task_type}</h3>
-                  <p className="message">任务 ID：{shortId(selectedTask.id)}</p>
+                  <h3>{businessTaskName(selectedTask.task_type)}</h3>
+                  <p className="message">{relatedObject(selectedTask)}</p>
                 </div>
                 <div className="task-detail-actions">
                   <span className={`pill ${statusClass(selectedTask.status)}`}>{statusLabel(selectedTask.status)}</span>
@@ -235,9 +284,9 @@ export function TaskHistoryPanel() {
               <div className="detail-grid">
                 <span>状态</span>
                 <strong>{statusLabel(selectedTask.status)}</strong>
-                <span>当前步骤</span>
-                <strong>{selectedTask.current_step ?? "-"}</strong>
-                <span>进度</span>
+                <span>结果说明</span>
+                <strong>{resultAdvice(selectedTask)}</strong>
+                <span>当前进度</span>
                 <strong>{selectedTask.progress}%</strong>
                 <span>创建时间</span>
                 <strong>{formatDate(selectedTask.created_at)}</strong>
@@ -247,10 +296,6 @@ export function TaskHistoryPanel() {
                 <strong>{formatDate(selectedTask.started_at)}</strong>
                 <span>完成时间</span>
                 <strong>{formatDate(selectedTask.finished_at)}</strong>
-                <span>错误码</span>
-                <strong>{selectedTask.error_code ?? "-"}</strong>
-                <span>失败原因摘要</span>
-                <strong>{taskFailureSummary(selectedTask)}</strong>
               </div>
               <div className="task-progress-card">
                 <div className="status-row">
@@ -266,13 +311,23 @@ export function TaskHistoryPanel() {
                 <div className="failure-box">{redactString(selectedTask.error_message)}</div>
               ) : null}
 
-              <details className="task-history-details" open>
-                <summary>脱敏任务结果摘要</summary>
+              <details className="task-history-details">
+                <summary>查看技术详情</summary>
+                <div className="business-detail-grid compact">
+                  <span>任务 ID</span>
+                  <strong>{shortId(selectedTask.id)}</strong>
+                  <span>任务类型</span>
+                  <strong>{selectedTask.task_type}</strong>
+                  <span>错误码</span>
+                  <strong>{selectedTask.error_code ?? "-"}</strong>
+                  <span>当前步骤</span>
+                  <strong>{selectedTask.current_step ?? "-"}</strong>
+                </div>
                 <pre>{resultSummary(selectedTask)}</pre>
               </details>
 
               <div className="task-history-logs">
-                <h4>任务日志</h4>
+                <h4>处理日志</h4>
                 {logs.length === 0 ? (
                   <p className="message">暂无任务日志。</p>
                 ) : (
