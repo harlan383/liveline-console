@@ -17,7 +17,9 @@ import {
   OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT,
   remoteCleanupDeleteNode,
   remoteCleanupDeleteVpsServer,
+  requestBbrEnablePlan,
   REMOTE_CLEANUP_CONFIRM_TEXT,
+  type BbrEnablePlanResult,
   type LandingNodePlanResponse,
   type LandingNodeCreateResponse,
   type CsrfResult,
@@ -167,9 +169,59 @@ const CLEANUP_COMMAND_POLL_INTERVAL_MS = 2000;
 const CLEANUP_COMMAND_MAX_POLLS = 30;
 const WORKER_INSTALL_POLL_INTERVAL_MS = 3000;
 const WORKER_INSTALL_MAX_POLLS = 60;
+const BBR_RECOMMENDATION_LABELS: Record<string, string> = {
+  already_enabled: "已开启",
+  can_enable_with_approval: "可审批开启",
+  module_available_needs_load_approval: "模块存在，需审批加载",
+  latest_landing_preflight_required: "需要先完成只读预检",
+  bbr_readonly_result_required: "需要最新 BBR 只读结果",
+  bbr_not_available: "未确认支持",
+  not_available_or_needs_manual_check: "未确认支持",
+};
+const BBR_CONFIRMATION_LABELS: Record<string, string> = {
+  confirm_load_tcp_bbr_module: "确认允许后续审批阶段加载 tcp_bbr 模块",
+  confirm_write_sysctl_config: "确认允许后续审批阶段写入 sysctl 配置",
+  confirm_reload_sysctl: "确认允许后续审批阶段重新加载 sysctl",
+  confirm_no_network_restart_expected: "确认预期不重启网络服务",
+  confirm_rollback_plan_understood: "确认已理解回滚方案",
+};
+const BBR_ACTION_LABELS: Record<string, string> = {
+  load_tcp_bbr_module: "加载 tcp_bbr 模块",
+  persist_default_qdisc_fq: "持久化默认队列 fq",
+  persist_congestion_control_bbr: "持久化拥塞控制 bbr",
+  reload_sysctl: "重新加载 sysctl",
+  verify_available_congestion_control: "验证 bbr 出现在可用拥塞控制列表",
+  verify_current_congestion_control: "验证当前拥塞控制变为 bbr",
+};
+const BBR_SAFETY_LABELS: Record<string, string> = {
+  "readonly plan only": "仅生成只读方案",
+  "no worker command created": "不创建 Worker command",
+  "no remote execution": "不远程执行",
+  "no modprobe": "不执行 modprobe",
+  "no sysctl write": "不写 sysctl",
+  "no sysctl reload": "不重新加载 sysctl",
+  "no service restart": "不重启服务",
+  "no port/share_link/cutover changes": "不修改端口、share_link 或 cutover",
+};
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function bbrRecommendationLabel(value: string) {
+  return BBR_RECOMMENDATION_LABELS[value] ?? value;
+}
+
+function bbrActionLabel(value: string) {
+  return BBR_ACTION_LABELS[value] ?? value;
+}
+
+function bbrConfirmationLabel(value: string) {
+  return BBR_CONFIRMATION_LABELS[value] ?? value;
+}
+
+function bbrSafetyLabel(value: string) {
+  return BBR_SAFETY_LABELS[value] ?? value;
 }
 
 const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
@@ -407,6 +459,8 @@ export function ServerManagementPanel() {
   const [workerCommandsByWorkerId, setWorkerCommandsByWorkerId] = useState<Record<string, WorkerCommandData[]>>({});
   const [latestWorkerCommandByServerId, setLatestWorkerCommandByServerId] = useState<Record<string, WorkerCommandData>>({});
   const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
+  const [bbrEnablePlanByServerId, setBbrEnablePlanByServerId] = useState<Record<string, BbrEnablePlanResult>>({});
+  const [bbrEnablePlanLoadingServerId, setBbrEnablePlanLoadingServerId] = useState<string | null>(null);
   const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [selectedNodeForDelete, setSelectedNodeForDelete] = useState<ServerNodeSummary | null>(null);
   const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
@@ -945,6 +999,27 @@ export function ServerManagementPanel() {
     }
   }
 
+  async function openBbrEnablePlan(server: VpsServerData) {
+    setBbrEnablePlanLoadingServerId(server.id);
+    setMessage("正在生成 BBR 开启审批方案。该操作只读取最新 landing_preflight 结果，不创建 Worker command。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await requestBbrEnablePlan(server.id, csrfToken);
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setBbrEnablePlanByServerId((current) => ({ ...current, [server.id]: result.data }));
+      const recommendation = bbrRecommendationLabel(result.data.recommendation);
+      const statusText = result.data.already_enabled ? "BBR 已开启" : result.data.ready ? "可进入后续审批" : "暂不可开启";
+      setMessage(`BBR 开启方案已生成：${recommendation} / ${statusText}。未创建 Worker command，未远程执行。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成 BBR 开启方案失败。");
+    } finally {
+      setBbrEnablePlanLoadingServerId(null);
+    }
+  }
+
   async function waitForWorkerCommandCompletion(workerId: string, commandId: string, serverId: string, runningStep: string) {
     for (let attempt = 0; attempt < 90; attempt += 1) {
       const result = await listWorkerCommands(workerId);
@@ -1162,14 +1237,8 @@ export function ServerManagementPanel() {
       .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>).port : undefined))
       .filter((port) => typeof port === "number" && port > 0)
       .map((port) => String(port));
-    const bbrRecommendationLabels: Record<string, string> = {
-      already_enabled: "已开启",
-      can_enable_with_approval: "可审批开启",
-      module_available_needs_load_approval: "模块存在，需审批加载",
-      not_available_or_needs_manual_check: "未确认支持",
-    };
     const bbrRecommendation =
-      typeof bbr.recommendation === "string" ? bbrRecommendationLabels[bbr.recommendation] ?? bbr.recommendation : "未返回";
+      typeof bbr.recommendation === "string" ? bbrRecommendationLabel(bbr.recommendation) : "未返回";
     const bbrModuleFiles = Array.isArray(bbr.module_files) ? bbr.module_files.filter((item) => typeof item === "string") as string[] : [];
 
     return (
@@ -1196,6 +1265,70 @@ export function ServerManagementPanel() {
         <span>防火墙：ufw {firewall.ufw_status ? "已返回摘要" : "未返回"}</span>
         <span>配置发现：{Array.isArray(xray.paths) ? "已返回元数据" : "未返回"}</span>
         <span>警告：{numericValue(warnings)}</span>
+      </div>
+    );
+  }
+
+  function renderBbrEnablePlan(plan: BbrEnablePlanResult | undefined) {
+    if (!plan) {
+      return null;
+    }
+    const bbr = plan.bbr || {};
+    const statusText = plan.already_enabled ? "已开启" : plan.ready ? "可进入后续审批" : "暂不可开启";
+    const blockedReasons = plan.blocked_reasons.length ? plan.blocked_reasons : [];
+    const warnings = plan.warnings.length ? plan.warnings : [];
+
+    return (
+      <div className="worker-command-status">
+        <strong>BBR 开启方案：{statusText}</strong>
+        <div className="worker-preflight-summary" aria-label="BBR 开启审批方案摘要">
+          <span>推荐：{bbrRecommendationLabel(plan.recommendation)}</span>
+          <span>最新预检：{plan.latest_preflight_id || "无"}</span>
+          <span>预检时间：{formatTime(plan.latest_preflight_at)}</span>
+          <span>当前拥塞控制：{stringValue(bbr.current_congestion_control)}</span>
+          <span title={stringValue(bbr.available_congestion_control)}>可用算法：{stringValue(bbr.available_congestion_control)}</span>
+          <span>默认队列：{stringValue(bbr.default_qdisc)}</span>
+          <span>模块状态：{stringValue(bbr.module_status)}</span>
+          <span>modinfo：{stringValue(bbr.modinfo_status)}</span>
+        </div>
+        <p className="field-hint">这是只读审批方案：不会创建 Worker command，不会加载模块，不会写 sysctl，不会远程执行。</p>
+        {blockedReasons.length ? (
+          <div className="field-hint danger-text">阻塞原因：{blockedReasons.map(bbrRecommendationLabel).join("、")}</div>
+        ) : null}
+        {warnings.length ? <div className="field-hint">注意：{warnings.join("、")}</div> : null}
+        {plan.planned_actions.length ? (
+          <div className="field-hint">
+            <strong>后续审批动作预览</strong>
+            <ul>
+              {plan.planned_actions.map((action) => (
+                <li key={`${action.step}-${action.command_preview || action.path_preview || ""}`}>
+                  {bbrActionLabel(action.step)}
+                  {action.path_preview ? ` / ${action.path_preview}` : ""}
+                  {action.command_preview ? ` / ${action.command_preview}` : ""}
+                  {" / 未执行"}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {plan.required_confirmations.length ? (
+          <div className="field-hint">
+            <strong>后续阶段需确认</strong>
+            <ul>
+              {plan.required_confirmations.map((confirmation) => (
+                <li key={confirmation}>{bbrConfirmationLabel(confirmation)}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        <div className="field-hint">
+          <strong>本次安全边界</strong>
+          <ul>
+            {plan.safety_boundary.map((item) => (
+              <li key={item}>{bbrSafetyLabel(item)}</li>
+            ))}
+          </ul>
+        </div>
       </div>
     );
   }
@@ -1516,7 +1649,17 @@ export function ServerManagementPanel() {
                             </button>
                           </>
                         ) : null}
+                        <button
+                          className="secondary"
+                          disabled={bbrEnablePlanLoadingServerId === server.id}
+                          title="基于最新 landing_preflight 结果生成 BBR 开启审批方案；不会创建 Worker command"
+                          type="button"
+                          onClick={() => void openBbrEnablePlan(server)}
+                        >
+                          {bbrEnablePlanLoadingServerId === server.id ? "生成中..." : "BBR 开启方案"}
+                        </button>
                         {renderRecentWorkerCommand(latestWorkerCommandForServer(server))}
+                        {renderBbrEnablePlan(bbrEnablePlanByServerId[server.id])}
                       </div>
                     </details>
                   </div>

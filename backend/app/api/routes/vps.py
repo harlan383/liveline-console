@@ -10,6 +10,7 @@ from app.schemas.common import error_response, success_response
 from app.schemas.landing_node_plan import LandingNodeCreateRequest, LandingNodePlanRequest
 from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
+from app.services.bbr_enable_plan import BbrEnablePlanError, build_bbr_enable_plan
 from app.services.landing_node_create import (
     LandingNodeCreateError,
     create_landing_node_create_command,
@@ -382,6 +383,26 @@ def create_landing_node_plan(
     plan = build_landing_node_plan(db=db, vps=vps, worker=worker, payload=payload)
 
     return success_response(plan, "落地节点创建 dry-run 计划已生成；未执行任何远程操作。")
+
+
+@router.post("/{vps_id}/bbr/enable-plan")
+def create_bbr_enable_plan(
+    vps_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    try:
+        plan = build_bbr_enable_plan(db, vps_id)
+    except BbrEnablePlanError as exc:
+        return error_response(exc.status_code, exc.code, exc.message)
+
+    return success_response(plan, "BBR 开启方案已生成；未创建 Worker command，未执行远程操作。")
 
 
 @router.post("/{vps_id}/landing-node-create")
