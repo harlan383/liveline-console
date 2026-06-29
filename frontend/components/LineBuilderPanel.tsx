@@ -134,23 +134,13 @@ export function LineBuilderPanel() {
 
   return (
     <section className="line-builder-product wide">
-      <div className="product-page-header">
-        <div>
-          <h2>线路搭建流程中心</h2>
-          <p>先准备服务器，再创建给客户使用的直连节点或中转线路。</p>
-        </div>
-        <button className="secondary" type="button" onClick={() => void loadData()}>
-          刷新
-        </button>
-      </div>
-
       <div className="builder-product-layout">
         <main className="builder-flow">
           <section className="builder-stage-card">
             <div className="builder-stage-title">
               <span>1</span>
               <div>
-                <h3>准备服务器</h3>
+                <h3>第一步：准备服务器</h3>
                 <p>先把落地服务器或中转服务器接入控制台。</p>
               </div>
             </div>
@@ -178,7 +168,7 @@ export function LineBuilderPanel() {
             <div className="builder-stage-title">
               <span>2</span>
               <div>
-                <h3>创建线路</h3>
+                <h3>第二步：创建线路</h3>
                 <p>根据业务用途选择直连或中转，确认端口安全提醒。</p>
               </div>
             </div>

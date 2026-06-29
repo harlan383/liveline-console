@@ -106,11 +106,7 @@ export function ServerResourcesPanel() {
 
   return (
     <section className="server-resources-page wide">
-      <div className="product-page-header">
-        <div>
-          <h2>服务器资源</h2>
-          <p>集中管理落地服务器、自建中转服务器和商家中转入口。</p>
-        </div>
+      <div className="resource-page-actions">
         <div className="resource-add-menu">
           <button type="button" onClick={() => setMenuOpen((open) => !open)}>
             添加服务器

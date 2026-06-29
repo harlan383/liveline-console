@@ -265,11 +265,7 @@ export function TaskHistoryPanel() {
 
   return (
     <section className="task-record-page wide">
-      <div className="product-page-header">
-        <div>
-          <h2>任务记录</h2>
-          <p>查看创建、删除、检测和其他任务。技术详情默认折叠。</p>
-        </div>
+      <div className="task-page-actions">
         <button className="secondary" disabled={loading} type="button" onClick={() => void loadTasks()}>
           刷新
         </button>
