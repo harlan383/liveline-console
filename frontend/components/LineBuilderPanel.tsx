@@ -8,6 +8,7 @@ import {
   CreateDirectNodeModal,
   CreateTransitLineModal,
 } from "@/components/ProductDemoModals";
+import { ProductIcon } from "@/components/ProductIcons";
 import {
   apiFetch,
   type NodeData,
@@ -157,12 +158,16 @@ export function LineBuilderPanel() {
               <BuilderActionCard
                 buttonLabel="添加落地服务器"
                 detail="用于创建直连节点，也可以作为中转线路的目标。"
+                icon="server"
+                tone="blue"
                 title="添加落地服务器"
                 onClick={() => setActiveModal("landing")}
               />
               <BuilderActionCard
                 buttonLabel="添加中转服务器"
                 detail="用于给已有落地节点前面加 IEPL / 香港 / 广州中转。"
+                icon="servers"
+                tone="orange"
                 title="添加中转服务器"
                 onClick={() => setActiveModal("transit")}
               />
@@ -181,12 +186,16 @@ export function LineBuilderPanel() {
               <BuilderActionCard
                 buttonLabel="新建直连节点"
                 detail="在落地服务器上安装直连节点服务，生成客户端连接地址。"
+                icon="builder"
+                tone="green"
                 title="新建直连节点"
                 onClick={() => setActiveModal("direct")}
               />
               <BuilderActionCard
                 buttonLabel="新建中转线路"
                 detail="在中转服务器上创建转发服务，将流量转发到落地节点。"
+                icon="route"
+                tone="purple"
                 title="新建中转线路"
                 onClick={() => setActiveModal("transitLine")}
               />
@@ -205,14 +214,10 @@ export function LineBuilderPanel() {
               <span className="product-badge info">实时读取</span>
             </div>
             <div className="builder-resource-metrics">
-              <span>落地服务器</span>
-              <strong>{onlineLandingServers.length} 台可用</strong>
-              <span>中转服务器</span>
-              <strong>{onlineTransitResources.length} 台可用</strong>
-              <span>直连节点</span>
-              <strong>{activeNodes.length} 个</strong>
-              <span>中转线路</span>
-              <strong>{activeRoutes.length} 条</strong>
+              <ResourceMetric icon="server" label="落地服务器" value={`${onlineLandingServers.length} 台可用`} />
+              <ResourceMetric icon="servers" label="中转服务器" value={`${onlineTransitResources.length} 台可用`} />
+              <ResourceMetric icon="builder" label="直连节点" value={`${activeNodes.length} 个`} />
+              <ResourceMetric icon="route" label="中转线路" value={`${activeRoutes.length} 条`} />
             </div>
           </section>
 
@@ -224,7 +229,7 @@ export function LineBuilderPanel() {
             <ul className="product-tip-list">
               <li>中转线路需要中转服务器和至少一个直连节点。</li>
               <li>客户连接端口必须在云安全组、云防火墙、服务器防火墙放行。</li>
-              <li>真实创建入口会在后续阶段接入，本页目前不发起 Worker 任务。</li>
+              <li>真实创建入口会在后续阶段接入，本页目前不发起后台任务。</li>
             </ul>
           </section>
 
@@ -237,6 +242,7 @@ export function LineBuilderPanel() {
               <div className="recent-create-list compact">
                 {recentCreated.map((item) => (
                   <div className="recent-create-row" key={`${item.title}-${item.detail}`}>
+                    <ProductIcon name="route" tone="blue" />
                     <strong>{item.title}</strong>
                     <span>{item.detail}</span>
                   </div>
@@ -264,17 +270,22 @@ export function LineBuilderPanel() {
 function BuilderActionCard({
   buttonLabel,
   detail,
+  icon,
   onClick,
+  tone,
   title,
 }: {
   buttonLabel: string;
   detail: string;
+  icon: string;
   onClick: () => void;
+  tone: "blue" | "green" | "orange" | "red" | "purple" | "slate";
   title: string;
 }) {
   return (
     <article className="builder-action-card">
       <div>
+        <ProductIcon name={icon} tone={tone} />
         <strong>{title}</strong>
         <p>{detail}</p>
       </div>
@@ -282,5 +293,15 @@ function BuilderActionCard({
         {buttonLabel}
       </button>
     </article>
+  );
+}
+
+function ResourceMetric({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <div className="builder-resource-metric">
+      <ProductIcon name={icon} tone="blue" />
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }

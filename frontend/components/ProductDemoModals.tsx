@@ -2,6 +2,7 @@
 
 import { type ReactNode, useMemo, useState } from "react";
 
+import { ProductIcon } from "@/components/ProductIcons";
 import { type NodeData, type TransitResourceData, type VpsServerData } from "@/lib/api";
 
 type ModalProps = {
@@ -86,19 +87,19 @@ export function AddLandingServerModal({ onClose }: ModalProps) {
       <div className="product-modal-layout">
         <form className="product-form">
           <label>
-            服务器名称
+            <span>服务器名称 <em>必填</em></span>
             <input placeholder="例如：香港落地15m" />
           </label>
           <label>
-            服务器IP
+            <span>服务器IP <em>必填</em></span>
             <input placeholder="例如：64.90.13.19" />
           </label>
           <label>
-            SSH端口
+            <span>SSH端口 <em>必填</em></span>
             <input placeholder="22" />
           </label>
           <label>
-            SSH用户
+            <span>SSH用户 <em>必填</em></span>
             <input placeholder="root" />
           </label>
           <label className="product-form-wide">
@@ -133,23 +134,23 @@ export function AddTransitServerModal({ onClose }: ModalProps) {
       <div className="product-modal-layout">
         <form className="product-form">
           <label>
-            中转名称
+            <span>中转名称 <em>必填</em></span>
             <input placeholder="例如：广州IEPL-香港出口01" />
           </label>
           <label>
-            客户连接IP
+            <span>客户连接IP <em>必填</em></span>
             <input placeholder="客户最终连接的入口 IP" />
           </label>
           <label>
-            SSH登录IP
+            <span>SSH登录IP <em>必填</em></span>
             <input placeholder="用于安装助手的管理 IP" />
           </label>
           <label>
-            SSH端口
+            <span>SSH端口 <em>必填</em></span>
             <input placeholder="22" />
           </label>
           <label>
-            SSH用户
+            <span>SSH用户 <em>必填</em></span>
             <input placeholder="root" />
           </label>
           <label>
@@ -233,9 +234,11 @@ export function CreateTransitLineModal({
                   type="button"
                   onClick={() => setSelectedResourceId(resource.id)}
                 >
+                  <ProductIcon name="servers" tone="orange" />
                   <strong>{resource.name}</strong>
                   <span>{endpoint(resource.entry_host, resource.entry_port)}</span>
                   <small>{resource.entry_region ?? "入口地区未填写"} → {resource.exit_region ?? "出口地区未填写"}</small>
+                  <i aria-hidden="true" />
                 </button>
               ))
             ) : (
@@ -253,9 +256,11 @@ export function CreateTransitLineModal({
                   type="button"
                   onClick={() => setSelectedNodeId(node.id)}
                 >
+                  <ProductIcon name="builder" tone="green" />
                   <strong>{node.node_name}</strong>
                   <span>{endpoint(node.vps_ip, node.port)}</span>
                   <small>{node.reality_server_name ?? "SNI 未返回"}</small>
+                  <i aria-hidden="true" />
                 </button>
               ))
             ) : (
@@ -272,11 +277,12 @@ export function CreateTransitLineModal({
         <aside className="transit-line-preview">
           <strong>线路预览</strong>
           <div className="preview-chain">
-            <span>本地 / OBS</span>
-            <span>{endpoint(selectedResource?.entry_host, Number(port) || null)}</span>
-            <span>{endpoint(selectedNode?.vps_ip, selectedNode?.port)}</span>
-            <span>Facebook / TikTok</span>
+            <span><ProductIcon name="dashboard" tone="slate" />本地 / OBS</span>
+            <span><ProductIcon name="servers" tone="orange" />中转服务器：{endpoint(selectedResource?.entry_host, Number(port) || null)}</span>
+            <span><ProductIcon name="builder" tone="green" />落地节点：{endpoint(selectedNode?.vps_ip, selectedNode?.port)}</span>
+            <span><ProductIcon name="route" tone="purple" />Facebook / TikTok</span>
           </div>
+          <strong>请确认端口已放行 <em>必填</em></strong>
           <div className="port-confirm-list">
             <label>
               <input
@@ -313,8 +319,8 @@ export function CreateTransitLineModal({
         <button className="secondary" type="button" onClick={() => setStep((current) => Math.min(current + 1, transitLineSteps.length - 1))}>
           下一步
         </button>
-        <button disabled type="button">
-          后续阶段接入真实创建
+        <button disabled={step < transitLineSteps.length - 2} type="button" onClick={() => setStep(transitLineSteps.length - 1)}>
+          创建中转线路（演示）
         </button>
       </div>
     </ModalShell>
@@ -385,7 +391,7 @@ export function CreateDirectNodeModal({
         </form>
         <InfoCard title="创建前确认">
           <li>直连节点会使用落地服务器作为客户入口。</li>
-          <li>真实创建会在后续阶段接入，本弹窗不会发起 Worker 任务。</li>
+          <li>真实创建会在后续阶段接入，本弹窗不会发起后台任务。</li>
           <li>端口变更前仍需人工确认云安全组、云防火墙和服务器防火墙。</li>
         </InfoCard>
       </div>
@@ -397,7 +403,7 @@ export function CreateDirectNodeModal({
           下一步
         </button>
         <button disabled type="button">
-          后续阶段接入真实创建
+          创建直连节点（演示）
         </button>
       </div>
     </ModalShell>

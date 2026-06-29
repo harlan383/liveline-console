@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { PlatformIcon, ProductIcon } from "@/components/ProductIcons";
 import {
   apiFetch,
   type NodeData,
@@ -225,9 +226,9 @@ export function CustomerLinesPanel() {
       </div>
 
       <div className="product-stat-grid three">
-        <LineStat title="正常" value={normalCount} detail="运行状态正常的线路" tone="success" />
-        <LineStat title="风险" value={riskCount} detail="需要关注或缺少配置的线路" tone="warning" />
-        <LineStat title="异常" value={abnormalCount} detail="失败或不可用线路" tone="danger" />
+        <LineStat icon="lines" title="正常" value={normalCount} detail="运行状态正常的线路" tone="success" />
+        <LineStat icon="alert" title="风险" value={riskCount} detail="需要关注或缺少配置的线路" tone="warning" />
+        <LineStat icon="alert" title="异常" value={abnormalCount} detail="失败或不可用线路" tone="danger" />
       </div>
 
       <div className="product-section-card">
@@ -268,7 +269,7 @@ export function CustomerLinesPanel() {
               <div className="product-table-row" key={line.id}>
                 <strong>{line.name}</strong>
                 <span>{line.customer}</span>
-                <span>{line.platform}</span>
+                <span className="platform-cell"><PlatformIcon platform={line.platform} />{line.platform}</span>
                 <span>{line.lineRole}</span>
                 <span className={`product-badge ${line.health === "normal" ? "success" : line.health === "risk" ? "warning" : "danger"}`}>
                   {line.statusLabel}
@@ -283,6 +284,12 @@ export function CustomerLinesPanel() {
           ) : (
             <div className="product-table-empty">暂无匹配线路。可调整筛选条件，或到“线路搭建”查看下一步入口。</div>
           )}
+        </div>
+        <div className="product-pagination">
+          <span>共 {filteredLines.length} 条</span>
+          <button className="secondary" disabled type="button">上一页</button>
+          <button type="button">1</button>
+          <button className="secondary" disabled type="button">下一页</button>
         </div>
       </div>
 
@@ -325,17 +332,20 @@ export function CustomerLinesPanel() {
 
 function LineStat({
   detail,
+  icon,
   title,
   tone,
   value,
 }: {
   detail: string;
+  icon: string;
   title: string;
   tone: "success" | "warning" | "danger";
   value: number;
 }) {
   return (
     <article className={`product-stat-card ${tone}`}>
+      <ProductIcon name={icon} tone={tone === "success" ? "green" : tone === "warning" ? "orange" : "red"} />
       <div>
         <span>{title}</span>
         <strong>{value}</strong>
