@@ -8474,3 +8474,663 @@ select {
     min-height: 124px;
   }
 }
+
+/* Stage 3.4.7 shell density and demo-safety polish */
+.product-console {
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+
+.product-sidebar {
+  gap: 12px;
+  padding: 18px 10px 14px;
+}
+
+.product-brand {
+  gap: 10px;
+  min-height: 48px;
+  padding: 4px 8px 14px;
+}
+
+.brand-mark,
+.brand-mark svg {
+  height: 32px;
+  width: 32px;
+}
+
+.product-brand .brand {
+  font-size: 18px;
+  line-height: 1.08;
+}
+
+.product-nav {
+  gap: 5px;
+}
+
+.product-nav-item {
+  border-radius: 10px;
+  font-size: 14px;
+  gap: 9px;
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.product-nav-item .nav-icon,
+.product-nav-item .product-icon {
+  height: 19px;
+  width: 19px;
+}
+
+.sidebar-health-card {
+  border-radius: 12px;
+  gap: 8px;
+  min-height: 60px;
+  padding: 10px;
+}
+
+.sidebar-health-card strong {
+  font-size: 13px;
+}
+
+.sidebar-health-card small {
+  font-size: 12px;
+}
+
+.sidebar-health-card .product-icon {
+  height: 30px;
+  width: 30px;
+}
+
+.product-topbar {
+  min-height: 68px;
+  padding: 0 24px;
+}
+
+.product-topbar h1 {
+  font-size: 26px;
+}
+
+.product-grid {
+  gap: 14px;
+  padding: 18px 22px 34px;
+}
+
+.product-dashboard,
+.line-builder-product,
+.my-lines-page,
+.server-resources-page,
+.task-record-page,
+.settings-product {
+  gap: 14px;
+}
+
+.product-section-card {
+  border-radius: 13px;
+  padding: 16px;
+}
+
+.product-section-head h3,
+.builder-stage-title h3 {
+  font-size: 20px;
+}
+
+.product-dashboard-layout {
+  gap: 14px;
+  grid-template-columns: minmax(520px, 1.08fr) minmax(360px, 0.92fr);
+}
+
+.product-stat-grid {
+  gap: 14px;
+}
+
+.product-stat-card {
+  border-radius: 13px;
+  gap: 12px;
+  grid-template-columns: 62px minmax(0, 1fr);
+  min-height: 122px;
+  padding: 18px;
+}
+
+.product-stat-card .product-icon {
+  height: 60px;
+  width: 60px;
+}
+
+.product-stat-card .product-icon svg {
+  height: 30px;
+  width: 30px;
+}
+
+.product-stat-card span {
+  font-size: 17px;
+}
+
+.product-stat-card strong {
+  font-size: 34px;
+}
+
+.product-stat-card p,
+.product-stat-card .stat-footnote {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.attention-list {
+  gap: 10px;
+}
+
+.attention-item {
+  border-radius: 11px;
+  min-height: 76px;
+  padding: 12px 14px;
+}
+
+.attention-item strong {
+  display: -webkit-box;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.attention-item small {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.quick-action-grid {
+  gap: 12px;
+}
+
+.quick-action-grid button {
+  border-radius: 12px;
+  min-height: 78px;
+  padding: 12px 13px;
+}
+
+.quick-action-grid button .product-icon {
+  height: 42px;
+  width: 42px;
+}
+
+.quick-action-grid button .product-icon svg {
+  height: 22px;
+  width: 22px;
+}
+
+.quick-action-grid button strong {
+  font-size: 15px;
+}
+
+.quick-action-grid button small {
+  font-size: 12px;
+}
+
+.recent-create-row {
+  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  min-height: 48px;
+  padding: 8px 0;
+}
+
+.recent-create-row .product-icon {
+  height: 31px;
+  width: 31px;
+}
+
+.recent-create-row strong,
+.recent-create-row small {
+  font-size: 12.5px;
+}
+
+.product-tip-list {
+  padding: 13px 16px 13px 30px;
+}
+
+.product-tip-list li {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.builder-product-layout {
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 360px;
+}
+
+.builder-flow {
+  gap: 14px;
+}
+
+.builder-stage-card {
+  border-radius: 13px;
+  gap: 16px;
+  padding: 18px;
+}
+
+.builder-action-grid {
+  gap: 18px;
+}
+
+.builder-action-card {
+  border-radius: 13px;
+  min-height: 200px;
+  padding: 18px;
+}
+
+.builder-action-card .product-icon {
+  height: 72px;
+  width: 72px;
+}
+
+.builder-action-card .product-icon svg {
+  height: 34px;
+  width: 34px;
+}
+
+.builder-action-card strong {
+  font-size: 18px;
+}
+
+.builder-action-card p {
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 240px;
+}
+
+.builder-action-card button {
+  font-size: 15px;
+  min-height: 40px !important;
+  min-width: 170px;
+  padding: 9px 16px !important;
+}
+
+.builder-aside {
+  gap: 14px;
+}
+
+.builder-resource-metric {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  min-height: 52px;
+  padding: 9px 12px;
+}
+
+.builder-resource-metric .product-icon {
+  height: 32px;
+  width: 32px;
+}
+
+.builder-resource-metric span,
+.builder-resource-metric strong {
+  font-size: 13.5px;
+}
+
+.product-modal {
+  border-radius: 18px;
+  max-height: min(88vh, 780px);
+}
+
+.product-modal-wide {
+  width: min(980px, calc(100vw - 52px));
+}
+
+.product-modal .modal-header {
+  padding: 16px 24px;
+}
+
+.product-modal .modal-header h3 {
+  font-size: 22px;
+}
+
+button.modal-close-button {
+  font-size: 28px;
+  height: 36px;
+  width: 36px;
+}
+
+.product-stepper {
+  margin: 18px 44px 20px;
+}
+
+.product-step span {
+  height: 32px;
+  margin-bottom: 6px;
+  width: 32px;
+}
+
+.product-step strong {
+  font-size: 13px;
+}
+
+.product-step small {
+  font-size: 11px;
+}
+
+.product-modal-layout,
+.transit-line-wizard {
+  gap: 22px;
+  grid-template-columns: minmax(0, 1fr) 292px;
+  padding: 0 24px;
+}
+
+.product-form {
+  gap: 12px 16px;
+}
+
+.product-form label,
+.product-port-field {
+  gap: 5px 12px;
+  grid-template-columns: 128px minmax(0, 1fr);
+}
+
+.product-form label > span,
+.product-form label,
+.product-port-field,
+.required-hint,
+.form-group-title {
+  font-size: 13px;
+}
+
+.product-form label > small,
+.product-side-note li,
+.transit-line-preview p {
+  font-size: 12px;
+}
+
+.product-form input,
+.product-form textarea,
+.product-form select,
+.product-port-field input {
+  min-height: 40px;
+}
+
+.product-form textarea {
+  min-height: 66px;
+}
+
+.product-side-note,
+.transit-line-preview {
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.product-side-note strong,
+.transit-line-preview > strong {
+  font-size: 16px;
+}
+
+.wizard-select-card {
+  min-height: 62px;
+  padding: 10px 12px;
+}
+
+.port-confirm-list {
+  gap: 9px;
+}
+
+.product-modal .modal-actions {
+  margin-top: 14px;
+  padding: 14px 24px;
+}
+
+.product-modal .modal-actions button {
+  min-height: 40px;
+  min-width: 104px;
+}
+
+.demo-safety-note {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 12px 24px 0;
+}
+
+.my-lines-page .product-stat-card {
+  min-height: 114px;
+}
+
+.product-filter-bar {
+  padding-bottom: 12px;
+}
+
+.filter-tabs {
+  gap: 20px;
+}
+
+.filter-tabs button {
+  font-size: 14px;
+  padding: 7px 0;
+}
+
+.product-filter-bar input,
+.task-filter-panel > input {
+  min-height: 39px;
+}
+
+.product-table-row {
+  font-size: 13.5px;
+}
+
+.my-lines-table .product-table-row,
+.task-product-table .product-table-row {
+  font-size: 13.5px;
+  min-height: 55px;
+}
+
+.my-lines-table .product-table-head,
+.task-product-table .product-table-head {
+  min-height: 46px;
+}
+
+.my-lines-table .product-table-row {
+  grid-template-columns:
+    minmax(180px, 1.2fr)
+    minmax(86px, 0.52fr)
+    minmax(124px, 0.68fr)
+    minmax(108px, 0.58fr)
+    minmax(86px, 0.48fr)
+    minmax(180px, 1fr)
+    minmax(86px, 0.54fr)
+    minmax(96px, 0.46fr);
+}
+
+.product-badge {
+  font-size: 12px;
+  min-height: 27px;
+  padding: 5px 10px;
+}
+
+.product-pagination {
+  margin-top: 14px;
+}
+
+.product-pagination button {
+  min-height: 36px;
+  min-width: 36px;
+}
+
+.resource-page-actions {
+  min-height: 40px;
+}
+
+.resource-add-menu > button,
+.task-page-actions > button {
+  min-height: 38px;
+  padding: 0 16px;
+}
+
+.resource-management-grid {
+  gap: 16px;
+}
+
+.resource-management-card {
+  border-radius: 13px;
+  gap: 12px;
+  min-height: 240px;
+  padding: 17px;
+}
+
+.resource-card-top {
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+
+.resource-region-icon {
+  font-size: 18px;
+  height: 40px;
+  width: 40px;
+}
+
+.resource-card-top strong {
+  font-size: 17px;
+}
+
+.resource-facts {
+  gap: 9px 14px;
+  padding-top: 11px;
+}
+
+.resource-facts span,
+.resource-facts strong {
+  font-size: 13px;
+}
+
+.resource-card-actions {
+  gap: 10px;
+}
+
+.resource-card-actions button {
+  min-height: 38px;
+}
+
+.task-filter-panel {
+  gap: 12px;
+  padding-bottom: 12px;
+}
+
+.task-product-table .product-table-row {
+  grid-template-columns:
+    minmax(142px, 0.8fr)
+    minmax(168px, 0.98fr)
+    minmax(144px, 0.76fr)
+    minmax(104px, 0.5fr)
+    minmax(230px, 1.28fr)
+    minmax(92px, 0.44fr);
+}
+
+.product-empty-state.inline {
+  min-height: 96px;
+  padding: 18px;
+}
+
+.settings-product-layout {
+  gap: 14px;
+  grid-template-columns: 214px minmax(0, 1fr);
+}
+
+.settings-menu {
+  border-radius: 13px;
+  gap: 8px;
+  min-height: 420px;
+  padding: 16px 12px;
+}
+
+.settings-menu::before {
+  font-size: 18px;
+  margin: 2px 8px 2px;
+}
+
+.settings-menu button {
+  font-size: 14px;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.settings-form-card {
+  gap: 16px;
+  padding: 18px;
+}
+
+.settings-form-card h3 {
+  font-size: 19px;
+}
+
+.settings-form-grid {
+  gap: 14px 20px;
+  grid-template-columns: 188px minmax(0, 320px) minmax(220px, 1fr);
+}
+
+.settings-form-grid label:not(.settings-check) {
+  grid-template-columns: 172px minmax(0, 1fr);
+}
+
+.settings-form-grid label,
+.settings-toggle-list label {
+  font-size: 13px;
+}
+
+.settings-form-grid label small,
+.settings-toggle-list small {
+  font-size: 12px;
+}
+
+.settings-toggle-list {
+  gap: 11px;
+}
+
+.product-switch > span {
+  height: 25px;
+  width: 46px;
+}
+
+.product-switch > span::after {
+  height: 19px;
+  width: 19px;
+}
+
+.product-switch input:checked + span::after {
+  transform: translateX(21px);
+}
+
+button {
+  font-size: 14px;
+  min-height: 38px;
+  padding: 8px 14px;
+}
+
+button.secondary {
+  min-height: 38px;
+}
+
+input,
+textarea,
+select {
+  font-size: 14px;
+}
+
+@media (max-width: 1440px) {
+  .product-console {
+    grid-template-columns: 204px minmax(0, 1fr);
+  }
+
+  .product-grid {
+    padding: 18px 20px 32px;
+  }
+
+  .product-dashboard-layout,
+  .builder-product-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1280px) {
+  .product-console {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .product-sidebar {
+    padding: 16px 9px 12px;
+  }
+
+  .product-stat-card {
+    min-height: 116px;
+  }
+}
