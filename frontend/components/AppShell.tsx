@@ -2,13 +2,12 @@
 
 import { useEffect, useState } from "react";
 
+import { AdvancedDebugPanel } from "@/components/AdvancedDebugPanel";
+import { CustomerLinesPanel } from "@/components/CustomerLinesPanel";
+import { LineBuilderPanel } from "@/components/LineBuilderPanel";
 import { LoginScreen } from "@/components/LoginScreen";
-import { ServerManagementPanel } from "@/components/ServerManagementPanel";
-import { SystemStatus } from "@/components/SystemStatus";
+import { ServerResourcesPanel } from "@/components/ServerResourcesPanel";
 import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
-import { TransitRoutesPanel } from "@/components/TransitRoutesPanel";
-import { TransitServersPanelWithWorkerFolding } from "@/components/TransitServersPanelWithWorkerFolding";
-import { TransitTopologyPreviewPanel } from "@/components/TransitTopologyPreviewPanel";
 import {
   AUTH_EXPIRED_EVENT,
   apiFetch,
@@ -22,7 +21,7 @@ import {
   type VpsServerListResult,
 } from "@/lib/api";
 
-type PanelId = "dashboard" | "transitRoutes" | "servers" | "transitLinks" | "tasks" | "diagnostics" | "settings";
+type PanelId = "dashboard" | "lineBuilder" | "customerLines" | "serverResources" | "tasks" | "settings" | "advancedDebug";
 
 const panels: Array<{
   id: PanelId;
@@ -32,37 +31,37 @@ const panels: Array<{
   {
     id: "dashboard",
     label: "总览",
-    title: "搭建网络总览",
+    title: "线路总览",
   },
   {
-    id: "transitRoutes",
-    label: "中转服务器",
-    title: "中转服务器",
+    id: "lineBuilder",
+    label: "线路搭建",
+    title: "线路搭建",
   },
   {
-    id: "servers",
-    label: "落地服务器",
-    title: "落地服务器",
+    id: "customerLines",
+    label: "客户线路",
+    title: "客户线路",
   },
   {
-    id: "transitLinks",
-    label: "中转链路",
-    title: "中转链路",
+    id: "serverResources",
+    label: "服务器资源",
+    title: "服务器资源",
   },
   {
     id: "tasks",
-    label: "任务中心",
-    title: "任务中心",
-  },
-  {
-    id: "diagnostics",
-    label: "诊断工具",
-    title: "诊断工具",
+    label: "任务记录",
+    title: "任务记录",
   },
   {
     id: "settings",
     label: "设置",
     title: "设置",
+  },
+  {
+    id: "advancedDebug",
+    label: "高级调试",
+    title: "高级调试",
   },
 ];
 
@@ -85,7 +84,7 @@ export function AppShell() {
   const [currentAdmin, setCurrentAdmin] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
-  const activePanelMeta = panels.find((panel) => panel.id === activePanel) ?? panels[1];
+  const activePanelMeta = panels.find((panel) => panel.id === activePanel) ?? panels[0];
 
   useEffect(() => {
     async function checkAuth() {
@@ -160,7 +159,7 @@ export function AppShell() {
           {panels.map((panel) => (
             <button
               aria-current={activePanel === panel.id ? "page" : undefined}
-              className={`nav-item${activePanel === panel.id ? " active" : ""}`}
+              className={`nav-item${activePanel === panel.id ? " active" : ""}${panel.id === "advancedDebug" ? " subdued" : ""}`}
               key={panel.id}
               type="button"
               onClick={() => setActivePanel(panel.id)}
@@ -186,17 +185,12 @@ export function AppShell() {
 
         <div className="grid">
           {activePanel === "dashboard" ? <DashboardPanel onNavigate={setActivePanel} /> : null}
-          {activePanel === "servers" ? <ServerManagementPanel /> : null}
-          {activePanel === "transitRoutes" ? <TransitServersPanelWithWorkerFolding /> : null}
-          {activePanel === "transitLinks" ? <TransitRoutesPanel /> : null}
+          {activePanel === "lineBuilder" ? <LineBuilderPanel /> : null}
+          {activePanel === "customerLines" ? <CustomerLinesPanel /> : null}
+          {activePanel === "serverResources" ? <ServerResourcesPanel /> : null}
           {activePanel === "tasks" ? <TaskHistoryPanel /> : null}
-          {activePanel === "diagnostics" ? (
-            <>
-              <SystemStatus />
-              <TransitTopologyPreviewPanel />
-            </>
-          ) : null}
           {activePanel === "settings" ? <SettingsPanel /> : null}
+          {activePanel === "advancedDebug" ? <AdvancedDebugPanel /> : null}
         </div>
       </section>
     </main>
@@ -205,11 +199,11 @@ export function AppShell() {
 
 function displayDashboardStatus(status: string | null | undefined) {
   const labels: Record<string, string> = {
-    active: "active",
+    active: "可用",
     online: "在线",
     stale: "心跳过期 / 离线",
-    worker_online: "Worker 在线",
-    pending_worker: "等待 Worker",
+    worker_online: "助手在线",
+    pending_worker: "等待助手",
     disabled: "已停用",
     failed: "失败",
     deleted: "已删除",
@@ -234,8 +228,8 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
     directNodeEntry: "未返回",
     directNodeConfig: "未返回",
     transitServers: "-",
-    transitWorkerStatus: "读取中",
-    transitWorkerDetail: "正在读取中转 Worker。",
+    transitHelperStatus: "读取中",
+    transitHelperDetail: "正在读取中转助手。",
     transitRoute: "读取中",
     transitRouteEntry: "未返回",
     transitRouteTarget: "未返回",
@@ -290,7 +284,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
       noticeItems.push("还没有直连节点。");
     }
     if (!onlineTransitServers.length) {
-      noticeItems.push("没有在线的中转 Worker。");
+      noticeItems.push("没有在线的中转助手。");
     }
     if (!activeRoutes.length) {
       noticeItems.push("还没有 active 中转链路。");
@@ -299,7 +293,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
       noticeItems.push("本地 backend / database / redis / worker 健康状态需要检查。");
     }
     if (routeShareLinkWritten) {
-      noticeItems.push("检测到 transit_routes.share_link 已写入，请确认是否符合当前阶段边界。");
+      noticeItems.push("检测到中转线路已有保存的客户端链接，请确认是否符合当前使用预期。");
     }
     if (!noticeItems.length) {
       noticeItems.push("当前网络搭建摘要正常；如需继续，优先做长稳观察或按需复制测试配置。");
@@ -309,25 +303,25 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
       landingServers: `${landingServers.length} 台`,
       landingStatus: landingServers.length ? "已接入" : "未接入",
       landingDetail: landingServers.length
-        ? `Worker 在线 ${landingServers.filter((server) => server.worker_online).length} 台；用于直连节点和中转目标。`
+        ? `服务器助手在线 ${landingServers.filter((server) => server.worker_online).length} 台；用于直连节点和中转目标。`
         : "请先添加落地服务器。",
       directNode: primaryNode ? "已创建" : "未创建",
       directNodeDetail: primaryNode
         ? `${primaryNode.node_name} / ${displayDashboardStatus(primaryNode.status)}`
-        : "暂无直连 Reality 节点。",
+        : "暂无直连直播节点。",
       directNodeEntry: primaryNode ? entryWithPort(primaryNode.vps_ip, primaryNode.port) : "未返回",
       directNodeConfig: primaryNodeHasShareLink ? "可导出配置" : "未生成配置",
       transitServers: `${transitServers.length} 台`,
-      transitWorkerStatus: onlineTransitServers.length ? "在线" : "离线 / 未接入",
-      transitWorkerDetail: primaryTransitServer
+      transitHelperStatus: onlineTransitServers.length ? "在线" : "离线 / 未接入",
+      transitHelperDetail: primaryTransitServer
         ? `${primaryTransitServer.name} / ${primaryTransitServer.worker_version ?? "版本未返回"}`
         : "暂无中转服务器。",
       transitRoute: primaryRoute ? displayDashboardStatus(primaryRoute.status) : "未创建",
       transitRouteEntry: primaryRoute ? entryWithPort(routeTransitResource?.entry_host, primaryRoute.listen_port) : "未返回",
       transitRouteTarget: primaryRoute ? entryWithPort(primaryRoute.target_host, primaryRoute.target_port) : "未返回",
       transitRouteDetail: primaryRoute
-        ? `${primaryRoute.name} / ${primaryRoute.forwarding_method} / cutover 未切换`
-        : "暂无 active 中转链路。",
+        ? `${primaryRoute.name} / ${displayForwardingMethod(primaryRoute.forwarding_method)}`
+        : "暂无可用中转线路。",
       health: healthOk ? "正常" : "需检查",
       recentTask: latestTask ? `${latestTask.task_type} / ${taskStatusLabel(latestTask.status)}` : "无任务",
       noticeItems,
@@ -366,10 +360,10 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           value={summary.directNode}
         />
         <OverviewStatusCard
-          detail={summary.transitWorkerDetail}
+          detail={summary.transitHelperDetail}
           label="中转服务器"
-          status={summary.transitWorkerStatus}
-          tone={summary.transitWorkerStatus === "在线" ? "success" : "warning"}
+          status={summary.transitHelperStatus}
+          tone={summary.transitHelperStatus === "在线" ? "success" : "warning"}
           value={summary.transitServers}
         />
         <OverviewStatusCard
@@ -427,14 +421,14 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
             </div>
           </div>
           <div className="overview-next-actions">
-            <button className="secondary" type="button" onClick={() => onNavigate("servers")}>
-              去落地服务器
+            <button className="secondary" type="button" onClick={() => onNavigate("serverResources")}>
+              去服务器资源
             </button>
-            <button className="secondary" type="button" onClick={() => onNavigate("transitRoutes")}>
-              去中转服务器
+            <button className="secondary" type="button" onClick={() => onNavigate("lineBuilder")}>
+              去线路搭建
             </button>
-            <button className="secondary" type="button" onClick={() => onNavigate("transitLinks")}>
-              去中转链路
+            <button className="secondary" type="button" onClick={() => onNavigate("customerLines")}>
+              去客户线路
             </button>
           </div>
         </section>
@@ -468,6 +462,16 @@ function OverviewStatusCard({
   );
 }
 
+function displayForwardingMethod(method: string | null | undefined) {
+  const labels: Record<string, string> = {
+    haproxy_tcp: "稳定转发服务",
+    haproxy: "稳定转发服务",
+    socat: "稳定转发服务",
+    gost: "稳定转发服务",
+  };
+  return method ? labels[method] ?? "转发服务" : "未返回";
+}
+
 function SettingsPanel() {
   return (
     <section className="panel wide settings-panel">
@@ -490,8 +494,8 @@ function SettingsPanel() {
           <span>新增或变更端口前必须检查云服务器安全组 / 云防火墙 / 服务器防火墙。</span>
         </div>
         <div className="settings-card">
-          <strong>正式切换</strong>
-          <span>当前阶段不是正式 cutover；修改 node.share_link 必须单独审批。</span>
+          <strong>正式线路变更</strong>
+          <span>正式线路变更必须单独审批；客户端链接不会在普通页面被自动覆盖。</span>
         </div>
       </div>
     </section>
