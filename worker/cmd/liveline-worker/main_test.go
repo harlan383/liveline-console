@@ -22,6 +22,16 @@ import (
 const testTransitResourceID = "current-transit-resource"
 const testTransitWorkerID = "current-transit-worker"
 const testTransitLandingNodeID = "current-landing-node"
+
+func stringSliceContains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
 const testTransitInterfaceName = "eth0"
 
 func TestParseDefaultRoute(t *testing.T) {
@@ -189,7 +199,7 @@ func TestBuildBBREnableDryRunResultPlansModuleLoadWithoutExecution(t *testing.T)
 		"current_congestion_control_is_bbr": false,
 	}
 
-	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "insmod /lib/modules/tcp_bbr.ko", "", true, true)
+	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "insmod /lib/modules/tcp_bbr.ko", "", true, true, true, true, "")
 
 	if stringResultValue(result["status"]) != "succeeded" {
 		t.Fatalf("status = %#v, want succeeded", result["status"])
@@ -209,11 +219,21 @@ func TestBuildBBREnableDryRunResultPlansModuleLoadWithoutExecution(t *testing.T)
 		t.Fatalf("first planned action executed = true, want false")
 	}
 	checks := result["dry_run_checks"].([]any)
+	writableCheckFound := false
 	for _, item := range checks {
 		check := item.(map[string]any)
+		if stringResultValue(check["name"]) == "sysctl_config_file_writable" {
+			writableCheckFound = true
+			if stringResultValue(check["status"]) != "passed" {
+				t.Fatalf("sysctl_config_file_writable status = %#v, want passed", check["status"])
+			}
+		}
 		if boolResultValue(check["executed_real_change"]) {
 			t.Fatalf("dry-run check executed a real change: %#v", check)
 		}
+	}
+	if !writableCheckFound {
+		t.Fatalf("dry_run_checks = %#v, want sysctl_config_file_writable", checks)
 	}
 }
 
@@ -227,7 +247,7 @@ func TestBuildBBREnableDryRunResultBlocksWhenModuleUnavailable(t *testing.T) {
 		"current_congestion_control_is_bbr": false,
 	}
 
-	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "", "", true, true)
+	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "", "", true, true, true, true, "")
 
 	if stringResultValue(result["status"]) != "blocked" {
 		t.Fatalf("status = %#v, want blocked", result["status"])
@@ -246,7 +266,7 @@ func TestBuildBBREnableDryRunResultAlreadyEnabledDoesNotBlock(t *testing.T) {
 		"current_congestion_control_is_bbr": true,
 	}
 
-	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "", "command_not_found", false, false)
+	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "", "command_not_found", false, false, false, false, "missing")
 
 	if stringResultValue(result["status"]) != "succeeded" {
 		t.Fatalf("status = %#v, want succeeded for already enabled BBR", result["status"])
@@ -261,6 +281,70 @@ func TestBuildBBREnableDryRunResultAlreadyEnabledDoesNotBlock(t *testing.T) {
 	reasons := result["blocked_reasons"].([]string)
 	if len(reasons) != 0 {
 		t.Fatalf("blocked_reasons = %#v, want empty when already enabled", reasons)
+	}
+}
+
+func TestBuildBBREnableDryRunResultBlocksWhenSysctlConfigMissing(t *testing.T) {
+	cfg := config{Role: "landing", InterfaceName: "ens17"}
+	bbr := map[string]any{
+		"available_congestion_control":      "reno cubic",
+		"current_congestion_control":        "cubic",
+		"module_available":                  true,
+		"available_contains_bbr":            false,
+		"current_congestion_control_is_bbr": false,
+	}
+
+	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "", "", true, true, false, false, "missing")
+
+	if stringResultValue(result["status"]) != "blocked" {
+		t.Fatalf("status = %#v, want blocked", result["status"])
+	}
+	reasons := result["blocked_reasons"].([]string)
+	if !stringSliceContains(reasons, "sysctl_config_file_missing") {
+		t.Fatalf("blocked_reasons = %#v, want sysctl_config_file_missing", reasons)
+	}
+}
+
+func TestBuildBBREnableDryRunResultBlocksWhenSysctlConfigNotWritable(t *testing.T) {
+	cfg := config{Role: "landing", InterfaceName: "ens17"}
+	bbr := map[string]any{
+		"available_congestion_control":      "reno cubic",
+		"current_congestion_control":        "cubic",
+		"module_available":                  true,
+		"available_contains_bbr":            false,
+		"current_congestion_control_is_bbr": false,
+	}
+
+	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "", "", true, true, true, false, "permission denied")
+
+	if stringResultValue(result["status"]) != "blocked" {
+		t.Fatalf("status = %#v, want blocked", result["status"])
+	}
+	reasons := result["blocked_reasons"].([]string)
+	if !stringSliceContains(reasons, "sysctl_config_file_not_writable") {
+		t.Fatalf("blocked_reasons = %#v, want sysctl_config_file_not_writable", reasons)
+	}
+}
+
+func TestCheckWritableExistingFileDoesNotModifyContents(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "99-liveline-bbr.conf")
+	original := []byte("original\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	exists, writable, detail := checkWritableExistingFile(path)
+
+	if !exists || !writable || detail != "" {
+		t.Fatalf("exists=%v writable=%v detail=%q, want true true empty", exists, writable, detail)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != string(original) {
+		t.Fatalf("file body changed to %q", string(body))
 	}
 }
 

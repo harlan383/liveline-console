@@ -173,7 +173,7 @@ class BbrEnablePlanTests(unittest.TestCase):
             server_id=SERVER_ID,
             role="landing",
             status="online",
-            worker_version="0.1.39-stage-3.3.204-bbr-enable-dry-run",
+            worker_version="0.1.41-stage-3.3.206-bbr-sysctl-sandbox-fix",
             worker_secret_hash="hash",
         )
         command = WorkerCommand(id="command-1", worker_id=worker.id, command_type=BBR_ENABLE_DRY_RUN_COMMAND)
@@ -307,7 +307,7 @@ class BbrEnablePlanTests(unittest.TestCase):
             server_id=SERVER_ID,
             role="landing",
             status="online",
-            worker_version="0.1.40-stage-3.3.205-bbr-real-enable",
+            worker_version="0.1.41-stage-3.3.206-bbr-sysctl-sandbox-fix",
             worker_secret_hash="hash",
         )
         dry_run = WorkerCommand(
@@ -317,7 +317,11 @@ class BbrEnablePlanTests(unittest.TestCase):
             server_id=SERVER_ID,
             command_type=BBR_ENABLE_DRY_RUN_COMMAND,
             status="succeeded",
-            result_json={"status": "succeeded", "blocked_reasons": []},
+            result_json={
+                "status": "succeeded",
+                "blocked_reasons": [],
+                "dry_run_checks": [{"name": "sysctl_config_file_writable", "status": "passed"}],
+            },
             payload_json={"confirm_dry_run_only": True},
         )
         command = WorkerCommand(id="command-1", worker_id=worker.id, command_type=BBR_ENABLE_REAL_EXECUTION_COMMAND)
@@ -345,6 +349,31 @@ class BbrEnablePlanTests(unittest.TestCase):
         self.assertTrue(payload["confirm_enable_bbr_real_execution"])
         self.assertTrue(payload["confirm_reload_sysctl"])
         self.assertNotIn("command", payload)
+
+    def test_real_execution_command_rejects_old_dry_run_without_sysctl_writable_check(self):
+        plan = {
+            "ready": True,
+            "already_enabled": False,
+            "server_id": SERVER_ID,
+            "latest_preflight_id": "preflight-1",
+            "recommendation": "module_available_needs_load_approval",
+        }
+        dry_run = WorkerCommand(
+            id="dry-run-1",
+            worker_id="worker-1",
+            server_type="landing",
+            server_id=SERVER_ID,
+            command_type=BBR_ENABLE_DRY_RUN_COMMAND,
+            status="succeeded",
+            result_json={"status": "succeeded", "blocked_reasons": []},
+            payload_json={"confirm_dry_run_only": True},
+        )
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with patch("app.services.bbr_enable_plan.latest_bbr_enable_dry_run_command", return_value=dry_run):
+                with self.assertRaises(BbrEnablePlanError) as context:
+                    create_bbr_enable_real_execution_command(FakeDb(), SERVER_ID, BBR_ENABLE_REAL_EXECUTION_CONFIRMATION)
+
+        self.assertEqual(context.exception.code, "BBR_ENABLE_DRY_RUN_REQUIRED")
 
 
 if __name__ == "__main__":

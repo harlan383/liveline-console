@@ -338,6 +338,18 @@ def build_bbr_enable_real_execution_payload(plan: dict, dry_run_command: WorkerC
     return payload
 
 
+def _dry_run_check_passed(result_json: dict[str, Any], check_name: str) -> bool:
+    checks = result_json.get("dry_run_checks")
+    if not isinstance(checks, list):
+        return False
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        if check.get("name") == check_name and check.get("status") == "passed":
+            return True
+    return False
+
+
 def _validate_latest_bbr_enable_dry_run(dry_run: WorkerCommand | None, server_id: str) -> WorkerCommand:
     if not dry_run:
         raise BbrEnablePlanError(400, "BBR_ENABLE_DRY_RUN_REQUIRED", "需要先完成 BBR dry-run。")
@@ -358,10 +370,28 @@ def _validate_latest_bbr_enable_dry_run(dry_run: WorkerCommand | None, server_id
         )
     blocked_reasons = result_json.get("blocked_reasons")
     if isinstance(blocked_reasons, list) and blocked_reasons:
+        if "sysctl_config_file_missing" in blocked_reasons:
+            raise BbrEnablePlanError(
+                400,
+                "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL",
+                "BBR 固定配置文件不存在，请重新安装/升级 Worker 到 0.1.41 后重新执行 dry-run。",
+            )
+        if "sysctl_config_file_not_writable" in blocked_reasons:
+            raise BbrEnablePlanError(
+                400,
+                "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL",
+                "BBR 固定配置文件不可写，请重新安装/升级 Worker 到 0.1.41 后重新执行 dry-run。",
+            )
         raise BbrEnablePlanError(
             400,
             "BBR_ENABLE_DRY_RUN_NOT_SUCCESSFUL",
             "最新 BBR dry-run 仍有阻塞项，不能创建真实开启命令。",
+        )
+    if not _dry_run_check_passed(result_json, "sysctl_config_file_writable"):
+        raise BbrEnablePlanError(
+            400,
+            "BBR_ENABLE_DRY_RUN_REQUIRED",
+            "需要使用 0.1.41 Worker 重新执行 BBR dry-run，确认固定 sysctl 配置文件存在且可写。",
         )
     payload = dry_run.payload_json if isinstance(dry_run.payload_json, dict) else {}
     if payload.get("confirm_dry_run_only") is not True:
