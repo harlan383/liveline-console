@@ -236,37 +236,48 @@ export function TaskHistoryPanel() {
         </button>
       </div>
 
-      {tasks.length === 0 ? (
-        <div className="empty">暂无任务记录。执行已授权的本地流程后，任务摘要会显示在这里。</div>
-      ) : (
-        <div className="task-history-layout">
-          <div className="task-history-list">
-            <div className="task-history-row task-history-head">
-              <span>时间</span>
-              <span>任务名称</span>
-              <span>关联对象</span>
-              <span>当前状态</span>
-              <span>结果说明</span>
-              <span>操作</span>
-            </div>
-            {tasks.map((task) => (
-              <button
-                className={`task-history-row${selectedTask?.id === task.id ? " active" : ""}`}
-                key={task.id}
-                type="button"
-                onClick={() => setSelectedTaskId(task.id)}
-              >
-                <span>{formatDate(task.updated_at ?? task.created_at)}</span>
-                <strong>{businessTaskName(task.task_type)}</strong>
-                <span>{relatedObject(task)}</span>
-                <span className={`pill ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
-                <span>{resultAdvice(task)}</span>
-                <span className="task-row-action">查看详情</span>
-              </button>
-            ))}
-          </div>
+      <div className="filter-bar" aria-label="任务筛选状态">
+        <span>筛选：全部任务</span>
+        <span>状态：全部</span>
+        <span>技术详情默认折叠</span>
+      </div>
 
-          {selectedTask ? (
+      <div className="task-history-layout">
+        <div className="task-history-list">
+          <div className="task-history-row task-history-head">
+            <span>时间</span>
+            <span>任务名称</span>
+            <span>关联对象</span>
+            <span>当前状态</span>
+            <span>结果说明</span>
+            <span>操作</span>
+          </div>
+          {tasks.length === 0 ? (
+            <div className="task-history-empty-row">
+              暂无任务记录。执行已授权的本地流程后，任务摘要会显示在这里。
+            </div>
+          ) : (
+            <>
+              {tasks.map((task) => (
+                <button
+                  className={`task-history-row${selectedTask?.id === task.id ? " active" : ""}`}
+                  key={task.id}
+                  type="button"
+                  onClick={() => setSelectedTaskId(task.id)}
+                >
+                  <span>{formatDate(task.updated_at ?? task.created_at)}</span>
+                  <strong>{businessTaskName(task.task_type)}</strong>
+                  <span>{relatedObject(task)}</span>
+                  <span className={`pill ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
+                  <span>{resultAdvice(task)}</span>
+                  <span className="task-row-action">查看详情</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+
+        {selectedTask ? (
             <div className="task-history-detail">
               <div className="status-row">
                 <div>
@@ -354,9 +365,13 @@ export function TaskHistoryPanel() {
                 )}
               </div>
             </div>
-          ) : null}
-        </div>
-      )}
+        ) : (
+          <div className="task-history-detail task-history-empty-detail">
+            <h3>任务详情</h3>
+            <p className="message">选择任务后可查看进度、结果说明和折叠的技术详情。</p>
+          </div>
+        )}
+      </div>
 
       <p className="message">{message}</p>
     </section>

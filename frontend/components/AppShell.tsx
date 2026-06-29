@@ -347,6 +347,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
       <div className="overview-status-grid" aria-label="网络搭建核心状态">
         <OverviewStatusCard
           detail={summary.landingDetail}
+          icon="01"
           label="落地服务器"
           status={summary.landingStatus}
           tone={summary.landingStatus === "已接入" ? "success" : "warning"}
@@ -354,6 +355,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         />
         <OverviewStatusCard
           detail={`${summary.directNodeEntry} / ${summary.directNodeConfig}`}
+          icon="02"
           label="直连节点"
           status={summary.directNodeConfig}
           tone={summary.directNode === "已创建" ? "success" : "warning"}
@@ -361,6 +363,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         />
         <OverviewStatusCard
           detail={summary.transitHelperDetail}
+          icon="03"
           label="中转服务器"
           status={summary.transitHelperStatus}
           tone={summary.transitHelperStatus === "在线" ? "success" : "warning"}
@@ -368,10 +371,19 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         />
         <OverviewStatusCard
           detail={`${summary.transitRouteEntry} -> ${summary.transitRouteTarget}`}
+          icon="04"
           label="中转链路"
           status={summary.transitRoute}
-          tone={summary.transitRoute === "active" ? "success" : "warning"}
+          tone={summary.transitRoute === "可用" ? "success" : "warning"}
           value={summary.transitRoute}
+        />
+        <OverviewStatusCard
+          detail={`最近任务：${summary.recentTask}`}
+          icon="05"
+          label="系统健康"
+          status={summary.health}
+          tone={summary.health === "正常" ? "success" : "danger"}
+          value={summary.health}
         />
       </div>
 
@@ -439,12 +451,14 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
 
 function OverviewStatusCard({
   detail,
+  icon,
   label,
   status,
   tone,
   value,
 }: {
   detail: string;
+  icon: string;
   label: string;
   status: string;
   tone: "success" | "warning" | "danger" | "muted" | "info";
@@ -453,7 +467,10 @@ function OverviewStatusCard({
   return (
     <div className={`overview-status-card ${tone}`}>
       <div className="overview-card-header">
-        <span>{label}</span>
+        <span className="overview-card-label">
+          <span className="overview-card-icon">{icon}</span>
+          {label}
+        </span>
         <small>{status}</small>
       </div>
       <strong>{value}</strong>
