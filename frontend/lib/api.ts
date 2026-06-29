@@ -738,6 +738,20 @@ export type BbrEnableDryRunResult = {
   safety_boundary: string[];
 };
 
+export type BbrEnableRealExecutionResult = {
+  command: WorkerCommandData;
+  target_worker_id: string;
+  target_worker_version: string | null;
+  target_worker_changed: boolean;
+  minimum_supported_worker_version: string;
+  server_id: string;
+  plan: BbrEnablePlanResult;
+  latest_dry_run_command_id: string;
+  confirmation_text: string;
+  next_action: string;
+  safety_boundary: string[];
+};
+
 export type SafeDeleteResult = {
   id: string;
   deleted: boolean;
@@ -785,7 +799,7 @@ export const OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT = "CONFIRM_OFFLINE_LOCAL_REMOVE";
 
 export type WorkerRole = "landing" | "transit";
 
-export const CURRENT_WORKER_INSTALL_VERSION = "0.1.39-stage-3.3.204-bbr-enable-dry-run";
+export const CURRENT_WORKER_INSTALL_VERSION = "0.1.40-stage-3.3.205-bbr-real-enable";
 
 export type WorkerTokenCreateRequest = {
   role: WorkerRole;
@@ -966,6 +980,7 @@ export type WorkerCommandType =
   | "service_status"
   | "landing_preflight"
   | "bbr_enable_dry_run"
+  | "bbr_enable_real_execution"
   | "landing_node_create"
   | "transit_readonly_preflight"
   | "transit_route_create"
@@ -1091,6 +1106,18 @@ export async function requestBbrEnableDryRun(
   return apiFetch<BbrEnableDryRunResult>(`/api/vps/${serverId}/bbr/enable-dry-run`, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
+  });
+}
+
+export async function requestBbrEnableRealExecution(
+  serverId: string,
+  csrfToken: string,
+  confirmationText: string,
+): Promise<ApiResponse<BbrEnableRealExecutionResult>> {
+  return apiFetch<BbrEnableRealExecutionResult>(`/api/vps/${serverId}/bbr/enable-real-execution`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ confirmation_text: confirmationText }),
   });
 }
 

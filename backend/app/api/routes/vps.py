@@ -11,9 +11,11 @@ from app.schemas.landing_node_plan import LandingNodeCreateRequest, LandingNodeP
 from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
 from app.services.bbr_enable_plan import (
+    BBR_ENABLE_REAL_EXECUTION_CONFIRMATION,
     BbrEnablePlanError,
     build_bbr_enable_plan,
     create_bbr_enable_dry_run_command,
+    create_bbr_enable_real_execution_command,
 )
 from app.services.landing_node_create import (
     LandingNodeCreateError,
@@ -93,6 +95,15 @@ class VpsWorkerBootstrapRequest(BaseModel):
     @classmethod
     def clean_interface_name(cls, value: str) -> str:
         return validate_worker_interface_name(value)
+
+
+class BbrEnableRealExecutionRequest(BaseModel):
+    confirmation_text: str = Field(min_length=1, max_length=80)
+
+    @field_validator("confirmation_text")
+    @classmethod
+    def clean_confirmation_text(cls, value: str) -> str:
+        return value.strip()
 
 
 def clean_optional_text(value: str | None, *, max_length: int | None = None) -> str | None:
@@ -460,6 +471,67 @@ def create_bbr_enable_dry_run(
             ],
         },
         "BBR 开启 dry-run 命令已创建；不会真实开启 BBR。",
+    )
+
+
+@router.post("/{vps_id}/bbr/enable-real-execution")
+def create_bbr_enable_real_execution(
+    vps_id: str,
+    payload: BbrEnableRealExecutionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    try:
+        command, worker, plan, target, dry_run_command = create_bbr_enable_real_execution_command(
+            db,
+            vps_id,
+            payload.confirmation_text,
+        )
+    except BbrEnablePlanError as exc:
+        return error_response(exc.status_code, exc.code, exc.message)
+    except WorkerTargetError as exc:
+        return error_response(400, exc.code, exc.message)
+
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="create_bbr_enable_real_execution_command",
+        result="success",
+        request=request,
+        resource_type="worker_command",
+        resource_id=command.id,
+    )
+    db.commit()
+    db.refresh(command)
+    return success_response(
+        {
+            "command": serialize_worker_command(command, include_payload=True, worker=worker),
+            "target_worker_id": worker.id,
+            "target_worker_version": worker.worker_version,
+            "target_worker_changed": target.changed,
+            "minimum_supported_worker_version": minimum_worker_version_for_command("bbr_enable_real_execution"),
+            "server_id": vps_id,
+            "plan": plan,
+            "latest_dry_run_command_id": dry_run_command.id,
+            "confirmation_text": BBR_ENABLE_REAL_EXECUTION_CONFIRMATION,
+            "next_action": "等待 landing Worker 轮询执行 bbr_enable_real_execution；该命令会按固定流程真实开启 BBR。",
+            "safety_boundary": [
+                "fixed BBR enable workflow only",
+                "requires prior successful dry-run",
+                "requires exact confirmation text",
+                "no arbitrary shell accepted",
+                "no network service restart",
+                "no Xray/HAProxy restart",
+                "no port/share_link/cutover changes",
+            ],
+        },
+        "BBR 受保护真实开启命令已创建。",
     )
 
 

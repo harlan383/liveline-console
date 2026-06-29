@@ -92,6 +92,90 @@ func TestValidateBBREnableDryRunPayloadRejectsExecutionFields(t *testing.T) {
 	}
 }
 
+func TestValidateBBREnableRealExecutionPayloadRequiresConfirmation(t *testing.T) {
+	cfg := config{ServerID: "server-1"}
+	payload := map[string]any{
+		"stage":                               bbrEnableRealExecutionStage,
+		"server_id":                           "server-1",
+		"preflight_id":                        "preflight-1",
+		"dry_run_command_id":                  "dry-run-1",
+		"recommendation":                      "module_available_needs_load_approval",
+		"confirm_enable_bbr_real_execution":   true,
+		"confirm_load_tcp_bbr_module":         true,
+		"confirm_write_sysctl_config":         true,
+		"confirm_reload_sysctl":               true,
+		"confirm_no_network_restart_expected": true,
+		"confirm_rollback_plan_understood":    true,
+		"confirmation_text":                   "wrong",
+	}
+
+	err := validateBBREnableRealExecutionPayload(cfg, payload)
+	if err == nil {
+		t.Fatal("validateBBREnableRealExecutionPayload returned nil for wrong confirmation")
+	}
+	if !strings.Contains(err.Error(), "confirmation_text") {
+		t.Fatalf("error = %q, want confirmation_text", err.Error())
+	}
+}
+
+func TestValidateBBREnableRealExecutionPayloadRejectsDangerousNestedFields(t *testing.T) {
+	cfg := config{ServerID: "server-1"}
+	payload := map[string]any{
+		"stage":                               bbrEnableRealExecutionStage,
+		"server_id":                           "server-1",
+		"preflight_id":                        "preflight-1",
+		"dry_run_command_id":                  "dry-run-1",
+		"recommendation":                      "module_available_needs_load_approval",
+		"confirm_enable_bbr_real_execution":   true,
+		"confirm_load_tcp_bbr_module":         true,
+		"confirm_write_sysctl_config":         true,
+		"confirm_reload_sysctl":               true,
+		"confirm_no_network_restart_expected": true,
+		"confirm_rollback_plan_understood":    true,
+		"confirmation_text":                   bbrEnableRealExecutionConfirmation,
+		"nested": map[string]any{
+			"content": "net.ipv4.tcp_congestion_control=cubic",
+		},
+	}
+
+	err := validateBBREnableRealExecutionPayload(cfg, payload)
+	if err == nil {
+		t.Fatal("validateBBREnableRealExecutionPayload returned nil for unsafe content field")
+	}
+	if !strings.Contains(err.Error(), "$.nested.content") {
+		t.Fatalf("error = %q, want unsafe $.nested.content path", err.Error())
+	}
+}
+
+func TestBBRRealExecutionFixedConfigContent(t *testing.T) {
+	if bbrSysctlConfigContent != "net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr\n" {
+		t.Fatalf("bbrSysctlConfigContent = %q", bbrSysctlConfigContent)
+	}
+	if bbrSysctlConfigPath != "/etc/sysctl.d/99-liveline-bbr.conf" {
+		t.Fatalf("bbrSysctlConfigPath = %q", bbrSysctlConfigPath)
+	}
+}
+
+func TestBBRRealExecutionVerificationSucceeded(t *testing.T) {
+	postState := map[string]any{
+		"available_congestion_control": "reno cubic bbr",
+		"current_congestion_control":   "bbr",
+		"default_qdisc":                "fq",
+	}
+
+	verification := bbrEnableRealExecutionVerification(postState)
+
+	if !boolResultValue(verification["available_contains_bbr"]) {
+		t.Fatalf("available_contains_bbr = %#v, want true", verification["available_contains_bbr"])
+	}
+	if !boolResultValue(verification["current_is_bbr"]) {
+		t.Fatalf("current_is_bbr = %#v, want true", verification["current_is_bbr"])
+	}
+	if !boolResultValue(verification["default_qdisc_is_fq"]) {
+		t.Fatalf("default_qdisc_is_fq = %#v, want true", verification["default_qdisc_is_fq"])
+	}
+}
+
 func TestBuildBBREnableDryRunResultPlansModuleLoadWithoutExecution(t *testing.T) {
 	cfg := config{Role: "landing", InterfaceName: "ens17"}
 	bbr := map[string]any{
