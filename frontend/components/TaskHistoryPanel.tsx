@@ -9,6 +9,16 @@ const secretKeyPattern = /(private|private_key|passphrase|password|passwd|secret
 const linkPattern = /(vless|vmess|trojan|ss):\/\//i;
 const privateKeyPattern = /BEGIN (OPENSSH|RSA|EC|DSA)? ?PRIVATE KEY/i;
 
+type TaskCategory = "all" | "create" | "delete" | "check" | "other";
+
+const taskCategories: Array<{ label: string; value: TaskCategory }> = [
+  { label: "全部任务", value: "all" },
+  { label: "创建任务", value: "create" },
+  { label: "删除任务", value: "delete" },
+  { label: "检测任务", value: "check" },
+  { label: "其他任务", value: "other" },
+];
+
 function shortId(id: string) {
   return id.length > 12 ? `${id.slice(0, 8)}...${id.slice(-4)}` : id;
 }
@@ -19,12 +29,12 @@ function formatDate(value: string | null) {
 
 function statusClass(status: string) {
   if (status === "success" || status === "completed") {
-    return "ok";
+    return "success";
   }
   if (terminalStatuses.has(status)) {
-    return "bad";
+    return "danger";
   }
-  return "warn";
+  return "warning";
 }
 
 function statusLabel(status: string) {
@@ -57,6 +67,19 @@ function businessTaskName(taskType: string) {
     service_status: "读取服务状态",
   };
   return labels[taskType] ?? "系统任务";
+}
+
+function categoryForTask(taskType: string): TaskCategory {
+  if (/create|install|enable/i.test(taskType)) {
+    return "create";
+  }
+  if (/cleanup|delete|remove/i.test(taskType)) {
+    return "delete";
+  }
+  if (/preflight|status|check|read/i.test(taskType)) {
+    return "check";
+  }
+  return "other";
 }
 
 function relatedObject(task: TaskData) {
@@ -173,6 +196,10 @@ export function TaskHistoryPanel() {
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [logs, setLogs] = useState<TaskLogData[]>([]);
+  const [category, setCategory] = useState<TaskCategory>("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [dateRange, setDateRange] = useState("全部日期");
   const [message, setMessage] = useState("正在读取本地任务记录。");
   const [loading, setLoading] = useState(false);
   const selectedTask = useMemo(
@@ -189,12 +216,7 @@ export function TaskHistoryPanel() {
         return;
       }
       setTasks(result.data.tasks);
-      setSelectedTaskId(
-        nextSelectedId ??
-          selectedTaskId ??
-          result.data.tasks[0]?.id ??
-          null,
-      );
+      setSelectedTaskId(nextSelectedId ?? selectedTaskId ?? result.data.tasks[0]?.id ?? null);
       setMessage(result.data.tasks.length > 0 ? "任务记录已刷新。" : "当前没有任务记录。");
     } catch {
       setMessage("无法读取任务记录。");
@@ -225,153 +247,167 @@ export function TaskHistoryPanel() {
     void loadLogs(selectedTask.id);
   }, [selectedTask?.id]);
 
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((task) => {
+      const categoryMatches = category === "all" || categoryForTask(task.task_type) === category;
+      const statusMatches = statusFilter === "all" || task.status === statusFilter;
+      const typeMatches = typeFilter === "all" || task.task_type === typeFilter;
+      return categoryMatches && statusMatches && typeMatches;
+    });
+  }, [category, statusFilter, tasks, typeFilter]);
+
+  const availableTypes = Array.from(new Set(tasks.map((task) => task.task_type))).sort();
+  const availableStatuses = Array.from(new Set(tasks.map((task) => task.status))).sort();
+
   return (
-    <section className="panel wide task-record-panel">
-      <div className="status-row">
+    <section className="task-record-page wide">
+      <div className="product-page-header">
         <div>
           <h2>任务记录</h2>
+          <p>查看创建、删除、检测和其他任务。技术详情默认折叠。</p>
         </div>
         <button className="secondary" disabled={loading} type="button" onClick={() => void loadTasks()}>
           刷新
         </button>
       </div>
 
-      <div className="filter-bar" aria-label="任务筛选状态">
-        <span>筛选：全部任务</span>
-        <span>状态：全部</span>
-        <span>技术详情默认折叠</span>
-      </div>
-
-      <div className="task-history-layout">
-        <div className="task-history-list">
-          <div className="task-history-row task-history-head">
-            <span>时间</span>
-            <span>任务名称</span>
-            <span>关联对象</span>
-            <span>当前状态</span>
-            <span>结果说明</span>
-            <span>操作</span>
+      <div className="product-section-card">
+        <div className="task-filter-panel">
+          <div className="filter-tabs">
+            {taskCategories.map((item) => (
+              <button
+                className={category === item.value ? "selected" : ""}
+                key={item.value}
+                type="button"
+                onClick={() => setCategory(item.value)}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
-          {tasks.length === 0 ? (
-            <div className="task-history-empty-row">
-              暂无任务记录。执行已授权的本地流程后，任务摘要会显示在这里。
-            </div>
-          ) : (
-            <>
-              {tasks.map((task) => (
-                <button
-                  className={`task-history-row${selectedTask?.id === task.id ? " active" : ""}`}
-                  key={task.id}
-                  type="button"
-                  onClick={() => setSelectedTaskId(task.id)}
-                >
-                  <span>{formatDate(task.updated_at ?? task.created_at)}</span>
-                  <strong>{businessTaskName(task.task_type)}</strong>
-                  <span>{relatedObject(task)}</span>
-                  <span className={`pill ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
-                  <span>{resultAdvice(task)}</span>
-                  <span className="task-row-action">查看详情</span>
-                </button>
-              ))}
-            </>
-          )}
+          <select aria-label="状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="all">状态筛选</option>
+            {availableStatuses.map((status) => (
+              <option key={status} value={status}>
+                {statusLabel(status)}
+              </option>
+            ))}
+          </select>
+          <select aria-label="类型筛选" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+            <option value="all">类型筛选</option>
+            {availableTypes.map((taskType) => (
+              <option key={taskType} value={taskType}>
+                {businessTaskName(taskType)}
+              </option>
+            ))}
+          </select>
+          <select aria-label="日期范围" value={dateRange} onChange={(event) => setDateRange(event.target.value)}>
+            <option>全部日期</option>
+            <option>今天</option>
+            <option>最近 7 天</option>
+            <option>最近 30 天</option>
+          </select>
         </div>
 
-        {selectedTask ? (
-            <div className="task-history-detail">
-              <div className="status-row">
-                <div>
-                  <h3>{businessTaskName(selectedTask.task_type)}</h3>
-                  <p className="message">{relatedObject(selectedTask)}</p>
-                </div>
-                <div className="task-detail-actions">
-                  <span className={`pill ${statusClass(selectedTask.status)}`}>{statusLabel(selectedTask.status)}</span>
-                  <button className="danger" disabled type="button">
-                    重试需单独审批
-                  </button>
-                </div>
-              </div>
-
-              <div className="detail-grid">
-                <span>状态</span>
-                <strong>{statusLabel(selectedTask.status)}</strong>
-                <span>结果说明</span>
-                <strong>{resultAdvice(selectedTask)}</strong>
-                <span>当前进度</span>
-                <strong>{selectedTask.progress}%</strong>
-                <span>创建时间</span>
-                <strong>{formatDate(selectedTask.created_at)}</strong>
-                <span>更新时间</span>
-                <strong>{formatDate(selectedTask.updated_at)}</strong>
-                <span>开始时间</span>
-                <strong>{formatDate(selectedTask.started_at)}</strong>
-                <span>完成时间</span>
-                <strong>{formatDate(selectedTask.finished_at)}</strong>
-              </div>
-              <div className="task-progress-card">
-                <div className="status-row">
-                  <strong>任务进度</strong>
-                  <span>{selectedTask.progress}%</span>
-                </div>
-                <div className="task-progress-bar" aria-label={`任务进度 ${selectedTask.progress}%`}>
-                  <span style={{ width: `${Math.max(0, Math.min(100, selectedTask.progress))}%` }} />
-                </div>
-              </div>
-
-              {selectedTask.error_message ? (
-                <div className="failure-box">{redactString(selectedTask.error_message)}</div>
-              ) : null}
-
-              <details className="task-history-details">
-                <summary>查看技术详情</summary>
-                <div className="business-detail-grid compact">
-                  <span>任务 ID</span>
-                  <strong>{shortId(selectedTask.id)}</strong>
-                  <span>任务类型</span>
-                  <strong>{selectedTask.task_type}</strong>
-                  <span>错误码</span>
-                  <strong>{selectedTask.error_code ?? "-"}</strong>
-                  <span>当前步骤</span>
-                  <strong>{selectedTask.current_step ?? "-"}</strong>
-                </div>
-                <pre>{resultSummary(selectedTask)}</pre>
-              </details>
-
-              <div className="task-history-logs">
-                <h4>处理日志</h4>
-                {logs.length === 0 ? (
-                  <p className="message">暂无任务日志。</p>
-                ) : (
-                  <div className="log-list">
-                    {logs.map((log) => {
-                      const output = logOutput(log);
-                      return (
-                        <div className="log-row task-log-row" key={log.id}>
-                          <span>{log.level}</span>
-                          <span>{log.step ?? "-"}</span>
-                          <span>
-                            {redactString(log.message)}
-                            {output ? (
-                              <details className="task-log-output">
-                                <summary>查看脱敏原始输出</summary>
-                                <pre>{output}</pre>
-                              </details>
-                            ) : null}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-        ) : (
-          <div className="task-history-detail task-history-empty-detail">
-            <h3>任务详情</h3>
-            <p className="message">选择任务后可查看进度、结果说明和折叠的技术详情。</p>
+        <div className="product-table task-product-table">
+          <div className="product-table-row product-table-head">
+            <span>任务ID</span>
+            <span>任务类型</span>
+            <span>任务内容</span>
+            <span>状态</span>
+            <span>开始时间</span>
+            <span>操作</span>
           </div>
-        )}
+          {filteredTasks.length === 0 ? (
+            <div className="product-table-empty">暂无匹配任务记录。</div>
+          ) : (
+            filteredTasks.map((task) => (
+              <button
+                className={`product-table-row product-task-row${selectedTask?.id === task.id ? " active" : ""}`}
+                key={task.id}
+                type="button"
+                onClick={() => setSelectedTaskId(task.id)}
+              >
+                <span>{shortId(task.id)}</span>
+                <strong>{businessTaskName(task.task_type)}</strong>
+                <span>{relatedObject(task)}</span>
+                <span className={`product-badge ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
+                <span>{formatDate(task.started_at ?? task.created_at)}</span>
+                <span className="task-row-action">查看详情</span>
+              </button>
+            ))
+          )}
+        </div>
       </div>
+
+      {selectedTask ? (
+        <section className="product-section-card task-detail-card">
+          <div className="product-section-head">
+            <div>
+              <h3>{businessTaskName(selectedTask.task_type)}</h3>
+              <p>{resultAdvice(selectedTask)}</p>
+            </div>
+            <span className={`product-badge ${statusClass(selectedTask.status)}`}>{statusLabel(selectedTask.status)}</span>
+          </div>
+          <div className="detail-grid">
+            <span>任务内容</span>
+            <strong>{relatedObject(selectedTask)}</strong>
+            <span>当前进度</span>
+            <strong>{selectedTask.progress}%</strong>
+            <span>创建时间</span>
+            <strong>{formatDate(selectedTask.created_at)}</strong>
+            <span>完成时间</span>
+            <strong>{formatDate(selectedTask.finished_at)}</strong>
+          </div>
+
+          {selectedTask.error_message ? (
+            <div className="failure-box">{redactString(selectedTask.error_message)}</div>
+          ) : null}
+
+          <details className="task-history-details">
+            <summary>查看技术详情</summary>
+            <div className="business-detail-grid compact">
+              <span>任务 ID</span>
+              <strong>{shortId(selectedTask.id)}</strong>
+              <span>原始类型</span>
+              <strong>{selectedTask.task_type}</strong>
+              <span>错误码</span>
+              <strong>{selectedTask.error_code ?? "-"}</strong>
+              <span>当前步骤</span>
+              <strong>{selectedTask.current_step ?? "-"}</strong>
+            </div>
+            <pre>{resultSummary(selectedTask)}</pre>
+          </details>
+
+          <details className="task-history-details">
+            <summary>查看日志</summary>
+            {logs.length === 0 ? (
+              <p className="message">暂无任务日志。</p>
+            ) : (
+              <div className="log-list">
+                {logs.map((log) => {
+                  const output = logOutput(log);
+                  return (
+                    <div className="log-row task-log-row" key={log.id}>
+                      <span>{log.level}</span>
+                      <span>{log.step ?? "-"}</span>
+                      <span>
+                        {redactString(log.message)}
+                        {output ? (
+                          <details className="task-log-output">
+                            <summary>查看脱敏原始输出</summary>
+                            <pre>{output}</pre>
+                          </details>
+                        ) : null}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </details>
+        </section>
+      ) : null}
 
       <p className="message">{message}</p>
     </section>

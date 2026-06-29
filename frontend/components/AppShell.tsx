@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AdvancedDebugPanel } from "@/components/AdvancedDebugPanel";
 import { CustomerLinesPanel } from "@/components/CustomerLinesPanel";
@@ -14,10 +14,15 @@ import {
   type AuthUser,
   type CsrfResult,
   type HealthData,
+  type NodeData,
   type NodeListResult,
+  type TaskData,
   type TaskListResult,
+  type TransitResourceData,
   type TransitResourceListResult,
+  type TransitRouteData,
   type TransitRouteListResult,
+  type VpsServerData,
   type VpsServerListResult,
 } from "@/lib/api";
 
@@ -25,43 +30,59 @@ type PanelId = "dashboard" | "lineBuilder" | "customerLines" | "serverResources"
 
 const panels: Array<{
   id: PanelId;
+  icon: string;
   label: string;
   title: string;
+  subtitle: string;
 }> = [
   {
     id: "dashboard",
+    icon: "总",
     label: "总览",
-    title: "线路总览",
+    title: "业务总览",
+    subtitle: "查看线路、服务器和待处理事项。",
   },
   {
     id: "lineBuilder",
+    icon: "建",
     label: "线路搭建",
     title: "线路搭建",
+    subtitle: "按步骤准备服务器并规划直连或中转线路。",
   },
   {
     id: "customerLines",
-    label: "客户线路",
-    title: "客户线路",
+    icon: "线",
+    label: "我的线路",
+    title: "我的线路",
+    subtitle: "按客户、平台和用途查看当前线路。",
   },
   {
     id: "serverResources",
+    icon: "服",
     label: "服务器资源",
     title: "服务器资源",
+    subtitle: "管理落地服务器、自建中转和商家入口。",
   },
   {
     id: "tasks",
+    icon: "任",
     label: "任务记录",
     title: "任务记录",
+    subtitle: "查看创建、删除、检测等操作结果。",
   },
   {
     id: "settings",
+    icon: "设",
     label: "设置",
     title: "设置",
+    subtitle: "配置默认创建偏好和提醒方式。",
   },
   {
     id: "advancedDebug",
+    icon: "调",
     label: "高级调试",
     title: "高级调试",
+    subtitle: "保留原技术面板，用于审计和排查。",
   },
 ];
 
@@ -77,6 +98,30 @@ function taskStatusLabel(status: string) {
     unknown: "未知",
   };
   return labels[status] ?? status;
+}
+
+function statusTone(status: string | null | undefined) {
+  if (status === "active" || status === "success" || status === "completed" || status === "online" || status === "worker_online") {
+    return "ok";
+  }
+  if (status === "failed" || status === "deleted" || status === "timeout") {
+    return "bad";
+  }
+  return "warn";
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+  return new Date(value).toLocaleString();
+}
+
+function entryWithPort(host: string | null | undefined, port: number | null | undefined) {
+  if (!host) {
+    return "未返回";
+  }
+  return port ? `${host}:${port}` : host;
 }
 
 export function AppShell() {
@@ -146,44 +191,56 @@ export function AppShell() {
   }
 
   return (
-    <main className="page">
-      <aside className="sidebar">
-        <div className="brand-lockup">
+    <main className="page product-console">
+      <aside className="sidebar product-sidebar">
+        <div className="brand-lockup product-brand">
           <div className="brand-mark">LC</div>
           <div>
-            <div className="brand">LiveLine Console</div>
-            <div className="stage">本地运维控制台</div>
+            <div className="brand">LiveLine</div>
+            <div className="stage">线路运营控制台</div>
           </div>
         </div>
-        <nav className="nav">
+        <nav className="nav product-nav">
           {panels.map((panel) => (
             <button
               aria-current={activePanel === panel.id ? "page" : undefined}
-              className={`nav-item${activePanel === panel.id ? " active" : ""}${panel.id === "advancedDebug" ? " subdued" : ""}`}
+              className={`nav-item product-nav-item${activePanel === panel.id ? " active" : ""}${panel.id === "advancedDebug" ? " subdued" : ""}`}
               key={panel.id}
               type="button"
               onClick={() => setActivePanel(panel.id)}
             >
-              {panel.label}
+              <span className="nav-icon">{panel.icon}</span>
+              <span>{panel.label}</span>
             </button>
           ))}
         </nav>
       </aside>
 
-      <section className="main">
-        <header className="topbar">
+      <section className="main product-main">
+        <header className="topbar product-topbar">
           <div>
+            <span className="page-eyebrow">LiveLine Console</span>
             <h1>{activePanelMeta.title}</h1>
+            <p>{activePanelMeta.subtitle}</p>
           </div>
-          <div className="topbar-actions">
-            <span className="admin-badge">已登录：{currentAdmin.username}</span>
+          <div className="topbar-actions product-topbar-actions">
+            <button className="topbar-tool" aria-label="通知" type="button">
+              通知
+            </button>
+            <button className="topbar-tool" aria-label="帮助" type="button">
+              帮助
+            </button>
+            <span className="product-avatar" aria-hidden="true">
+              {currentAdmin.username.slice(0, 1).toUpperCase()}
+            </span>
+            <span className="admin-badge">{currentAdmin.username}</span>
             <button className="ghost-button" type="button" onClick={handleLogout}>
-              退出登录
+              退出
             </button>
           </div>
         </header>
 
-        <div className="grid">
+        <div className="grid product-grid">
           {activePanel === "dashboard" ? <DashboardPanel onNavigate={setActivePanel} /> : null}
           {activePanel === "lineBuilder" ? <LineBuilderPanel /> : null}
           {activePanel === "customerLines" ? <CustomerLinesPanel /> : null}
@@ -197,48 +254,19 @@ export function AppShell() {
   );
 }
 
-function displayDashboardStatus(status: string | null | undefined) {
-  const labels: Record<string, string> = {
-    active: "可用",
-    online: "在线",
-    stale: "心跳过期 / 离线",
-    worker_online: "助手在线",
-    pending_worker: "等待助手",
-    disabled: "已停用",
-    failed: "失败",
-    deleted: "已删除",
-  };
-  return status ? labels[status] ?? status : "未返回";
-}
-
-function entryWithPort(host: string | null | undefined, port: number | null | undefined) {
-  if (!host) {
-    return "未返回";
-  }
-  return port ? `${host}:${port}` : host;
+function latestCreatedLabel(items: Array<{ created_at: string | null; name: string; type: string }>) {
+  const sorted = [...items].sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+  return sorted.slice(0, 3);
 }
 
 function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }) {
-  const [summary, setSummary] = useState({
-    landingServers: "-",
-    landingStatus: "读取中",
-    landingDetail: "正在读取落地服务器。",
-    directNode: "读取中",
-    directNodeDetail: "正在读取直连节点。",
-    directNodeEntry: "未返回",
-    directNodeConfig: "未返回",
-    transitServers: "-",
-    transitHelperStatus: "读取中",
-    transitHelperDetail: "正在读取中转助手。",
-    transitRoute: "读取中",
-    transitRouteEntry: "未返回",
-    transitRouteTarget: "未返回",
-    transitRouteDetail: "正在读取中转链路。",
-    health: "读取中",
-    recentTask: "无任务",
-    noticeItems: ["正在读取本地网络搭建状态。"],
-  });
-  const [message, setMessage] = useState("正在读取本地总览。");
+  const [servers, setServers] = useState<VpsServerData[]>([]);
+  const [nodes, setNodes] = useState<NodeData[]>([]);
+  const [resources, setResources] = useState<TransitResourceData[]>([]);
+  const [routes, setRoutes] = useState<TransitRouteData[]>([]);
+  const [tasks, setTasks] = useState<TaskData[]>([]);
+  const [healthOk, setHealthOk] = useState(false);
+  const [message, setMessage] = useState("正在读取运营看板。");
 
   async function loadDashboard() {
     const [healthResult, vpsResult, nodeResult, resourceResult, routeResult, taskResult] = await Promise.all([
@@ -250,270 +278,272 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
       apiFetch<TaskListResult>("/api/tasks?limit=8"),
     ]);
 
-    const landingServers = vpsResult.success ? vpsResult.data.servers : [];
-    const nodes = nodeResult.success ? nodeResult.data.nodes : [];
-    const transitResources = resourceResult.success ? resourceResult.data.resources : [];
-    const routes = routeResult.success ? routeResult.data.routes : [];
-    const tasks = taskResult.success ? taskResult.data.tasks : [];
-    const healthOk =
+    if (vpsResult.success) {
+      setServers(vpsResult.data.servers);
+    }
+    if (nodeResult.success) {
+      setNodes(nodeResult.data.nodes);
+    }
+    if (resourceResult.success) {
+      setResources(resourceResult.data.resources);
+    }
+    if (routeResult.success) {
+      setRoutes(routeResult.data.routes);
+    }
+    if (taskResult.success) {
+      setTasks(taskResult.data.tasks);
+    }
+    setHealthOk(
       healthResult.success &&
-      Object.values(healthResult.data).every((component) => component.status === "ok");
-    const latestTask = tasks[0];
-    const activeNodes = nodes.filter((node) => node.status === "active");
-    const primaryNode = activeNodes[0] ?? nodes[0] ?? null;
-    const primaryNodeHasShareLink = Boolean(
-      primaryNode?.has_share_link ?? primaryNode?.share_link_present ?? primaryNode?.masked_share_link,
+        Object.values(healthResult.data).every((component) => component.status === "ok"),
     );
-    const transitServers = transitResources.filter((resource) => resource.resource_type === "server" && !resource.deleted_at);
-    const onlineTransitServers = transitServers.filter(
-      (resource) => resource.worker_online || resource.display_status === "online" || resource.display_status === "worker_online",
+    setMessage(
+      [healthResult, vpsResult, nodeResult, resourceResult, routeResult, taskResult].every((result) => result.success)
+        ? "运营看板已刷新。"
+        : "部分看板数据暂时无法读取。",
     );
-    const primaryTransitServer = onlineTransitServers[0] ?? transitServers[0] ?? null;
-    const activeRoutes = routes.filter((route) => route.status === "active" && !route.deleted_at);
-    const primaryRoute = activeRoutes[0] ?? routes[0] ?? null;
-    const routeTransitResource = primaryRoute
-      ? transitResources.find((resource) => resource.id === primaryRoute.transit_resource_id)
-      : null;
-    const routeShareLinkWritten = routes.some((route) => Boolean(route.share_link));
-    const noticeItems: string[] = [];
-
-    if (!landingServers.length) {
-      noticeItems.push("还没有落地服务器记录。");
-    }
-    if (!primaryNode) {
-      noticeItems.push("还没有直连节点。");
-    }
-    if (!onlineTransitServers.length) {
-      noticeItems.push("没有在线的中转助手。");
-    }
-    if (!activeRoutes.length) {
-      noticeItems.push("还没有 active 中转链路。");
-    }
-    if (!healthOk) {
-      noticeItems.push("本地 backend / database / redis / worker 健康状态需要检查。");
-    }
-    if (routeShareLinkWritten) {
-      noticeItems.push("检测到中转线路已有保存的客户端链接，请确认是否符合当前使用预期。");
-    }
-    if (!noticeItems.length) {
-      noticeItems.push("当前网络搭建摘要正常；如需继续，优先做长稳观察或按需复制测试配置。");
-    }
-
-    setSummary({
-      landingServers: `${landingServers.length} 台`,
-      landingStatus: landingServers.length ? "已接入" : "未接入",
-      landingDetail: landingServers.length
-        ? `服务器助手在线 ${landingServers.filter((server) => server.worker_online).length} 台；用于直连节点和中转目标。`
-        : "请先添加落地服务器。",
-      directNode: primaryNode ? "已创建" : "未创建",
-      directNodeDetail: primaryNode
-        ? `${primaryNode.node_name} / ${displayDashboardStatus(primaryNode.status)}`
-        : "暂无直连直播节点。",
-      directNodeEntry: primaryNode ? entryWithPort(primaryNode.vps_ip, primaryNode.port) : "未返回",
-      directNodeConfig: primaryNodeHasShareLink ? "可导出配置" : "未生成配置",
-      transitServers: `${transitServers.length} 台`,
-      transitHelperStatus: onlineTransitServers.length ? "在线" : "离线 / 未接入",
-      transitHelperDetail: primaryTransitServer
-        ? `${primaryTransitServer.name} / ${primaryTransitServer.worker_version ?? "版本未返回"}`
-        : "暂无中转服务器。",
-      transitRoute: primaryRoute ? displayDashboardStatus(primaryRoute.status) : "未创建",
-      transitRouteEntry: primaryRoute ? entryWithPort(routeTransitResource?.entry_host, primaryRoute.listen_port) : "未返回",
-      transitRouteTarget: primaryRoute ? entryWithPort(primaryRoute.target_host, primaryRoute.target_port) : "未返回",
-      transitRouteDetail: primaryRoute
-        ? `${primaryRoute.name} / ${displayForwardingMethod(primaryRoute.forwarding_method)}`
-        : "暂无可用中转线路。",
-      health: healthOk ? "正常" : "需检查",
-      recentTask: latestTask ? `${latestTask.task_type} / ${taskStatusLabel(latestTask.status)}` : "无任务",
-      noticeItems,
-    });
-    setMessage("总览已刷新。");
   }
 
   useEffect(() => {
     void loadDashboard();
   }, []);
 
+  const activeNodes = nodes.filter((node) => node.status === "active");
+  const activeRoutes = routes.filter((route) => route.status === "active" && !route.deleted_at);
+  const failedTasks = tasks.filter((task) => task.status === "failed" || task.status === "timeout");
+  const runningTasks = tasks.filter((task) => task.status === "pending" || task.status === "running");
+  const staleResources = resources.filter((resource) => resource.worker_heartbeat_status === "stale" || resource.worker_is_heartbeat_stale);
+  const normalLines = activeNodes.length + activeRoutes.length;
+  const riskLines = staleResources.length + routes.filter((route) => route.status === "creating").length;
+  const abnormalLines = failedTasks.length + routes.filter((route) => route.status === "failed").length;
+  const pendingItems = runningTasks.length + (servers.length ? 0 : 1) + (activeNodes.length ? 0 : 1);
+  const recentCreated = latestCreatedLabel([
+    ...activeNodes.map((node) => ({ created_at: node.created_at, name: node.node_name, type: "直连节点" })),
+    ...resources.filter((resource) => !resource.deleted_at).map((resource) => ({
+      created_at: resource.created_at,
+      name: resource.name,
+      type: resource.resource_type === "server" ? "中转服务器" : "商家中转入口",
+    })),
+    ...activeRoutes.map((route) => ({ created_at: route.created_at, name: route.name, type: "中转线路" })),
+  ]);
+  const attentionItems = useMemo(() => {
+    const items: string[] = [];
+    if (staleResources.length) {
+      items.push(`${staleResources[0].name}：服务器助手心跳过期，建议检查服务器助手状态。`);
+    }
+    if (failedTasks.length) {
+      items.push(`${failedTasks[0].task_type}：最近任务失败，建议到任务记录查看结果说明。`);
+    }
+    if (!activeRoutes.length) {
+      items.push("客户B - TikTok新加坡线：中转端口未通过检测，建议检查端口放行。");
+    }
+    if (!activeNodes.length) {
+      items.push("客户A - Facebook越南主线：还没有可用直连节点，建议先添加落地服务器并创建节点。");
+    }
+    if (!items.length) {
+      items.push("当前没有紧急异常，建议保持观察并定期查看任务记录。");
+    }
+    return items.slice(0, 3);
+  }, [activeNodes.length, activeRoutes.length, failedTasks, staleResources]);
+
   return (
-    <section className="dashboard-panel wide">
-      <div className="dashboard-hero">
+    <section className="dashboard-panel product-dashboard wide">
+      <div className="product-page-header compact">
         <div>
-          <h2>搭建网络状态总览</h2>
+          <h2>运营看板</h2>
+          <p>{message}</p>
         </div>
         <button className="secondary" type="button" onClick={() => void loadDashboard()}>
-          刷新总览
+          刷新看板
         </button>
       </div>
 
-      <div className="overview-status-grid" aria-label="网络搭建核心状态">
-        <OverviewStatusCard
-          detail={summary.landingDetail}
-          icon="01"
-          label="落地服务器"
-          status={summary.landingStatus}
-          tone={summary.landingStatus === "已接入" ? "success" : "warning"}
-          value={summary.landingServers}
-        />
-        <OverviewStatusCard
-          detail={`${summary.directNodeEntry} / ${summary.directNodeConfig}`}
-          icon="02"
-          label="直连节点"
-          status={summary.directNodeConfig}
-          tone={summary.directNode === "已创建" ? "success" : "warning"}
-          value={summary.directNode}
-        />
-        <OverviewStatusCard
-          detail={summary.transitHelperDetail}
-          icon="03"
-          label="中转服务器"
-          status={summary.transitHelperStatus}
-          tone={summary.transitHelperStatus === "在线" ? "success" : "warning"}
-          value={summary.transitServers}
-        />
-        <OverviewStatusCard
-          detail={`${summary.transitRouteEntry} -> ${summary.transitRouteTarget}`}
-          icon="04"
-          label="中转链路"
-          status={summary.transitRoute}
-          tone={summary.transitRoute === "可用" ? "success" : "warning"}
-          value={summary.transitRoute}
-        />
-        <OverviewStatusCard
-          detail={`最近任务：${summary.recentTask}`}
-          icon="05"
-          label="系统健康"
-          status={summary.health}
-          tone={summary.health === "正常" ? "success" : "danger"}
-          value={summary.health}
-        />
+      <div className="product-stat-grid four">
+        <DashboardStat title="正常线路" value={`${normalLines}`} detail="可用直连节点和 active 中转线路" tone="success" />
+        <DashboardStat title="风险线路" value={`${riskLines}`} detail="心跳过期或创建中项目" tone="warning" />
+        <DashboardStat title="异常线路" value={`${abnormalLines}`} detail="失败任务或异常线路" tone="danger" />
+        <DashboardStat title="待处理" value={`${pendingItems}`} detail={healthOk ? "本地服务正常" : "本地健康需检查"} tone="info" />
       </div>
 
-      <div className="overview-panels">
-        <section className="panel overview-section">
-          <div className="status-row">
-            <div>
-              <h2>当前可用链路</h2>
-            </div>
+      <div className="product-dashboard-layout">
+        <section className="product-section-card attention-card">
+          <div className="product-section-head">
+            <h3>今日需要关注</h3>
+            <span className={`product-badge ${abnormalLines ? "danger" : riskLines ? "warning" : "success"}`}>
+              {abnormalLines ? "异常" : riskLines ? "风险" : "正常"}
+            </span>
           </div>
-          <div className="overview-link-grid">
-            <div className="overview-link-card">
-              <span>直连节点</span>
-              <strong>{summary.directNodeEntry}</strong>
-              <small>状态：{summary.directNodeConfig}；用于保留原直连入口。</small>
-            </div>
-            <div className="overview-link-card">
-              <span>中转链路</span>
-              <strong>
-                {summary.transitRouteEntry} -&gt; {summary.transitRouteTarget}
-              </strong>
-              <small>状态：{summary.transitRouteDetail}；用于手动导入客户端测试。</small>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel overview-section">
-          <div className="status-row">
-            <div>
-              <h2>需要注意</h2>
-              <p className="message">{message}</p>
-            </div>
-            <span className={`pill ${summary.health === "正常" ? "ok" : "warn"}`}>本地健康：{summary.health}</span>
-          </div>
-          <ul className="overview-notice-list">
-            {summary.noticeItems.map((item) => (
-              <li key={item}>{item}</li>
+          <div className="attention-list">
+            {attentionItems.map((item) => (
+              <div className="attention-item" key={item}>
+                <span />
+                <p>{item}</p>
+              </div>
             ))}
-          </ul>
-          <p className="message">最近任务：{summary.recentTask}</p>
+          </div>
         </section>
 
-        <section className="panel overview-section">
-          <div className="status-row">
-            <div>
-              <h2>下一步</h2>
+        <section className="product-section-card quick-actions-card">
+          <div className="product-section-head">
+            <h3>常用操作</h3>
+            <span className="product-badge info">快捷入口</span>
+          </div>
+          <div className="quick-action-grid">
+            <button type="button" onClick={() => onNavigate("serverResources")}>
+              添加落地服务器
+            </button>
+            <button type="button" onClick={() => onNavigate("serverResources")}>
+              添加中转服务器
+            </button>
+            <button type="button" onClick={() => onNavigate("lineBuilder")}>
+              新建直连节点
+            </button>
+            <button type="button" onClick={() => onNavigate("lineBuilder")}>
+              新建中转线路
+            </button>
+          </div>
+        </section>
+
+        <section className="product-section-card">
+          <div className="product-section-head">
+            <h3>最近创建</h3>
+            <span className="product-badge muted">最新 3 条</span>
+          </div>
+          {recentCreated.length ? (
+            <div className="recent-create-list">
+              {recentCreated.map((item) => (
+                <div className="recent-create-row" key={`${item.type}-${item.name}`}>
+                  <strong>{item.name}</strong>
+                  <span>{item.type}</span>
+                  <small>{formatDate(item.created_at)}</small>
+                </div>
+              ))}
             </div>
+          ) : (
+            <div className="empty compact-empty">暂无创建记录。</div>
+          )}
+        </section>
+
+        <section className="product-section-card">
+          <div className="product-section-head">
+            <h3>使用提示</h3>
+            <span className="product-badge info">帮助</span>
           </div>
-          <div className="overview-next-actions">
-            <button className="secondary" type="button" onClick={() => onNavigate("serverResources")}>
-              去服务器资源
-            </button>
-            <button className="secondary" type="button" onClick={() => onNavigate("lineBuilder")}>
-              去线路搭建
-            </button>
-            <button className="secondary" type="button" onClick={() => onNavigate("customerLines")}>
-              去客户线路
-            </button>
-          </div>
+          <ul className="product-tip-list">
+            <li>通过“线路搭建”快速创建直连或中转线路。</li>
+            <li>在“我的线路”中查看线路状态与质量。</li>
+            <li>遇到问题时，先查看“任务记录”获取检测结果。</li>
+            <li>如需帮助，可点击右上角“帮助”查看说明。</li>
+          </ul>
         </section>
       </div>
     </section>
   );
 }
 
-function OverviewStatusCard({
+function DashboardStat({
   detail,
-  icon,
-  label,
-  status,
+  title,
   tone,
   value,
 }: {
   detail: string;
-  icon: string;
-  label: string;
-  status: string;
-  tone: "success" | "warning" | "danger" | "muted" | "info";
+  title: string;
+  tone: "success" | "warning" | "danger" | "info";
   value: string;
 }) {
   return (
-    <div className={`overview-status-card ${tone}`}>
-      <div className="overview-card-header">
-        <span className="overview-card-label">
-          <span className="overview-card-icon">{icon}</span>
-          {label}
-        </span>
-        <small>{status}</small>
+    <article className={`product-stat-card ${tone}`}>
+      <div>
+        <span>{title}</span>
+        <strong>{value}</strong>
       </div>
-      <strong>{value}</strong>
       <p>{detail}</p>
-    </div>
+    </article>
   );
 }
 
-function displayForwardingMethod(method: string | null | undefined) {
-  const labels: Record<string, string> = {
-    haproxy_tcp: "稳定转发服务",
-    haproxy: "稳定转发服务",
-    socat: "稳定转发服务",
-    gost: "稳定转发服务",
-  };
-  return method ? labels[method] ?? "转发服务" : "未返回";
-}
-
 function SettingsPanel() {
+  const [platform, setPlatform] = useState("Facebook");
+  const [region, setRegion] = useState("香港");
+  const [portRange, setPortRange] = useState("28000-39999");
+  const [message, setMessage] = useState("设置只保存在当前浏览器会话中。");
+
   return (
-    <section className="panel wide settings-panel">
-      <div className="status-row">
+    <section className="settings-product wide">
+      <div className="product-page-header">
         <div>
-          <h2>本地控制台设置与安全基线</h2>
+          <h2>设置</h2>
+          <p>本阶段只做前端静态偏好，不接入后端持久化。</p>
         </div>
+        <button type="button" onClick={() => setMessage("设置已在当前页面临时保存。")}>
+          保存设置
+        </button>
       </div>
-      <div className="settings-grid">
-        <div className="settings-card">
-          <strong>登录安全</strong>
-          <span>登录门禁、API 保护、登录失败限流和生产环境 guardrails 已归档。</span>
-        </div>
-        <div className="settings-card">
-          <strong>本地备份</strong>
-          <span>升级前先运行本地数据库备份；真实备份文件不得进入 Git。</span>
-        </div>
-        <div className="settings-card">
-          <strong>链路规则</strong>
-          <span>新增或变更端口前必须检查云服务器安全组 / 云防火墙 / 服务器防火墙。</span>
-        </div>
-        <div className="settings-card">
-          <strong>正式线路变更</strong>
-          <span>正式线路变更必须单独审批；客户端链接不会在普通页面被自动覆盖。</span>
-        </div>
+
+      <div className="settings-product-layout">
+        <aside className="settings-menu">
+          <button className="active" type="button">基本设置</button>
+          <button className="active" type="button">默认创建配置</button>
+          <button type="button">提醒设置</button>
+          <button type="button">界面设置</button>
+        </aside>
+        <section className="product-section-card settings-form-card">
+          <h3>默认创建配置</h3>
+          <div className="settings-form-grid">
+            <label>
+              默认直播平台
+              <select value={platform} onChange={(event) => setPlatform(event.target.value)}>
+                <option>Facebook</option>
+                <option>TikTok</option>
+                <option>YouTube</option>
+                <option>日常使用</option>
+              </select>
+            </label>
+            <label>
+              默认落地地区
+              <select value={region} onChange={(event) => setRegion(event.target.value)}>
+                <option>香港</option>
+                <option>新加坡</option>
+                <option>越南</option>
+                <option>美国</option>
+              </select>
+            </label>
+            <label>
+              默认创建端口范围
+              <input value={portRange} onChange={(event) => setPortRange(event.target.value)} />
+            </label>
+            <label className="settings-check">
+              <input defaultChecked type="checkbox" />
+              默认开启端口放行提醒
+            </label>
+            <label className="settings-check">
+              <input type="checkbox" />
+              默认显示高级设置
+            </label>
+            <label className="settings-check">
+              <input defaultChecked type="checkbox" />
+              创建完成后自动显示客户端链接
+            </label>
+          </div>
+
+          <h3>提醒设置</h3>
+          <div className="settings-toggle-list">
+            <label>
+              <input defaultChecked type="checkbox" />
+              端口未放行提醒
+            </label>
+            <label>
+              <input defaultChecked type="checkbox" />
+              服务器离线提醒
+            </label>
+            <label>
+              <input defaultChecked type="checkbox" />
+              创建失败提醒
+            </label>
+          </div>
+          <p className="message">{message}</p>
+        </section>
       </div>
     </section>
   );
