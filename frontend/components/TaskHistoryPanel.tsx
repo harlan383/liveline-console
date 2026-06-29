@@ -327,7 +327,7 @@ export function TaskHistoryPanel() {
             <span>时间</span>
             <span>任务名称</span>
             <span>关联对象</span>
-            <span>状态</span>
+            <span>当前状态</span>
             <span>结果说明</span>
             <span>操作</span>
           </div>
