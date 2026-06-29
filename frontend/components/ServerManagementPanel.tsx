@@ -180,6 +180,9 @@ const BBR_RECOMMENDATION_LABELS: Record<string, string> = {
   bbr_readonly_result_required: "需要最新 BBR 只读结果",
   bbr_not_available: "未确认支持",
   not_available_or_needs_manual_check: "未确认支持",
+  sysctl_config_file_missing: "BBR 固定配置文件不存在，请重新安装/升级 Worker",
+  sysctl_config_file_not_writable: "BBR 固定配置文件不可写，请重新安装/升级 Worker",
+  sysctl_d_directory_missing: "sysctl.d 目录不存在",
 };
 const BBR_CONFIRMATION_LABELS: Record<string, string> = {
   confirm_load_tcp_bbr_module: "确认允许后续审批阶段加载 tcp_bbr 模块",
@@ -206,6 +209,13 @@ const BBR_SAFETY_LABELS: Record<string, string> = {
   "no service restart": "不重启服务",
   "no port/share_link/cutover changes": "不修改端口、share_link 或 cutover",
 };
+const BBR_DRY_RUN_CHECK_LABELS: Record<string, string> = {
+  modprobe_preview: "modprobe dry-run",
+  sysctl_d_exists: "sysctl.d 目录存在",
+  sysctl_config_file_exists: "BBR 固定配置文件存在",
+  sysctl_config_file_writable: "BBR 固定配置文件可写",
+  running_as_root: "Worker 以 root 运行",
+};
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -225,6 +235,10 @@ function bbrConfirmationLabel(value: string) {
 
 function bbrSafetyLabel(value: string) {
   return BBR_SAFETY_LABELS[value] ?? value;
+}
+
+function bbrDryRunCheckLabel(value: string) {
+  return BBR_DRY_RUN_CHECK_LABELS[value] ?? value;
 }
 
 const emptyWorkerBootstrapForm: WorkerBootstrapFormState = {
@@ -1499,6 +1513,37 @@ export function ServerManagementPanel() {
         {command.command_type === "landing_preflight" && command.status === "succeeded"
           ? renderLandingPreflightSummary(command.result_json)
           : null}
+        {command.command_type === "bbr_enable_dry_run" ? renderBbrCommandResultSummary(command.result_json) : null}
+      </div>
+    );
+  }
+
+  function renderBbrCommandResultSummary(resultJson: Record<string, unknown>) {
+    const blockedReasons = Array.isArray(resultJson.blocked_reasons)
+      ? resultJson.blocked_reasons.filter((item): item is string => typeof item === "string")
+      : [];
+    const checks = Array.isArray(resultJson.dry_run_checks)
+      ? resultJson.dry_run_checks.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      : [];
+    if (!blockedReasons.length && !checks.length) {
+      return null;
+    }
+    return (
+      <div className="worker-preflight-summary" aria-label="BBR dry-run 检查摘要">
+        {checks.map((check) => {
+          const name = typeof check.name === "string" ? check.name : "unknown";
+          const status = typeof check.status === "string" ? check.status : "-";
+          return (
+            <span key={name}>
+              {bbrDryRunCheckLabel(name)}：{status === "passed" ? "通过" : "未通过"}
+            </span>
+          );
+        })}
+        {blockedReasons.map((reason) => (
+          <span className="danger-text" key={reason}>
+            {bbrRecommendationLabel(reason)}
+          </span>
+        ))}
       </div>
     );
   }

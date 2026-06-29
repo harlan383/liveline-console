@@ -532,6 +532,7 @@ CONFIG_DIR="/etc/liveline-worker"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 SERVICE_FILE="/etc/systemd/system/liveline-worker.service"
 BINARY_PATH="/usr/local/bin/liveline-worker"
+BBR_SYSCTL_CONFIG_FILE="/etc/sysctl.d/99-liveline-bbr.conf"
 
 if [[ -z "$INTERFACE_NAME" ]]; then
   echo "LiveLine Worker install: missing interface_name, for example eth0, ens3, ens5, or enp1s0." >&2
@@ -583,12 +584,20 @@ echo "LiveLine Worker install: installing liveline-worker for role=$ROLE interfa
 echo "LiveLine Worker install: this installs only the worker binary and systemd service."
 echo "LiveLine Worker install: it does not install Xray, socat, gost, or HAProxy; does not open ports; does not modify firewall rules, cloud firewalls, or cloud security groups."
 echo "LiveLine Worker install: HAProxy routes must still be created later through the protected LiveLine route flow."
+echo "LiveLine Worker install: prepares fixed BBR sysctl config placeholder only."
+echo "LiveLine Worker install: it does not enable BBR, does not run sysctl, and does not change kernel settings."
 
 echo "LiveLine Worker install: preparing Worker sandbox writable directories."
 mkdir -p /opt/liveline-xray
 chmod 755 /opt/liveline-xray
 mkdir -p /etc/haproxy/liveline/routes /run/haproxy
 chmod 755 /etc/haproxy /etc/haproxy/liveline /etc/haproxy/liveline/routes /run/haproxy
+install -d -m 0755 /etc/sysctl.d
+if [[ ! -e "$BBR_SYSCTL_CONFIG_FILE" ]]; then
+  install -m 0644 /dev/null "$BBR_SYSCTL_CONFIG_FILE"
+else
+  chmod 0644 "$BBR_SYSCTL_CONFIG_FILE"
+fi
 
 install -d -m 700 "$CONFIG_DIR"
 TMP_BINARY="$(mktemp)"
@@ -625,7 +634,7 @@ NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=read-only
 PrivateTmp=true
-ReadWritePaths=/opt/liveline-xray /etc/systemd/system /run/systemd /etc/haproxy /run/haproxy
+ReadWritePaths=/opt/liveline-xray /etc/systemd/system /run/systemd /etc/haproxy /run/haproxy /etc/sysctl.d/99-liveline-bbr.conf
 
 [Install]
 WantedBy=multi-user.target

@@ -799,7 +799,7 @@ export const OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT = "CONFIRM_OFFLINE_LOCAL_REMOVE";
 
 export type WorkerRole = "landing" | "transit";
 
-export const CURRENT_WORKER_INSTALL_VERSION = "0.1.40-stage-3.3.205-bbr-real-enable";
+export const CURRENT_WORKER_INSTALL_VERSION = "0.1.41-stage-3.3.206-bbr-sysctl-sandbox-fix";
 
 export type WorkerTokenCreateRequest = {
   role: WorkerRole;

@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.40-stage-3.3.205-bbr-real-enable"
+const workerVersion = "0.1.41-stage-3.3.206-bbr-sysctl-sandbox-fix"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -6043,7 +6043,19 @@ func executeBBREnableDryRun(cfg config, hostname string, payload map[string]any)
 	if info, err := os.Stat("/etc/sysctl.d"); err == nil && info.IsDir() {
 		sysctlDirExists = true
 	}
-	return buildBBREnableDryRunResult(cfg, hostname, bbr, modprobeOutput, modprobeErr, os.Geteuid() == 0, sysctlDirExists), nil
+	configFileExists, configFileWritable, configFileWritableError := checkWritableExistingFile(bbrSysctlConfigPath)
+	return buildBBREnableDryRunResult(
+		cfg,
+		hostname,
+		bbr,
+		modprobeOutput,
+		modprobeErr,
+		os.Geteuid() == 0,
+		sysctlDirExists,
+		configFileExists,
+		configFileWritable,
+		configFileWritableError,
+	), nil
 }
 
 func executeBBREnableRealExecution(cfg config, hostname string, payload map[string]any) (map[string]any, error) {
@@ -6278,7 +6290,37 @@ func firstUnsafePayloadKeyAt(value any, path string, unsafeKeys map[string]bool)
 	return "", false
 }
 
-func buildBBREnableDryRunResult(cfg config, hostname string, bbr map[string]any, modprobeOutput string, modprobeErr string, runningAsRoot bool, sysctlDirExists bool) map[string]any {
+func checkWritableExistingFile(path string) (bool, bool, string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, false, "missing"
+		}
+		return false, false, truncateCompactString(err.Error(), 240)
+	}
+	if info.IsDir() {
+		return true, false, "path_is_directory"
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return true, false, truncateCompactString(err.Error(), 240)
+	}
+	_ = file.Close()
+	return true, true, ""
+}
+
+func buildBBREnableDryRunResult(
+	cfg config,
+	hostname string,
+	bbr map[string]any,
+	modprobeOutput string,
+	modprobeErr string,
+	runningAsRoot bool,
+	sysctlDirExists bool,
+	configFileExists bool,
+	configFileWritable bool,
+	configFileWritableError string,
+) map[string]any {
 	blockedReasons := []string{}
 	plannedActions := []any{}
 	verificationPlan := []any{
@@ -6302,6 +6344,11 @@ func buildBBREnableDryRunResult(cfg config, hostname string, bbr map[string]any,
 		}
 		if !sysctlDirExists {
 			blockedReasons = append(blockedReasons, "sysctl_d_directory_missing")
+		}
+		if !configFileExists {
+			blockedReasons = append(blockedReasons, "sysctl_config_file_missing")
+		} else if !configFileWritable {
+			blockedReasons = append(blockedReasons, "sysctl_config_file_not_writable")
 		}
 		if !availableContainsBBR && moduleAvailable {
 			plannedActions = append(plannedActions, map[string]any{
@@ -6350,6 +6397,19 @@ func buildBBREnableDryRunResult(cfg config, hostname string, bbr map[string]any,
 				"name":                 "sysctl_d_exists",
 				"path_preview":         "/etc/sysctl.d",
 				"status":               passFailStatus(sysctlDirExists),
+				"executed_real_change": false,
+			},
+			map[string]any{
+				"name":                 "sysctl_config_file_exists",
+				"path_preview":         bbrSysctlConfigPath,
+				"status":               passFailStatus(configFileExists),
+				"executed_real_change": false,
+			},
+			map[string]any{
+				"name":                 "sysctl_config_file_writable",
+				"path_preview":         bbrSysctlConfigPath,
+				"status":               passFailStatus(configFileExists && configFileWritable),
+				"error":                truncateReadonlyOutput(configFileWritableError, readonlyOutputLimit),
 				"executed_real_change": false,
 			},
 			map[string]any{
