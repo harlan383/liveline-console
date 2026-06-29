@@ -200,6 +200,8 @@ export function TaskHistoryPanel() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [dateRange, setDateRange] = useState("全部日期");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [message, setMessage] = useState("正在读取本地任务记录。");
   const [loading, setLoading] = useState(false);
   const selectedTask = useMemo(
@@ -307,6 +309,11 @@ export function TaskHistoryPanel() {
             <option>最近 7 天</option>
             <option>最近 30 天</option>
           </select>
+          <div className="date-range-inputs">
+            <input aria-label="开始日期" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+            <span>-</span>
+            <input aria-label="结束日期" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+          </div>
         </div>
 
         <div className="product-table task-product-table">

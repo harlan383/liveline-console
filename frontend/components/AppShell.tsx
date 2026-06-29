@@ -6,6 +6,7 @@ import { AdvancedDebugPanel } from "@/components/AdvancedDebugPanel";
 import { CustomerLinesPanel } from "@/components/CustomerLinesPanel";
 import { LineBuilderPanel } from "@/components/LineBuilderPanel";
 import { LoginScreen } from "@/components/LoginScreen";
+import { ProductIcon } from "@/components/ProductIcons";
 import { ServerResourcesPanel } from "@/components/ServerResourcesPanel";
 import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
 import {
@@ -31,55 +32,63 @@ type PanelId = "dashboard" | "lineBuilder" | "customerLines" | "serverResources"
 const panels: Array<{
   id: PanelId;
   icon: string;
+  tone: "blue" | "green" | "orange" | "red" | "purple" | "slate";
   label: string;
   title: string;
   subtitle: string;
 }> = [
   {
     id: "dashboard",
-    icon: "总",
+    icon: "dashboard",
+    tone: "blue",
     label: "总览",
     title: "业务总览",
     subtitle: "查看线路、服务器和待处理事项。",
   },
   {
     id: "lineBuilder",
-    icon: "建",
+    icon: "builder",
+    tone: "green",
     label: "线路搭建",
     title: "线路搭建",
     subtitle: "按步骤准备服务器并规划直连或中转线路。",
   },
   {
     id: "customerLines",
-    icon: "线",
+    icon: "lines",
+    tone: "purple",
     label: "我的线路",
     title: "我的线路",
     subtitle: "按客户、平台和用途查看当前线路。",
   },
   {
     id: "serverResources",
-    icon: "服",
+    icon: "servers",
+    tone: "orange",
     label: "服务器资源",
     title: "服务器资源",
     subtitle: "管理落地服务器、自建中转和商家入口。",
   },
   {
     id: "tasks",
-    icon: "任",
+    icon: "tasks",
+    tone: "green",
     label: "任务记录",
     title: "任务记录",
     subtitle: "查看创建、删除、检测等操作结果。",
   },
   {
     id: "settings",
-    icon: "设",
+    icon: "settings",
+    tone: "slate",
     label: "设置",
     title: "设置",
     subtitle: "配置默认创建偏好和提醒方式。",
   },
   {
     id: "advancedDebug",
-    icon: "调",
+    icon: "debug",
+    tone: "red",
     label: "高级调试",
     title: "高级调试",
     subtitle: "保留原技术面板，用于审计和排查。",
@@ -209,31 +218,38 @@ export function AppShell() {
               type="button"
               onClick={() => setActivePanel(panel.id)}
             >
-              <span className="nav-icon">{panel.icon}</span>
+              <ProductIcon className="nav-icon" name={panel.icon} tone={panel.tone} />
               <span>{panel.label}</span>
             </button>
           ))}
         </nav>
+        <button className="sidebar-health-card" type="button" onClick={() => setActivePanel("advancedDebug")}>
+          <span className="health-dot" />
+          <span>
+            <strong>系统运行正常</strong>
+            <small>最近更新：5分钟前</small>
+          </span>
+          <ProductIcon name="arrow" tone="slate" />
+        </button>
       </aside>
 
       <section className="main product-main">
         <header className="topbar product-topbar">
           <div>
-            <span className="page-eyebrow">LiveLine Console</span>
             <h1>{activePanelMeta.title}</h1>
-            <p>{activePanelMeta.subtitle}</p>
           </div>
           <div className="topbar-actions product-topbar-actions">
             <button className="topbar-tool" aria-label="通知" type="button">
-              通知
+              <ProductIcon name="bell" tone="slate" />
             </button>
             <button className="topbar-tool" aria-label="帮助" type="button">
-              帮助
+              <ProductIcon name="help" tone="slate" />
             </button>
             <span className="product-avatar" aria-hidden="true">
               {currentAdmin.username.slice(0, 1).toUpperCase()}
             </span>
             <span className="admin-badge">{currentAdmin.username}</span>
+            <span className="topbar-caret" aria-hidden="true">⌄</span>
             <button className="ghost-button" type="button" onClick={handleLogout}>
               退出
             </button>
@@ -359,10 +375,10 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
       </div>
 
       <div className="product-stat-grid four">
-        <DashboardStat title="正常线路" value={`${normalLines}`} detail="可用直连节点和 active 中转线路" tone="success" />
-        <DashboardStat title="风险线路" value={`${riskLines}`} detail="心跳过期或创建中项目" tone="warning" />
-        <DashboardStat title="异常线路" value={`${abnormalLines}`} detail="失败任务或异常线路" tone="danger" />
-        <DashboardStat title="待处理" value={`${pendingItems}`} detail={healthOk ? "本地服务正常" : "本地健康需检查"} tone="info" />
+        <DashboardStat icon="lines" title="正常线路" value={`${normalLines}`} detail="可用直连节点和 active 中转线路" tone="success" />
+        <DashboardStat icon="alert" title="风险线路" value={`${riskLines}`} detail="心跳过期或创建中项目" tone="warning" />
+        <DashboardStat icon="alert" title="异常线路" value={`${abnormalLines}`} detail="失败任务或异常线路" tone="danger" />
+        <DashboardStat icon="tasks" title="待处理" value={`${pendingItems}`} detail={healthOk ? "本地服务正常" : "本地健康需检查"} tone="info" />
       </div>
 
       <div className="product-dashboard-layout">
@@ -376,8 +392,12 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           <div className="attention-list">
             {attentionItems.map((item) => (
               <div className="attention-item" key={item}>
-                <span />
-                <p>{item}</p>
+                <ProductIcon name="alert" tone={abnormalLines ? "red" : "orange"} />
+                <div>
+                  <strong>{item}</strong>
+                  <small>刚刚更新</small>
+                </div>
+                <ProductIcon name="arrow" tone="slate" />
               </div>
             ))}
           </div>
@@ -390,16 +410,32 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           </div>
           <div className="quick-action-grid">
             <button type="button" onClick={() => onNavigate("serverResources")}>
-              添加落地服务器
+              <ProductIcon name="server" tone="blue" />
+              <span>
+                <strong>添加落地服务器</strong>
+                <small>接入客户出口节点</small>
+              </span>
             </button>
             <button type="button" onClick={() => onNavigate("serverResources")}>
-              添加中转服务器
+              <ProductIcon name="servers" tone="orange" />
+              <span>
+                <strong>添加中转服务器</strong>
+                <small>准备自建中转入口</small>
+              </span>
             </button>
             <button type="button" onClick={() => onNavigate("lineBuilder")}>
-              新建直连节点
+              <ProductIcon name="builder" tone="green" />
+              <span>
+                <strong>新建直连节点</strong>
+                <small>规划客户直连线路</small>
+              </span>
             </button>
             <button type="button" onClick={() => onNavigate("lineBuilder")}>
-              新建中转线路
+              <ProductIcon name="route" tone="purple" />
+              <span>
+                <strong>新建中转线路</strong>
+                <small>规划中转访问路径</small>
+              </span>
             </button>
           </div>
         </section>
@@ -413,6 +449,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
             <div className="recent-create-list">
               {recentCreated.map((item) => (
                 <div className="recent-create-row" key={`${item.type}-${item.name}`}>
+                  <ProductIcon name={item.type === "直连节点" ? "builder" : "route"} tone="blue" />
                   <strong>{item.name}</strong>
                   <span>{item.type}</span>
                   <small>{formatDate(item.created_at)}</small>
@@ -443,27 +480,32 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
 
 function DashboardStat({
   detail,
+  icon,
   title,
   tone,
   value,
 }: {
   detail: string;
+  icon: string;
   title: string;
   tone: "success" | "warning" | "danger" | "info";
   value: string;
 }) {
   return (
     <article className={`product-stat-card ${tone}`}>
+      <ProductIcon name={icon} tone={tone === "success" ? "green" : tone === "warning" ? "orange" : tone === "danger" ? "red" : "blue"} />
       <div>
         <span>{title}</span>
         <strong>{value}</strong>
       </div>
       <p>{detail}</p>
+      <small className="stat-footnote"><span />状态已同步</small>
     </article>
   );
 }
 
 function SettingsPanel() {
+  const [activeSetting, setActiveSetting] = useState("默认创建配置");
   const [platform, setPlatform] = useState("Facebook");
   const [region, setRegion] = useState("香港");
   const [portRange, setPortRange] = useState("28000-39999");
@@ -476,20 +518,18 @@ function SettingsPanel() {
           <h2>设置</h2>
           <p>本阶段只做前端静态偏好，不接入后端持久化。</p>
         </div>
-        <button type="button" onClick={() => setMessage("设置已在当前页面临时保存。")}>
-          保存设置
-        </button>
       </div>
 
       <div className="settings-product-layout">
         <aside className="settings-menu">
-          <button className="active" type="button">基本设置</button>
-          <button className="active" type="button">默认创建配置</button>
-          <button type="button">提醒设置</button>
-          <button type="button">界面设置</button>
+          {["基本设置", "默认创建配置", "提醒设置", "界面设置"].map((item) => (
+            <button className={activeSetting === item ? "active" : ""} key={item} type="button" onClick={() => setActiveSetting(item)}>
+              {item}
+            </button>
+          ))}
         </aside>
         <section className="product-section-card settings-form-card">
-          <h3>默认创建配置</h3>
+          <h3>{activeSetting}</h3>
           <div className="settings-form-grid">
             <label>
               默认直播平台
@@ -513,35 +553,44 @@ function SettingsPanel() {
               默认创建端口范围
               <input value={portRange} onChange={(event) => setPortRange(event.target.value)} />
             </label>
-            <label className="settings-check">
+            <label className="settings-check product-switch">
               <input defaultChecked type="checkbox" />
+              <span />
               默认开启端口放行提醒
             </label>
-            <label className="settings-check">
+            <label className="settings-check product-switch">
               <input type="checkbox" />
+              <span />
               默认显示高级设置
             </label>
-            <label className="settings-check">
+            <label className="settings-check product-switch">
               <input defaultChecked type="checkbox" />
+              <span />
               创建完成后自动显示客户端链接
             </label>
           </div>
 
           <h3>提醒设置</h3>
           <div className="settings-toggle-list">
-            <label>
+            <label className="product-switch">
               <input defaultChecked type="checkbox" />
+              <span />
               端口未放行提醒
             </label>
-            <label>
+            <label className="product-switch">
               <input defaultChecked type="checkbox" />
+              <span />
               服务器离线提醒
             </label>
-            <label>
+            <label className="product-switch">
               <input defaultChecked type="checkbox" />
+              <span />
               创建失败提醒
             </label>
           </div>
+          <button className="settings-save-button" type="button" onClick={() => setMessage("设置已在当前页面临时保存。")}>
+            保存设置
+          </button>
           <p className="message">{message}</p>
         </section>
       </div>

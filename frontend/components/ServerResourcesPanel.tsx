@@ -2,20 +2,24 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { AddLandingServerModal, AddTransitServerModal } from "@/components/ProductDemoModals";
+import { AddLandingServerModal, AddTransitServerModal, CreateDirectNodeModal, CreateTransitLineModal } from "@/components/ProductDemoModals";
+import { ProductIcon } from "@/components/ProductIcons";
 import {
   apiFetch,
+  type NodeData,
+  type NodeListResult,
   type TransitResourceData,
   type TransitResourceListResult,
   type VpsServerData,
   type VpsServerListResult,
 } from "@/lib/api";
 
-type ServerModal = "landing" | "transit" | null;
+type ServerModal = "landing" | "transit" | "direct" | "transitLine" | null;
+type DetailTarget = { kind: "landing"; data: VpsServerData } | { kind: "transit"; data: TransitResourceData } | null;
 
 function helperStatusLabel(resource: { worker_online?: boolean; worker_display_status?: string | null; display_status?: string | null }) {
   if (resource.worker_online) {
-    return "在线";
+    return "运行正常";
   }
   const displayStatus = resource.worker_display_status ?? resource.display_status;
   if (displayStatus === "stale") {
@@ -54,23 +58,29 @@ function endpoint(host: string | null | undefined, port: number | null | undefin
 
 export function ServerResourcesPanel() {
   const [servers, setServers] = useState<VpsServerData[]>([]);
+  const [nodes, setNodes] = useState<NodeData[]>([]);
   const [resources, setResources] = useState<TransitResourceData[]>([]);
   const [activeModal, setActiveModal] = useState<ServerModal>(null);
+  const [detailTarget, setDetailTarget] = useState<DetailTarget>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [message, setMessage] = useState("正在读取服务器资源。");
 
   async function loadData() {
-    const [serverResult, resourceResult] = await Promise.all([
+    const [serverResult, nodeResult, resourceResult] = await Promise.all([
       apiFetch<VpsServerListResult>("/api/vps"),
+      apiFetch<NodeListResult>("/api/nodes"),
       apiFetch<TransitResourceListResult>("/api/transit-resources"),
     ]);
     if (serverResult.success) {
       setServers(serverResult.data.servers);
     }
+    if (nodeResult.success) {
+      setNodes(nodeResult.data.nodes);
+    }
     if (resourceResult.success) {
       setResources(resourceResult.data.resources);
     }
-    setMessage(serverResult.success && resourceResult.success ? "服务器资源已刷新。" : "部分资源暂时无法读取。");
+    setMessage(serverResult.success && nodeResult.success && resourceResult.success ? "服务器资源已刷新。" : "部分资源暂时无法读取。");
   }
 
   useEffect(() => {
@@ -138,7 +148,7 @@ export function ServerResourcesPanel() {
                     <strong>{server.name}</strong>
                     <small>{server.ip}</small>
                   </div>
-                  <span className={`product-badge ${statusTone(server)}`}>{helperStatusLabel(server)}</span>
+                  <span className={`product-badge ${statusTone(server)}`}><span className="status-dot" />{helperStatusLabel(server)}</span>
                 </div>
                 <div className="resource-facts">
                   <span>地区</span>
@@ -151,10 +161,10 @@ export function ServerResourcesPanel() {
                   <strong>{heartbeat(server.worker_last_heartbeat_at)}</strong>
                 </div>
                 <div className="resource-card-actions">
-                  <button className="secondary" disabled type="button">
+                  <button className="secondary" type="button" onClick={() => setDetailTarget({ kind: "landing", data: server })}>
                     查看
                   </button>
-                  <button disabled type="button">
+                  <button type="button" onClick={() => setActiveModal("direct")}>
                     新建直连节点
                   </button>
                 </div>
@@ -174,10 +184,22 @@ export function ServerResourcesPanel() {
         {selfTransitResources.length || providerTransitResources.length ? (
           <div className="resource-management-grid">
             {selfTransitResources.map((resource) => (
-              <TransitResourceCard key={resource.id} resource={resource} typeLabel="自建中转服务器" />
+              <TransitResourceCard
+                key={resource.id}
+                resource={resource}
+                typeLabel="自建中转服务器"
+                onOpenDetail={() => setDetailTarget({ kind: "transit", data: resource })}
+                onOpenTransitLine={() => setActiveModal("transitLine")}
+              />
             ))}
             {providerTransitResources.map((resource) => (
-              <TransitResourceCard key={resource.id} resource={resource} typeLabel="商家中转入口" />
+              <TransitResourceCard
+                key={resource.id}
+                resource={resource}
+                typeLabel="商家中转入口"
+                onOpenDetail={() => setDetailTarget({ kind: "transit", data: resource })}
+                onOpenTransitLine={() => setActiveModal("transitLine")}
+              />
             ))}
           </div>
         ) : (
@@ -189,6 +211,11 @@ export function ServerResourcesPanel() {
 
       {activeModal === "landing" ? <AddLandingServerModal onClose={() => setActiveModal(null)} /> : null}
       {activeModal === "transit" ? <AddTransitServerModal onClose={() => setActiveModal(null)} /> : null}
+      {activeModal === "direct" ? <CreateDirectNodeModal servers={servers} onClose={() => setActiveModal(null)} /> : null}
+      {activeModal === "transitLine" ? (
+        <CreateTransitLineModal nodes={nodes.filter((node) => node.status === "active")} resources={resources.filter((resource) => !resource.deleted_at)} onClose={() => setActiveModal(null)} />
+      ) : null}
+      {detailTarget ? <ResourceDetailModal target={detailTarget} onClose={() => setDetailTarget(null)} /> : null}
     </section>
   );
 }
@@ -202,16 +229,26 @@ function ResourceMiniStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TransitResourceCard({ resource, typeLabel }: { resource: TransitResourceData; typeLabel: string }) {
+function TransitResourceCard({
+  onOpenDetail,
+  onOpenTransitLine,
+  resource,
+  typeLabel,
+}: {
+  onOpenDetail: () => void;
+  onOpenTransitLine: () => void;
+  resource: TransitResourceData;
+  typeLabel: string;
+}) {
   return (
     <article className="resource-management-card">
       <div className="resource-card-top">
-        <span className="resource-region-icon">中</span>
+        <span className="resource-region-icon"><ProductIcon name="route" tone="orange" /></span>
         <div>
           <strong>{resource.name}</strong>
           <small>{endpoint(resource.entry_host, resource.entry_port)}</small>
         </div>
-        <span className={`product-badge ${statusTone(resource)}`}>{helperStatusLabel(resource)}</span>
+        <span className={`product-badge ${statusTone(resource)}`}><span className="status-dot" />{helperStatusLabel(resource)}</span>
       </div>
       <div className="resource-facts">
         <span>类型</span>
@@ -224,13 +261,43 @@ function TransitResourceCard({ resource, typeLabel }: { resource: TransitResourc
         <strong>{heartbeat(resource.worker_last_heartbeat_at)}</strong>
       </div>
       <div className="resource-card-actions">
-        <button className="secondary" disabled type="button">
+        <button className="secondary" type="button" onClick={onOpenDetail}>
           查看
         </button>
-        <button disabled type="button">
+        <button type="button" onClick={onOpenTransitLine}>
           新建中转线路
         </button>
       </div>
     </article>
+  );
+}
+
+function ResourceDetailModal({ onClose, target }: { onClose: () => void; target: DetailTarget }) {
+  if (!target) {
+    return null;
+  }
+  const isLanding = target.kind === "landing";
+  const name = isLanding ? target.data.name : target.data.name;
+  const endpointText = isLanding ? endpoint(target.data.ip, 22) : endpoint(target.data.entry_host, target.data.entry_port);
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal-card customer-line-modal">
+        <div className="modal-header">
+          <h3>{name}</h3>
+          <button className="modal-close-button" type="button" onClick={onClose}>×</button>
+        </div>
+        <div className="business-detail-grid">
+          <span>资源类型</span>
+          <strong>{isLanding ? "落地服务器" : "中转服务器"}</strong>
+          <span>入口地址</span>
+          <strong>{endpointText}</strong>
+          <span>当前状态</span>
+          <strong>{helperStatusLabel(target.data)}</strong>
+          <span>最近心跳</span>
+          <strong>{heartbeat(isLanding ? target.data.worker_last_heartbeat_at : target.data.worker_last_heartbeat_at)}</strong>
+        </div>
+        <p className="message">当前详情为前端展示，不会保存数据、不会安装助手、不会创建任务。</p>
+      </div>
+    </div>
   );
 }
