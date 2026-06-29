@@ -17,6 +17,7 @@ import {
   OFFLINE_LOCAL_REMOVE_CONFIRM_TEXT,
   remoteCleanupDeleteNode,
   remoteCleanupDeleteVpsServer,
+  requestBbrEnableDryRun,
   requestBbrEnablePlan,
   REMOTE_CLEANUP_CONFIRM_TEXT,
   type BbrEnablePlanResult,
@@ -340,6 +341,7 @@ function workerCommandTypeLabel(commandType: string) {
     collect_status: "状态采集",
     service_status: "服务状态",
     landing_preflight: "只读预检",
+    bbr_enable_dry_run: "BBR 开启 dry-run",
     landing_node_create: "正式创建落地节点",
   };
   return labels[commandType] ?? commandType;
@@ -461,6 +463,7 @@ export function ServerManagementPanel() {
   const [workerCommandLoadingId, setWorkerCommandLoadingId] = useState<string | null>(null);
   const [bbrEnablePlanByServerId, setBbrEnablePlanByServerId] = useState<Record<string, BbrEnablePlanResult>>({});
   const [bbrEnablePlanLoadingServerId, setBbrEnablePlanLoadingServerId] = useState<string | null>(null);
+  const [bbrEnableDryRunLoadingServerId, setBbrEnableDryRunLoadingServerId] = useState<string | null>(null);
   const [deleteMode, setDeleteMode] = useState<DeleteFlowMode>("remote_cleanup");
   const [selectedNodeForDelete, setSelectedNodeForDelete] = useState<ServerNodeSummary | null>(null);
   const [selectedNodeDetail, setSelectedNodeDetail] = useState<NodeData | null>(null);
@@ -1020,6 +1023,48 @@ export function ServerManagementPanel() {
     }
   }
 
+  async function refreshBbrDryRunUntilTerminal(command: WorkerCommandData, serverId: string) {
+    for (let attempt = 0; attempt < CLEANUP_COMMAND_MAX_POLLS; attempt += 1) {
+      await sleep(CLEANUP_COMMAND_POLL_INTERVAL_MS);
+      const result = await getWorkerCommand(command.id);
+      if (!result.success) {
+        continue;
+      }
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [serverId]: result.data }));
+      if (CLEANUP_COMMAND_TERMINAL_STATUSES.has(result.data.status)) {
+        const workerId = result.data.target_worker_id || result.data.worker_id;
+        await loadWorkerCommands(workerId, serverId);
+        const summary = result.data.result_summary ? ` / ${result.data.result_summary}` : "";
+        setMessage(`BBR 开启 dry-run 已进入终态：${workerCommandStatusLabel(result.data.status)}${summary}。`);
+        return;
+      }
+    }
+    await loadWorkerCommands(command.target_worker_id || command.worker_id, serverId);
+    setMessage("BBR 开启 dry-run 仍在执行，最近命令已刷新；请稍后查看任务中心。");
+  }
+
+  async function openBbrEnableDryRun(server: VpsServerData) {
+    setBbrEnableDryRunLoadingServerId(server.id);
+    setMessage("正在创建 BBR 开启 dry-run 命令。该命令不会真正开启 BBR。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await requestBbrEnableDryRun(server.id, csrfToken);
+      if (!result.success) {
+        setMessage(`${result.error_code}: ${result.message}`);
+        return;
+      }
+      setBbrEnablePlanByServerId((current) => ({ ...current, [server.id]: result.data.plan }));
+      setLatestWorkerCommandByServerId((current) => ({ ...current, [server.id]: result.data.command }));
+      setMessage(`BBR 开启 dry-run 命令已创建：${result.data.command.id}。不会执行 modprobe、不会写 sysctl。`);
+      await loadWorkerCommands(result.data.target_worker_id, server.id);
+      void refreshBbrDryRunUntilTerminal(result.data.command, server.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建 BBR 开启 dry-run 命令失败。");
+    } finally {
+      setBbrEnableDryRunLoadingServerId(null);
+    }
+  }
+
   async function waitForWorkerCommandCompletion(workerId: string, commandId: string, serverId: string, runningStep: string) {
     for (let attempt = 0; attempt < 90; attempt += 1) {
       const result = await listWorkerCommands(workerId);
@@ -1269,7 +1314,7 @@ export function ServerManagementPanel() {
     );
   }
 
-  function renderBbrEnablePlan(plan: BbrEnablePlanResult | undefined) {
+  function renderBbrEnablePlan(plan: BbrEnablePlanResult | undefined, server: VpsServerData) {
     if (!plan) {
       return null;
     }
@@ -1292,6 +1337,16 @@ export function ServerManagementPanel() {
           <span>modinfo：{stringValue(bbr.modinfo_status)}</span>
         </div>
         <p className="field-hint">这是只读审批方案：不会创建 Worker command，不会加载模块，不会写 sysctl，不会远程执行。</p>
+        {plan.ready && !plan.already_enabled ? (
+          <button
+            className="secondary"
+            disabled={bbrEnableDryRunLoadingServerId === server.id}
+            type="button"
+            onClick={() => void openBbrEnableDryRun(server)}
+          >
+            {bbrEnableDryRunLoadingServerId === server.id ? "创建 dry-run 中..." : "BBR 开启 dry-run，不会真正开启"}
+          </button>
+        ) : null}
         {blockedReasons.length ? (
           <div className="field-hint danger-text">阻塞原因：{blockedReasons.map(bbrRecommendationLabel).join("、")}</div>
         ) : null}
@@ -1659,7 +1714,7 @@ export function ServerManagementPanel() {
                           {bbrEnablePlanLoadingServerId === server.id ? "生成中..." : "BBR 开启方案"}
                         </button>
                         {renderRecentWorkerCommand(latestWorkerCommandForServer(server))}
-                        {renderBbrEnablePlan(bbrEnablePlanByServerId[server.id])}
+                        {renderBbrEnablePlan(bbrEnablePlanByServerId[server.id], server)}
                       </div>
                     </details>
                   </div>

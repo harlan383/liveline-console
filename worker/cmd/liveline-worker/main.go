@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-const workerVersion = "0.1.38-stage-3.3.201-bbr-module-readonly"
+const workerVersion = "0.1.39-stage-3.3.204-bbr-enable-dry-run"
 const commandPollIntervalSeconds = 20
 const readonlyCommandTimeout = 5 * time.Second
 const readonlyOutputLimit = 12000
@@ -572,6 +572,16 @@ func executeWorkerCommand(cfg config, command workerCommand) (map[string]any, er
 			return nil, fmt.Errorf("landing_preflight requires landing worker role")
 		}
 		result := collectLandingPreflight(cfg, hostname)
+		result["timestamp"] = now
+		return result, nil
+	case "bbr_enable_dry_run":
+		if cfg.Role != "landing" {
+			return nil, fmt.Errorf("bbr_enable_dry_run requires landing worker role")
+		}
+		result, err := executeBBREnableDryRun(cfg, hostname, command.Payload)
+		if err != nil {
+			return nil, err
+		}
 		result["timestamp"] = now
 		return result, nil
 	case "landing_node_create":
@@ -5967,6 +5977,211 @@ func landingBBRReadonlySummary() map[string]any {
 		"default_qdisc_is_fq":               qdiscIsFQ,
 		"recommendation":                    recommendation,
 	}
+}
+
+const bbrEnableDryRunStage = "Stage 3.3.204-bbr-enable-protected-execution-dry-run"
+
+var bbrEnableDryRunUnsafePayloadKeys = map[string]bool{
+	"shell":           true,
+	"command":         true,
+	"commands":        true,
+	"args":            true,
+	"argv":            true,
+	"script":          true,
+	"exec":            true,
+	"exec_start":      true,
+	"systemd_unit":    true,
+	"unit_content":    true,
+	"service_content": true,
+	"modprobe":        true,
+	"sysctl_write":    true,
+	"sysctl_reload":   true,
+	"write_file":      true,
+	"rm_rf":           true,
+}
+
+func executeBBREnableDryRun(cfg config, hostname string, payload map[string]any) (map[string]any, error) {
+	if err := validateBBREnableDryRunPayload(cfg, payload); err != nil {
+		return nil, err
+	}
+	bbr := landingBBRReadonlySummary()
+	modprobeOutput, modprobeErr := readonlyCommandOutput("modprobe", "-n", "-v", "tcp_bbr")
+	sysctlDirExists := false
+	if info, err := os.Stat("/etc/sysctl.d"); err == nil && info.IsDir() {
+		sysctlDirExists = true
+	}
+	return buildBBREnableDryRunResult(cfg, hostname, bbr, modprobeOutput, modprobeErr, os.Geteuid() == 0, sysctlDirExists), nil
+}
+
+func validateBBREnableDryRunPayload(cfg config, payload map[string]any) error {
+	if foundPath, ok := firstUnsafeBBREnableDryRunPayloadKey(payload); ok {
+		return fmt.Errorf("bbr_enable_dry_run payload contains unsupported execution field %s", foundPath)
+	}
+	if stringPayload(payload, "stage") != bbrEnableDryRunStage {
+		return fmt.Errorf("bbr_enable_dry_run stage does not match %s", bbrEnableDryRunStage)
+	}
+	serverID := stringPayload(payload, "server_id")
+	if serverID == "" || serverID != cfg.ServerID {
+		return fmt.Errorf("bbr_enable_dry_run server_id does not match worker binding")
+	}
+	if stringPayload(payload, "preflight_id") == "" {
+		return fmt.Errorf("bbr_enable_dry_run requires preflight_id")
+	}
+	recommendation := stringPayload(payload, "recommendation")
+	if recommendation != "can_enable_with_approval" && recommendation != "module_available_needs_load_approval" {
+		return fmt.Errorf("bbr_enable_dry_run recommendation is not approved")
+	}
+	for _, key := range []string{
+		"confirm_dry_run_only",
+		"confirm_no_modprobe",
+		"confirm_no_sysctl_write",
+		"confirm_no_sysctl_reload",
+		"confirm_no_network_restart",
+	} {
+		if !boolPayload(payload, key) {
+			return fmt.Errorf("bbr_enable_dry_run requires %s=true", key)
+		}
+	}
+	return nil
+}
+
+func firstUnsafeBBREnableDryRunPayloadKey(value any) (string, bool) {
+	return firstUnsafeBBREnableDryRunPayloadKeyAt(value, "$")
+}
+
+func firstUnsafeBBREnableDryRunPayloadKeyAt(value any, path string) (string, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			childPath := path + "." + key
+			if bbrEnableDryRunUnsafePayloadKeys[strings.ToLower(key)] {
+				return childPath, true
+			}
+			if foundPath, ok := firstUnsafeBBREnableDryRunPayloadKeyAt(item, childPath); ok {
+				return foundPath, true
+			}
+		}
+	case []any:
+		for index, item := range typed {
+			if foundPath, ok := firstUnsafeBBREnableDryRunPayloadKeyAt(item, fmt.Sprintf("%s[%d]", path, index)); ok {
+				return foundPath, true
+			}
+		}
+	}
+	return "", false
+}
+
+func buildBBREnableDryRunResult(cfg config, hostname string, bbr map[string]any, modprobeOutput string, modprobeErr string, runningAsRoot bool, sysctlDirExists bool) map[string]any {
+	blockedReasons := []string{}
+	plannedActions := []any{}
+	verificationPlan := []any{
+		"verify tcp_bbr appears in available congestion control",
+		"verify net.ipv4.tcp_congestion_control reports bbr",
+		"verify net.core.default_qdisc reports fq",
+	}
+	alreadyEnabled := boolResultValue(bbr["current_congestion_control_is_bbr"]) || strings.TrimSpace(stringResultValue(bbr["current_congestion_control"])) == "bbr"
+	availableContainsBBR := boolResultValue(bbr["available_contains_bbr"])
+	moduleAvailable := boolResultValue(bbr["module_available"]) || moduleFileCount(bbr["module_files"]) > 0
+
+	if !alreadyEnabled {
+		if !runningAsRoot {
+			blockedReasons = append(blockedReasons, "root_required_for_future_execution")
+		}
+		if !availableContainsBBR && !moduleAvailable {
+			blockedReasons = append(blockedReasons, "bbr_module_not_available")
+		}
+		if moduleAvailable && !availableContainsBBR && modprobeErr != "" {
+			blockedReasons = append(blockedReasons, "modprobe_dry_run_failed")
+		}
+		if !sysctlDirExists {
+			blockedReasons = append(blockedReasons, "sysctl_d_directory_missing")
+		}
+		if !availableContainsBBR && moduleAvailable {
+			plannedActions = append(plannedActions, map[string]any{
+				"step":            "load_tcp_bbr_module",
+				"command_preview": "modprobe tcp_bbr",
+				"executed":        false,
+			})
+		}
+		plannedActions = append(plannedActions,
+			map[string]any{
+				"step":         "persist_sysctl_config",
+				"path_preview": "/etc/sysctl.d/99-liveline-bbr.conf",
+				"executed":     false,
+			},
+			map[string]any{
+				"step":            "reload_sysctl",
+				"command_preview": "sysctl --system",
+				"executed":        false,
+			},
+		)
+	}
+
+	status := "succeeded"
+	if len(blockedReasons) > 0 {
+		status = "blocked"
+	}
+	return map[string]any{
+		"status":          status,
+		"dry_run":         true,
+		"already_enabled": alreadyEnabled,
+		"worker_version":  workerVersion,
+		"role":            cfg.Role,
+		"interface_name":  cfg.InterfaceName,
+		"hostname":        hostname,
+		"bbr":             bbr,
+		"dry_run_checks": []any{
+			map[string]any{
+				"name":                 "modprobe_preview",
+				"command_preview":      "modprobe -n -v tcp_bbr",
+				"status":               passFailStatus(modprobeErr == ""),
+				"output":               truncateReadonlyOutput(modprobeOutput, readonlyOutputLimit),
+				"error":                truncateReadonlyOutput(modprobeErr, readonlyOutputLimit),
+				"executed_real_change": false,
+			},
+			map[string]any{
+				"name":                 "sysctl_d_exists",
+				"path_preview":         "/etc/sysctl.d",
+				"status":               passFailStatus(sysctlDirExists),
+				"executed_real_change": false,
+			},
+			map[string]any{
+				"name":                 "running_as_root",
+				"status":               passFailStatus(runningAsRoot),
+				"executed_real_change": false,
+			},
+		},
+		"planned_actions":   plannedActions,
+		"verification_plan": verificationPlan,
+		"blocked_reasons":   blockedReasons,
+		"safety_boundary": []string{
+			"dry-run only",
+			"no real modprobe",
+			"no sysctl write",
+			"no sysctl reload",
+			"no network restart",
+			"no service restart",
+			"no port/share_link/cutover changes",
+		},
+	}
+}
+
+func moduleFileCount(value any) int {
+	switch typed := value.(type) {
+	case []string:
+		return len(typed)
+	case []any:
+		return len(typed)
+	default:
+		return 0
+	}
+}
+
+func passFailStatus(passed bool) string {
+	if passed {
+		return "passed"
+	}
+	return "failed"
 }
 
 func readonlyBBRModuleFiles(kernel string) []string {

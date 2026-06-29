@@ -10,7 +10,11 @@ from app.schemas.common import error_response, success_response
 from app.schemas.landing_node_plan import LandingNodeCreateRequest, LandingNodePlanRequest
 from app.schemas.remote_cleanup import OFFLINE_LOCAL_REMOVE_CONFIRMATION, RemoteCleanupDeleteRequest
 from app.services.auth_service import record_audit
-from app.services.bbr_enable_plan import BbrEnablePlanError, build_bbr_enable_plan
+from app.services.bbr_enable_plan import (
+    BbrEnablePlanError,
+    build_bbr_enable_plan,
+    create_bbr_enable_dry_run_command,
+)
 from app.services.landing_node_create import (
     LandingNodeCreateError,
     create_landing_node_create_command,
@@ -31,6 +35,7 @@ from app.services.worker_binding import (
     worker_summary_fields,
 )
 from app.services.worker_commands import serialize_worker_command
+from app.services.worker_targeting import WorkerTargetError, minimum_worker_version_for_command
 from app.services.remote_cleanup_delete import (
     RemoteCleanupError,
     create_landing_server_cleanup_command,
@@ -403,6 +408,59 @@ def create_bbr_enable_plan(
         return error_response(exc.status_code, exc.code, exc.message)
 
     return success_response(plan, "BBR 开启方案已生成；未创建 Worker command，未执行远程操作。")
+
+
+@router.post("/{vps_id}/bbr/enable-dry-run")
+def create_bbr_enable_dry_run(
+    vps_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    try:
+        command, worker, plan, target = create_bbr_enable_dry_run_command(db, vps_id)
+    except BbrEnablePlanError as exc:
+        return error_response(exc.status_code, exc.code, exc.message)
+    except WorkerTargetError as exc:
+        return error_response(400, exc.code, exc.message)
+
+    record_audit(
+        db,
+        admin_id=session.admin_id,
+        action="create_bbr_enable_dry_run_command",
+        result="success",
+        request=request,
+        resource_type="worker_command",
+        resource_id=command.id,
+    )
+    db.commit()
+    db.refresh(command)
+    return success_response(
+        {
+            "command": serialize_worker_command(command, include_payload=True, worker=worker),
+            "target_worker_id": worker.id,
+            "target_worker_version": worker.worker_version,
+            "target_worker_changed": target.changed,
+            "minimum_supported_worker_version": minimum_worker_version_for_command("bbr_enable_dry_run"),
+            "server_id": vps_id,
+            "plan": plan,
+            "next_action": "等待 landing Worker 轮询执行 bbr_enable_dry_run；该命令只做 dry-run 检查，不会开启 BBR。",
+            "safety_boundary": [
+                "dry-run only",
+                "no real modprobe",
+                "no sysctl write",
+                "no sysctl reload",
+                "no network/service restart",
+                "no port/share_link/cutover changes",
+            ],
+        },
+        "BBR 开启 dry-run 命令已创建；不会真实开启 BBR。",
+    )
 
 
 @router.post("/{vps_id}/landing-node-create")

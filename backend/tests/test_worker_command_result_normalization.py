@@ -112,6 +112,19 @@ class WorkerCommandResultNormalizationTests(unittest.TestCase):
             (0, 1, 20, 3, 3, 73),
         )
 
+    def test_bbr_enable_dry_run_command_type_is_registered(self):
+        command = WorkerCommandCreate(command_type="bbr_enable_dry_run", payload={"confirm_dry_run_only": True})
+        self.assertEqual(command.command_type, "bbr_enable_dry_run")
+        self.assertEqual(
+            minimum_worker_version_for_command("bbr_enable_dry_run"),
+            "0.1.39-stage-3.3.204-bbr-enable-dry-run",
+        )
+        self.assertEqual(
+            minimum_worker_version_key_for_command("bbr_enable_dry_run"),
+            (0, 1, 39, 3, 3, 204),
+        )
+        self.assertLess(parse_worker_version("0.1.38-stage-3.3.201-bbr-module-readonly"), (0, 1, 39, 3, 3, 204))
+
     def test_haproxy_tcp_minimum_worker_version_requires_dynamic_approval_worker(self):
         self.assertEqual(
             minimum_worker_version_for_transit_forwarding_method("haproxy_tcp"),
