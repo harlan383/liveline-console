@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { AddLandingServerModal, AddTransitServerModal } from "@/components/ProductDemoModals";
 import {
   apiFetch,
   type TransitResourceData,
@@ -10,32 +11,38 @@ import {
   type VpsServerListResult,
 } from "@/lib/api";
 
-type ResourceTab = "landing" | "selfTransit" | "providerTransit";
+type ServerModal = "landing" | "transit" | null;
 
 function helperStatusLabel(resource: { worker_online?: boolean; worker_display_status?: string | null; display_status?: string | null }) {
   if (resource.worker_online) {
-    return "服务器助手在线";
+    return "在线";
   }
   const displayStatus = resource.worker_display_status ?? resource.display_status;
   if (displayStatus === "stale") {
-    return "服务器助手心跳过期";
+    return "心跳过期";
   }
   if (displayStatus === "deleted") {
     return "已删除";
   }
-  return "等待服务器助手";
+  return "等待助手";
 }
 
-function serverStatusLabel(status: string | null | undefined) {
-  const labels: Record<string, string> = {
-    active: "可用",
-    online: "在线",
-    worker_online: "助手在线",
-    pending_worker: "等待助手",
-    disabled: "停用",
-    deleted: "已删除",
-  };
-  return status ? labels[status] ?? status : "未返回";
+function statusTone(resource: { worker_online?: boolean; worker_display_status?: string | null; display_status?: string | null }) {
+  if (resource.worker_online) {
+    return "success";
+  }
+  const displayStatus = resource.worker_display_status ?? resource.display_status;
+  if (displayStatus === "stale") {
+    return "warning";
+  }
+  if (displayStatus === "deleted") {
+    return "danger";
+  }
+  return "info";
+}
+
+function heartbeat(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleString() : "未返回";
 }
 
 function endpoint(host: string | null | undefined, port: number | null | undefined) {
@@ -46,9 +53,10 @@ function endpoint(host: string | null | undefined, port: number | null | undefin
 }
 
 export function ServerResourcesPanel() {
-  const [activeTab, setActiveTab] = useState<ResourceTab>("landing");
   const [servers, setServers] = useState<VpsServerData[]>([]);
   const [resources, setResources] = useState<TransitResourceData[]>([]);
+  const [activeModal, setActiveModal] = useState<ServerModal>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [message, setMessage] = useState("正在读取服务器资源。");
 
   async function loadData() {
@@ -69,6 +77,7 @@ export function ServerResourcesPanel() {
     void loadData();
   }, []);
 
+  const visibleServers = useMemo(() => servers.filter((server) => server.status !== "deleted"), [servers]);
   const selfTransitResources = useMemo(
     () => resources.filter((resource) => resource.resource_type === "server" && !resource.deleted_at),
     [resources],
@@ -77,133 +86,149 @@ export function ServerResourcesPanel() {
     () => resources.filter((resource) => resource.resource_type !== "server" && !resource.deleted_at),
     [resources],
   );
-  const visibleServers = servers.filter((server) => server.status !== "deleted");
+
+  function openModal(nextModal: ServerModal) {
+    setMenuOpen(false);
+    setActiveModal(nextModal);
+  }
 
   return (
-    <section className="customer-workspace wide">
-      <div className="workspace-hero">
+    <section className="server-resources-page wide">
+      <div className="product-page-header">
         <div>
           <h2>服务器资源</h2>
-          <p>集中查看落地服务器、自建中转服务器和商家入口。真实新增和删除仍在高级调试中保留。</p>
+          <p>集中管理落地服务器、自建中转服务器和商家中转入口。</p>
         </div>
-        <button className="secondary" type="button" onClick={() => void loadData()}>
-          刷新
-        </button>
+        <div className="resource-add-menu">
+          <button type="button" onClick={() => setMenuOpen((open) => !open)}>
+            添加服务器
+          </button>
+          {menuOpen ? (
+            <div className="resource-add-dropdown">
+              <button type="button" onClick={() => openModal("landing")}>
+                添加落地服务器
+              </button>
+              <button type="button" onClick={() => openModal("transit")}>
+                添加中转服务器
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      <div className="resource-tabs" role="tablist" aria-label="服务器资源分类">
-        <button className={activeTab === "landing" ? "selected" : ""} type="button" onClick={() => setActiveTab("landing")}>
-          落地服务器
-        </button>
-        <button
-          className={activeTab === "selfTransit" ? "selected" : ""}
-          type="button"
-          onClick={() => setActiveTab("selfTransit")}
-        >
-          中转服务器（自建）
-        </button>
-        <button
-          className={activeTab === "providerTransit" ? "selected" : ""}
-          type="button"
-          onClick={() => setActiveTab("providerTransit")}
-        >
-          商家中转入口
-        </button>
+      <div className="resource-overview-strip">
+        <ResourceMiniStat label="落地服务器" value={`${visibleServers.length} 台`} />
+        <ResourceMiniStat label="在线落地助手" value={`${visibleServers.filter((server) => server.worker_online).length} 台`} />
+        <ResourceMiniStat label="自建中转" value={`${selfTransitResources.length} 台`} />
+        <ResourceMiniStat label="商家中转入口" value={`${providerTransitResources.length} 个`} />
       </div>
 
-      {activeTab === "landing" ? (
-        <div className="resource-card-grid">
-          {visibleServers.length ? (
-            visibleServers.map((server) => (
-              <article className="resource-card" key={server.id}>
-                <div className="line-card-title">
+      <section className="product-section-card">
+        <div className="product-section-head">
+          <h3>落地服务器</h3>
+          <span className="product-badge info">服务器助手</span>
+        </div>
+        {visibleServers.length ? (
+          <div className="resource-management-grid">
+            {visibleServers.map((server) => (
+              <article className="resource-management-card" key={server.id}>
+                <div className="resource-card-top">
+                  <span className="resource-region-icon">落</span>
                   <div>
                     <strong>{server.name}</strong>
-                    <span>{server.ip}</span>
+                    <small>{server.ip}</small>
                   </div>
-                  <span className={`pill ${server.worker_online ? "ok" : "warn"}`}>{helperStatusLabel(server)}</span>
+                  <span className={`product-badge ${statusTone(server)}`}>{helperStatusLabel(server)}</span>
                 </div>
-                <div className="business-detail-grid compact">
-                  <span>用途</span>
-                  <strong>落地节点服务</strong>
-                  <span>入口</span>
+                <div className="resource-facts">
+                  <span>地区</span>
+                  <strong>{server.notes?.split(/\s+/)[0] ?? "未填写"}</strong>
+                  <span>IP</span>
                   <strong>{server.ip}</strong>
-                  <span>状态</span>
-                  <strong>{serverStatusLabel(server.display_status ?? server.status)}</strong>
-                  <span>节点数量</span>
-                  <strong>{server.nodes.length}</strong>
+                  <span>可创建节点数量</span>
+                  <strong>{server.worker_online ? "可创建" : "等待助手"}</strong>
+                  <span>最近心跳</span>
+                  <strong>{heartbeat(server.worker_last_heartbeat_at)}</strong>
                 </div>
-                <div className="line-card-actions">
-                  <button disabled type="button">
-                    添加资源
+                <div className="resource-card-actions">
+                  <button className="secondary" disabled type="button">
+                    查看
                   </button>
                   <button disabled type="button">
-                    安装服务器助手
+                    新建直连节点
                   </button>
                 </div>
               </article>
-            ))
-          ) : (
-            <div className="empty">暂无落地服务器记录。</div>
-          )}
-        </div>
-      ) : null}
+            ))}
+          </div>
+        ) : (
+          <div className="empty">暂无落地服务器记录。</div>
+        )}
+      </section>
 
-      {activeTab === "selfTransit" ? (
-        <div className="resource-card-grid">
-          {selfTransitResources.length ? (
-            selfTransitResources.map((resource) => (
+      <section className="product-section-card">
+        <div className="product-section-head">
+          <h3>中转服务器</h3>
+          <span className="product-badge info">自建与商家入口</span>
+        </div>
+        {selfTransitResources.length || providerTransitResources.length ? (
+          <div className="resource-management-grid">
+            {selfTransitResources.map((resource) => (
               <TransitResourceCard key={resource.id} resource={resource} typeLabel="自建中转服务器" />
-            ))
-          ) : (
-            <div className="empty">暂无自建中转服务器记录。</div>
-          )}
-        </div>
-      ) : null}
-
-      {activeTab === "providerTransit" ? (
-        <div className="resource-card-grid">
-          {providerTransitResources.length ? (
-            providerTransitResources.map((resource) => (
+            ))}
+            {providerTransitResources.map((resource) => (
               <TransitResourceCard key={resource.id} resource={resource} typeLabel="商家中转入口" />
-            ))
-          ) : (
-            <div className="empty">暂无商家中转入口记录。</div>
-          )}
-        </div>
-      ) : null}
+            ))}
+          </div>
+        ) : (
+          <div className="empty">暂无中转服务器或商家入口记录。</div>
+        )}
+      </section>
 
       <p className="message">{message}</p>
+
+      {activeModal === "landing" ? <AddLandingServerModal onClose={() => setActiveModal(null)} /> : null}
+      {activeModal === "transit" ? <AddTransitServerModal onClose={() => setActiveModal(null)} /> : null}
     </section>
+  );
+}
+
+function ResourceMiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="resource-mini-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
   );
 }
 
 function TransitResourceCard({ resource, typeLabel }: { resource: TransitResourceData; typeLabel: string }) {
   return (
-    <article className="resource-card">
-      <div className="line-card-title">
+    <article className="resource-management-card">
+      <div className="resource-card-top">
+        <span className="resource-region-icon">中</span>
         <div>
           <strong>{resource.name}</strong>
-          <span>{endpoint(resource.entry_host, resource.entry_port)}</span>
+          <small>{endpoint(resource.entry_host, resource.entry_port)}</small>
         </div>
-        <span className={`pill ${resource.worker_online ? "ok" : "warn"}`}>{helperStatusLabel(resource)}</span>
+        <span className={`product-badge ${statusTone(resource)}`}>{helperStatusLabel(resource)}</span>
       </div>
-      <div className="business-detail-grid compact">
+      <div className="resource-facts">
         <span>类型</span>
         <strong>{typeLabel}</strong>
-        <span>入口地区</span>
-        <strong>{resource.entry_region ?? "未填写"}</strong>
+        <span>客户连接IP</span>
+        <strong>{resource.entry_host ?? "未填写"}</strong>
         <span>出口地区</span>
         <strong>{resource.exit_region ?? "未填写"}</strong>
-        <span>状态</span>
-        <strong>{serverStatusLabel(resource.display_status ?? resource.status)}</strong>
+        <span>最近心跳</span>
+        <strong>{heartbeat(resource.worker_last_heartbeat_at)}</strong>
       </div>
-      <div className="line-card-actions">
-        <button disabled type="button">
-          添加资源
+      <div className="resource-card-actions">
+        <button className="secondary" disabled type="button">
+          查看
         </button>
         <button disabled type="button">
-          安装服务器助手
+          新建中转线路
         </button>
       </div>
     </article>

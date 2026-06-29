@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import QRCode from "react-qr-code";
 
 import {
   apiFetch,
@@ -13,20 +12,32 @@ import {
   type TransitRouteListResult,
 } from "@/lib/api";
 
+type LineHealth = "normal" | "risk" | "abnormal";
+
 type CustomerLine = {
   id: string;
   name: string;
   customer: string;
   platform: string;
   purpose: string;
+  lineRole: string;
   lineType: string;
   entry: string;
   target: string;
-  status: string;
+  health: LineHealth;
+  statusLabel: string;
+  suggestion: string;
+  lastIssue: string;
   configStatus: string;
-  link: string | null;
   detail: string;
 };
+
+const healthTabs: Array<{ label: string; value: "all" | LineHealth }> = [
+  { label: "全部", value: "all" },
+  { label: "正常", value: "normal" },
+  { label: "风险", value: "risk" },
+  { label: "异常", value: "abnormal" },
+];
 
 function classifyCustomer(text: string) {
   if (/客户A/i.test(text)) {
@@ -54,20 +65,14 @@ function classifyPlatform(text: string) {
   return "未设置";
 }
 
-function classifyPurpose(text: string) {
-  if (/主线/i.test(text)) {
-    return "主线";
-  }
+function classifyRole(text: string) {
   if (/备用/i.test(text)) {
     return "备用";
   }
   if (/测试/i.test(text)) {
     return "测试";
   }
-  if (/视频|日常/i.test(text)) {
-    return "日常";
-  }
-  return "未设置";
+  return "主线";
 }
 
 function entry(host: string | null | undefined, port: number | null | undefined) {
@@ -77,31 +82,44 @@ function entry(host: string | null | undefined, port: number | null | undefined)
   return port ? `${host}:${port}` : host;
 }
 
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    active: "已启用",
-    creating: "创建中",
-    failed: "异常",
-    deleted: "已删除",
+function healthLabel(health: LineHealth) {
+  const labels: Record<LineHealth, string> = {
+    normal: "正常",
+    risk: "风险",
+    abnormal: "异常",
   };
-  return labels[status] ?? status;
+  return labels[health];
+}
+
+function healthFromStatus(status: string, hasConfig: boolean): LineHealth {
+  if (status === "failed") {
+    return "abnormal";
+  }
+  if (status !== "active" || !hasConfig) {
+    return "risk";
+  }
+  return "normal";
 }
 
 function lineFromNode(node: NodeData): CustomerLine {
   const text = [node.node_name, node.vps_ip, node.reality_server_name, node.reality_dest].filter(Boolean).join(" ");
-  const link = node.share_link ?? null;
+  const hasConfig = Boolean(node.share_link_present || node.has_share_link || node.masked_share_link);
+  const health = healthFromStatus(node.status, hasConfig);
   return {
     id: `node-${node.id}`,
     name: node.node_name,
     customer: classifyCustomer(text),
     platform: classifyPlatform(text),
-    purpose: classifyPurpose(text),
+    purpose: classifyRole(text),
+    lineRole: classifyRole(text),
     lineType: "直连节点",
     entry: entry(node.vps_ip, node.port),
     target: entry(node.vps_ip, node.port),
-    status: statusLabel(node.status),
-    configStatus: node.share_link_present || node.has_share_link || link ? "客户端配置：已生成" : "客户端配置：未生成",
-    link,
+    health,
+    statusLabel: healthLabel(health),
+    suggestion: health === "normal" ? "当前线路运行正常" : "建议检查节点服务和客户端配置",
+    lastIssue: health === "normal" ? "-" : "最近状态未完全正常",
+    configStatus: hasConfig ? "客户端配置：已生成" : "客户端配置：未生成",
     detail: "直连落地线路。服务状态和客户端配置来自当前节点记录。",
   };
 }
@@ -117,18 +135,23 @@ function lineFromRoute(route: TransitRouteData, resource: TransitResourceData | 
   ]
     .filter(Boolean)
     .join(" ");
+  const hasConfig = Boolean(route.share_link);
+  const health = healthFromStatus(route.status, true);
   return {
     id: `route-${route.id}`,
     name: route.name,
     customer: classifyCustomer(text),
     platform: classifyPlatform(text),
-    purpose: classifyPurpose(text),
+    purpose: classifyRole(text),
+    lineRole: classifyRole(text),
     lineType: resource?.resource_type === "server" ? "自建中转线路" : "商家中转线路",
     entry: entry(resource?.entry_host, route.listen_port),
     target: entry(route.target_host, route.target_port),
-    status: statusLabel(route.status),
-    configStatus: route.share_link ? "客户端配置：已生成" : "客户端配置：未保存，可临时导出",
-    link: route.share_link,
+    health,
+    statusLabel: healthLabel(health),
+    suggestion: health === "normal" ? "当前线路运行正常" : "建议检查中转端口",
+    lastIssue: health === "normal" ? "-" : "中转状态需复核",
+    configStatus: hasConfig ? "客户端配置：已生成" : "客户端配置：未保存，可临时导出",
     detail: "经中转入口访问落地节点。正式线路状态不在本阶段变更。",
   };
 }
@@ -138,8 +161,9 @@ export function CustomerLinesPanel() {
   const [routes, setRoutes] = useState<TransitRouteData[]>([]);
   const [resources, setResources] = useState<TransitResourceData[]>([]);
   const [selectedLine, setSelectedLine] = useState<CustomerLine | null>(null);
-  const [qrLine, setQrLine] = useState<CustomerLine | null>(null);
-  const [message, setMessage] = useState("正在读取客户线路。");
+  const [activeFilter, setActiveFilter] = useState<"all" | LineHealth>("all");
+  const [search, setSearch] = useState("");
+  const [message, setMessage] = useState("正在读取我的线路。");
 
   async function loadData() {
     const [nodeResult, routeResult, resourceResult] = await Promise.all([
@@ -158,7 +182,7 @@ export function CustomerLinesPanel() {
     }
     setMessage(
       [nodeResult, routeResult, resourceResult].every((result) => result.success)
-        ? "客户线路已刷新。"
+        ? "我的线路已刷新。"
         : "部分线路数据暂时无法读取。",
     );
   }
@@ -175,88 +199,92 @@ export function CustomerLinesPanel() {
     return [...activeRoutes, ...activeNodes].sort((a, b) => a.customer.localeCompare(b.customer) || a.name.localeCompare(b.name));
   }, [nodes, resources, routes]);
 
-  const groupedLines = useMemo(() => {
-    return customerLines.reduce<Record<string, CustomerLine[]>>((groups, line) => {
-      groups[line.customer] = [...(groups[line.customer] ?? []), line];
-      return groups;
-    }, {});
-  }, [customerLines]);
+  const filteredLines = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    return customerLines.filter((line) => {
+      const matchesStatus = activeFilter === "all" || line.health === activeFilter;
+      const searchable = `${line.name} ${line.customer} ${line.platform} ${line.lineType}`.toLowerCase();
+      return matchesStatus && (!keyword || searchable.includes(keyword));
+    });
+  }, [activeFilter, customerLines, search]);
 
-  async function copyLine(line: CustomerLine) {
-    if (!line.link) {
-      setMessage("当前列表没有完整客户端链接；请到线路详情或高级调试中按需导出。");
-      return;
-    }
-    await navigator.clipboard.writeText(line.link);
-    setMessage("客户端链接已复制。");
-  }
+  const normalCount = customerLines.filter((line) => line.health === "normal").length;
+  const riskCount = customerLines.filter((line) => line.health === "risk").length;
+  const abnormalCount = customerLines.filter((line) => line.health === "abnormal").length;
 
   return (
-    <section className="customer-workspace wide">
-      <div className="workspace-hero">
+    <section className="my-lines-page wide">
+      <div className="product-page-header">
         <div>
-          <h2>客户线路</h2>
-          <p>按客户和用途查看当前可用线路。客户分组来自线路名称和备注，不新增客户数据库。</p>
+          <h2>我的线路</h2>
+          <p>按客户、平台和主备关系查看当前可用线路。普通页面不展示完整客户端链接。</p>
         </div>
         <button className="secondary" type="button" onClick={() => void loadData()}>
           刷新
         </button>
       </div>
 
-      {customerLines.length === 0 ? (
-        <div className="empty">暂无可用客户线路。可先到“线路搭建”查看下一步入口。</div>
-      ) : (
-        <div className="customer-line-groups">
-          {Object.entries(groupedLines).map(([customerName, lines]) => (
-            <section className="customer-line-group" key={customerName}>
-              <div className="status-row">
-                <h2>{customerName}</h2>
-                <span className="pill muted">{lines.length} 条线路</span>
-              </div>
-              <div className="customer-line-grid">
-                {lines.map((line) => (
-                  <article className="customer-line-card" key={line.id}>
-                    <div className="line-card-title">
-                      <div>
-                        <strong>{line.name}</strong>
-                        <span>{line.lineType}</span>
-                      </div>
-                      <span className="pill ok">{line.status}</span>
-                    </div>
-                    <div className="business-detail-grid compact">
-                      <span>平台</span>
-                      <strong>{line.platform}</strong>
-                      <span>用途</span>
-                      <strong>{line.purpose}</strong>
-                      <span>入口地址</span>
-                      <strong>{line.entry}</strong>
-                      <span>客户端配置</span>
-                      <strong>{line.configStatus.replace("客户端配置：", "")}</strong>
-                    </div>
-                    <div className="line-card-actions">
-                      <button className="secondary" type="button" onClick={() => setSelectedLine(line)}>
-                        查看详情
-                      </button>
-                      <button className="secondary" disabled={!line.link} type="button" onClick={() => void copyLine(line)}>
-                        复制链接
-                      </button>
-                      <button className="secondary" disabled={!line.link} type="button" onClick={() => setQrLine(line)}>
-                        显示二维码
-                      </button>
-                      <button disabled type="button">
-                        切换备用
-                      </button>
-                      <button disabled type="button">
-                        新建备用线
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ))}
+      <div className="product-stat-grid three">
+        <LineStat title="正常" value={normalCount} detail="运行状态正常的线路" tone="success" />
+        <LineStat title="风险" value={riskCount} detail="需要关注或缺少配置的线路" tone="warning" />
+        <LineStat title="异常" value={abnormalCount} detail="失败或不可用线路" tone="danger" />
+      </div>
+
+      <div className="product-section-card">
+        <div className="product-filter-bar">
+          <div className="filter-tabs">
+            {healthTabs.map((tab) => (
+              <button
+                className={activeFilter === tab.value ? "selected" : ""}
+                key={tab.value}
+                type="button"
+                onClick={() => setActiveFilter(tab.value)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <input
+            aria-label="搜索线路"
+            placeholder="搜索线路名称、客户或平台"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
         </div>
-      )}
+
+        <div className="product-table my-lines-table">
+          <div className="product-table-row product-table-head">
+            <span>线路名称</span>
+            <span>客户</span>
+            <span>平台</span>
+            <span>主线/备用</span>
+            <span>当前状态</span>
+            <span>当前建议</span>
+            <span>最近异常</span>
+            <span>操作</span>
+          </div>
+          {filteredLines.length ? (
+            filteredLines.map((line) => (
+              <div className="product-table-row" key={line.id}>
+                <strong>{line.name}</strong>
+                <span>{line.customer}</span>
+                <span>{line.platform}</span>
+                <span>{line.lineRole}</span>
+                <span className={`product-badge ${line.health === "normal" ? "success" : line.health === "risk" ? "warning" : "danger"}`}>
+                  {line.statusLabel}
+                </span>
+                <span>{line.suggestion}</span>
+                <span>{line.lastIssue}</span>
+                <button className="secondary" type="button" onClick={() => setSelectedLine(line)}>
+                  查看详情
+                </button>
+              </div>
+            ))
+          ) : (
+            <div className="product-table-empty">暂无匹配线路。可调整筛选条件，或到“线路搭建”查看下一步入口。</div>
+          )}
+        </div>
+      </div>
 
       <p className="message">{message}</p>
 
@@ -274,8 +302,8 @@ export function CustomerLinesPanel() {
               <strong>{selectedLine.customer}</strong>
               <span>平台</span>
               <strong>{selectedLine.platform}</strong>
-              <span>用途</span>
-              <strong>{selectedLine.purpose}</strong>
+              <span>主备</span>
+              <strong>{selectedLine.lineRole}</strong>
               <span>线路类型</span>
               <strong>{selectedLine.lineType}</strong>
               <span>入口地址</span>
@@ -283,7 +311,7 @@ export function CustomerLinesPanel() {
               <span>目标落地</span>
               <strong>{selectedLine.target}</strong>
               <span>状态</span>
-              <strong>{selectedLine.status}</strong>
+              <strong>{selectedLine.statusLabel}</strong>
               <span>客户端配置</span>
               <strong>{selectedLine.configStatus.replace("客户端配置：", "")}</strong>
             </div>
@@ -291,23 +319,28 @@ export function CustomerLinesPanel() {
           </div>
         </div>
       ) : null}
-
-      {qrLine?.link ? (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal-card customer-line-modal">
-            <div className="modal-header">
-              <h3>临时二维码</h3>
-              <button className="modal-close-button" type="button" onClick={() => setQrLine(null)}>
-                ×
-              </button>
-            </div>
-            <div className="qr-frame">
-              <QRCode value={qrLine.link} size={220} />
-            </div>
-            <p className="message">二维码仅在浏览器中生成，不保存到后端。</p>
-          </div>
-        </div>
-      ) : null}
     </section>
+  );
+}
+
+function LineStat({
+  detail,
+  title,
+  tone,
+  value,
+}: {
+  detail: string;
+  title: string;
+  tone: "success" | "warning" | "danger";
+  value: number;
+}) {
+  return (
+    <article className={`product-stat-card ${tone}`}>
+      <div>
+        <span>{title}</span>
+        <strong>{value}</strong>
+      </div>
+      <p>{detail}</p>
+    </article>
   );
 }
