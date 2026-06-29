@@ -68,6 +68,118 @@ tcp   LISTEN 0      4096          [::]:443          [::]:*        users:(("xray"
 	}
 }
 
+func TestValidateBBREnableDryRunPayloadRejectsExecutionFields(t *testing.T) {
+	cfg := config{ServerID: "server-1"}
+	payload := map[string]any{
+		"stage":                      bbrEnableDryRunStage,
+		"server_id":                  "server-1",
+		"preflight_id":               "preflight-1",
+		"recommendation":             "module_available_needs_load_approval",
+		"confirm_dry_run_only":       true,
+		"confirm_no_modprobe":        true,
+		"confirm_no_sysctl_write":    true,
+		"confirm_no_sysctl_reload":   true,
+		"confirm_no_network_restart": true,
+		"commands":                   []any{"modprobe tcp_bbr"},
+	}
+
+	err := validateBBREnableDryRunPayload(cfg, payload)
+	if err == nil {
+		t.Fatal("validateBBREnableDryRunPayload returned nil for unsafe commands field")
+	}
+	if !strings.Contains(err.Error(), "$.commands") {
+		t.Fatalf("error = %q, want unsafe $.commands path", err.Error())
+	}
+}
+
+func TestBuildBBREnableDryRunResultPlansModuleLoadWithoutExecution(t *testing.T) {
+	cfg := config{Role: "landing", InterfaceName: "ens17"}
+	bbr := map[string]any{
+		"available_congestion_control":      "reno cubic",
+		"current_congestion_control":        "cubic",
+		"default_qdisc":                     "fq_codel",
+		"module_status":                     "not_loaded",
+		"modinfo_status":                    "available",
+		"module_available":                  true,
+		"available_contains_bbr":            false,
+		"current_congestion_control_is_bbr": false,
+	}
+
+	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "insmod /lib/modules/tcp_bbr.ko", "", true, true)
+
+	if stringResultValue(result["status"]) != "succeeded" {
+		t.Fatalf("status = %#v, want succeeded", result["status"])
+	}
+	if !boolResultValue(result["dry_run"]) {
+		t.Fatalf("dry_run = %#v, want true", result["dry_run"])
+	}
+	actions, ok := result["planned_actions"].([]any)
+	if !ok || len(actions) == 0 {
+		t.Fatalf("planned_actions = %#v, want non-empty []any", result["planned_actions"])
+	}
+	firstAction := actions[0].(map[string]any)
+	if stringResultValue(firstAction["step"]) != "load_tcp_bbr_module" {
+		t.Fatalf("first planned action = %#v, want load_tcp_bbr_module", firstAction)
+	}
+	if boolResultValue(firstAction["executed"]) {
+		t.Fatalf("first planned action executed = true, want false")
+	}
+	checks := result["dry_run_checks"].([]any)
+	for _, item := range checks {
+		check := item.(map[string]any)
+		if boolResultValue(check["executed_real_change"]) {
+			t.Fatalf("dry-run check executed a real change: %#v", check)
+		}
+	}
+}
+
+func TestBuildBBREnableDryRunResultBlocksWhenModuleUnavailable(t *testing.T) {
+	cfg := config{Role: "landing", InterfaceName: "ens17"}
+	bbr := map[string]any{
+		"available_congestion_control":      "reno cubic",
+		"current_congestion_control":        "cubic",
+		"module_available":                  false,
+		"available_contains_bbr":            false,
+		"current_congestion_control_is_bbr": false,
+	}
+
+	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "", "", true, true)
+
+	if stringResultValue(result["status"]) != "blocked" {
+		t.Fatalf("status = %#v, want blocked", result["status"])
+	}
+	reasons := result["blocked_reasons"].([]string)
+	if len(reasons) != 1 || reasons[0] != "bbr_module_not_available" {
+		t.Fatalf("blocked_reasons = %#v, want bbr_module_not_available", reasons)
+	}
+}
+
+func TestBuildBBREnableDryRunResultAlreadyEnabledDoesNotBlock(t *testing.T) {
+	cfg := config{Role: "landing", InterfaceName: "ens17"}
+	bbr := map[string]any{
+		"available_congestion_control":      "reno cubic bbr",
+		"current_congestion_control":        "bbr",
+		"current_congestion_control_is_bbr": true,
+	}
+
+	result := buildBBREnableDryRunResult(cfg, "landing-host", bbr, "", "command_not_found", false, false)
+
+	if stringResultValue(result["status"]) != "succeeded" {
+		t.Fatalf("status = %#v, want succeeded for already enabled BBR", result["status"])
+	}
+	if !boolResultValue(result["already_enabled"]) {
+		t.Fatalf("already_enabled = %#v, want true", result["already_enabled"])
+	}
+	actions := result["planned_actions"].([]any)
+	if len(actions) != 0 {
+		t.Fatalf("planned_actions = %#v, want empty when already enabled", actions)
+	}
+	reasons := result["blocked_reasons"].([]string)
+	if len(reasons) != 0 {
+		t.Fatalf("blocked_reasons = %#v, want empty when already enabled", reasons)
+	}
+}
+
 func TestValidateManagedXrayBaseDirForPreflightAllowsEmptyPrecreatedDir(t *testing.T) {
 	baseDir := filepath.Join(t.TempDir(), "liveline-xray")
 	if err := os.Mkdir(baseDir, 0o755); err != nil {

@@ -50,9 +50,9 @@ from app.services.worker_targeting import (
 )
 
 router = APIRouter()
-EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.36-stage-3.3.188-transit-port-approval"
+EXPECTED_TRANSIT_WORKER_ACCEPTANCE_VERSION = "0.1.39-stage-3.3.204-bbr-enable-dry-run"
 TRANSIT_WORKER_UPGRADE_ACCEPTANCE_FORWARDING_METHOD = "haproxy_tcp"
-TRANSIT_WORKER_UPGRADE_ACCEPTANCE_CHECKSUM = "377a6b9a53ddc3971e2e32e8b0fa48bdc594f53c634d34a6a8bd45597f21ae8e"
+TRANSIT_WORKER_UPGRADE_ACCEPTANCE_CHECKSUM = "0eff26314e3a44a7aeea52bc15a10c215101dde2435f66f0645a79636b1e5ab4"
 TRANSIT_WORKER_ACCEPTANCE_RESOURCE_STATUSES = {"pending_worker", "worker_online", "worker_offline"}
 WORKER_INSTALL_COMMAND_ALLOWED_STATUSES = {"pending_worker", "worker_online", "worker_offline", "online"}
 

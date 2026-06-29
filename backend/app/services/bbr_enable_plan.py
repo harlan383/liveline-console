@@ -6,7 +6,32 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.vps_server import VpsServer
+from app.models.worker import Worker
 from app.models.worker_command import WorkerCommand
+from app.services.worker_commands import create_worker_command
+from app.services.worker_targeting import WorkerTargetResolution, resolve_command_target_worker
+
+
+BBR_ENABLE_DRY_RUN_COMMAND = "bbr_enable_dry_run"
+BBR_ENABLE_DRY_RUN_STAGE = "Stage 3.3.204-bbr-enable-protected-execution-dry-run"
+DANGEROUS_BBR_DRY_RUN_PAYLOAD_FIELDS = {
+    "shell",
+    "command",
+    "commands",
+    "args",
+    "argv",
+    "script",
+    "exec",
+    "exec_start",
+    "systemd_unit",
+    "unit_content",
+    "service_content",
+    "modprobe",
+    "sysctl_write",
+    "sysctl_reload",
+    "write_file",
+    "rm_rf",
+}
 
 
 class BbrEnablePlanError(Exception):
@@ -227,3 +252,38 @@ def build_bbr_enable_plan(db: Session, server_id: str) -> dict:
         recommendation="bbr_not_available",
         blocked_reasons=["bbr_not_available"],
     )
+
+
+def build_bbr_enable_dry_run_payload(plan: dict) -> dict:
+    payload = {
+        "stage": BBR_ENABLE_DRY_RUN_STAGE,
+        "server_id": plan["server_id"],
+        "preflight_id": plan["latest_preflight_id"],
+        "recommendation": plan["recommendation"],
+        "confirm_dry_run_only": True,
+        "confirm_no_modprobe": True,
+        "confirm_no_sysctl_write": True,
+        "confirm_no_sysctl_reload": True,
+        "confirm_no_network_restart": True,
+    }
+    unexpected = DANGEROUS_BBR_DRY_RUN_PAYLOAD_FIELDS.intersection(payload)
+    if unexpected:
+        raise BbrEnablePlanError(500, "BBR_DRY_RUN_PAYLOAD_UNSAFE", "BBR dry-run payload contains unsafe fields.")
+    return payload
+
+
+def create_bbr_enable_dry_run_command(db: Session, server_id: str) -> tuple[WorkerCommand, Worker, dict, WorkerTargetResolution]:
+    plan = build_bbr_enable_plan(db, server_id)
+    if plan.get("already_enabled") or not plan.get("ready"):
+        raise BbrEnablePlanError(400, "BBR_ENABLE_PLAN_NOT_READY", "BBR 开启方案未就绪，不能创建 dry-run 命令。")
+
+    target = resolve_command_target_worker(
+        db,
+        server_type="landing",
+        server_id=server_id,
+        role="landing",
+        command_type=BBR_ENABLE_DRY_RUN_COMMAND,
+    )
+    payload = build_bbr_enable_dry_run_payload(plan)
+    command = create_worker_command(db, target.worker, BBR_ENABLE_DRY_RUN_COMMAND, payload)
+    return command, target.worker, plan, target

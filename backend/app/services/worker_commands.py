@@ -655,6 +655,15 @@ def result_summary(command: WorkerCommand) -> str | None:
                     if isinstance(check, dict)
                 )
         return f"landing_preflight listening_count={listening_count} important_ports={important_ports} warnings={warning_count}"
+    if command.command_type == "bbr_enable_dry_run":
+        status = result.get("status") or "-"
+        bbr = result.get("bbr")
+        recommendation = "-"
+        if isinstance(bbr, dict):
+            recommendation = bbr.get("recommendation") or "-"
+        blocked_reasons = result.get("blocked_reasons")
+        blocked_count = len(blocked_reasons) if isinstance(blocked_reasons, list) else 0
+        return f"bbr_enable_dry_run status={status} recommendation={recommendation} blocked={blocked_count}"
     if command.command_type == "landing_node_create":
         node_id = result.get("node_id") or "-"
         listen_port = result.get("listen_port") or "-"

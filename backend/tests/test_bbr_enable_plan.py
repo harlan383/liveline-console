@@ -3,8 +3,16 @@ import unittest
 from unittest.mock import patch
 
 from app.models.vps_server import VpsServer
+from app.models.worker import Worker
 from app.models.worker_command import WorkerCommand
-from app.services.bbr_enable_plan import build_bbr_enable_plan
+from app.services.bbr_enable_plan import (
+    BBR_ENABLE_DRY_RUN_COMMAND,
+    BbrEnablePlanError,
+    build_bbr_enable_dry_run_payload,
+    build_bbr_enable_plan,
+    create_bbr_enable_dry_run_command,
+)
+from app.services.worker_targeting import WorkerTargetError, WorkerTargetResolution
 
 
 SERVER_ID = "landing-1"
@@ -124,6 +132,81 @@ class BbrEnablePlanTests(unittest.TestCase):
         self.assertFalse(plan["ready"])
         self.assertEqual(plan["recommendation"], "bbr_not_available")
         self.assertEqual(plan["blocked_reasons"], ["bbr_not_available"])
+
+    def test_dry_run_payload_contains_no_arbitrary_execution_fields(self):
+        plan = {
+            "server_id": SERVER_ID,
+            "latest_preflight_id": "preflight-1",
+            "recommendation": "module_available_needs_load_approval",
+        }
+
+        payload = build_bbr_enable_dry_run_payload(plan)
+
+        self.assertEqual(payload["stage"], "Stage 3.3.204-bbr-enable-protected-execution-dry-run")
+        self.assertEqual(payload["server_id"], SERVER_ID)
+        self.assertTrue(payload["confirm_dry_run_only"])
+        for forbidden in ["shell", "command", "commands", "args", "argv", "script", "exec", "modprobe", "sysctl_write"]:
+            self.assertNotIn(forbidden, payload)
+
+    def test_dry_run_command_rejects_plan_not_ready(self):
+        plan = {"ready": False, "already_enabled": False, "server_id": SERVER_ID}
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with self.assertRaises(BbrEnablePlanError) as context:
+                create_bbr_enable_dry_run_command(FakeDb(), SERVER_ID)
+
+        self.assertEqual(context.exception.code, "BBR_ENABLE_PLAN_NOT_READY")
+
+    def test_dry_run_command_creates_fixed_worker_command_when_plan_ready(self):
+        plan = {
+            "ready": True,
+            "already_enabled": False,
+            "server_id": SERVER_ID,
+            "latest_preflight_id": "preflight-1",
+            "recommendation": "module_available_needs_load_approval",
+        }
+        worker = Worker(
+            id="worker-1",
+            server_id=SERVER_ID,
+            role="landing",
+            status="online",
+            worker_version="0.1.39-stage-3.3.204-bbr-enable-dry-run",
+            worker_secret_hash="hash",
+        )
+        command = WorkerCommand(id="command-1", worker_id=worker.id, command_type=BBR_ENABLE_DRY_RUN_COMMAND)
+
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with patch(
+                "app.services.bbr_enable_plan.resolve_command_target_worker",
+                return_value=WorkerTargetResolution(worker=worker, changed=False, requested_worker_id=None),
+            ) as resolve:
+                with patch("app.services.bbr_enable_plan.create_worker_command", return_value=command) as create_command:
+                    created, selected_worker, returned_plan, _target = create_bbr_enable_dry_run_command(FakeDb(), SERVER_ID)
+
+        self.assertEqual(created, command)
+        self.assertEqual(selected_worker, worker)
+        self.assertEqual(returned_plan, plan)
+        resolve.assert_called_once()
+        _db, _worker, command_type, payload = create_command.call_args.args
+        self.assertEqual(command_type, BBR_ENABLE_DRY_RUN_COMMAND)
+        self.assertEqual(payload["preflight_id"], "preflight-1")
+        self.assertTrue(payload["confirm_no_modprobe"])
+        self.assertNotIn("command", payload)
+
+    def test_dry_run_command_blocks_unsupported_worker(self):
+        plan = {
+            "ready": True,
+            "already_enabled": False,
+            "server_id": SERVER_ID,
+            "latest_preflight_id": "preflight-1",
+            "recommendation": "module_available_needs_load_approval",
+        }
+        with patch("app.services.bbr_enable_plan.build_bbr_enable_plan", return_value=plan):
+            with patch(
+                "app.services.bbr_enable_plan.resolve_command_target_worker",
+                side_effect=WorkerTargetError("WORKER_COMMAND_UNSUPPORTED", "unsupported"),
+            ):
+                with self.assertRaises(WorkerTargetError):
+                    create_bbr_enable_dry_run_command(FakeDb(), SERVER_ID)
 
 
 if __name__ == "__main__":
