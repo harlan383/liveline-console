@@ -348,12 +348,13 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
     ...activeRoutes.map((route) => ({ created_at: route.created_at, name: route.name, type: "中转线路" })),
   ]);
   const attentionItems = useMemo(() => {
-    const items: Array<{ title: string; problem: string; advice: string; tone: "warning" | "danger" | "success" }> = [];
+    const items: Array<{ title: string; problem: string; advice: string; time: string; tone: "warning" | "danger" | "success" }> = [];
     if (staleResources.length) {
       items.push({
         title: staleResources[0].name,
         problem: "服务器状态长时间未更新",
         advice: "建议检查服务器是否正常运行",
+        time: "10:15",
         tone: "warning",
       });
     }
@@ -362,6 +363,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         title: businessTaskTitle(failedTasks[0].task_type),
         problem: "最近一次操作失败",
         advice: "建议到任务记录查看处理建议",
+        time: "09:42",
         tone: "danger",
       });
     }
@@ -370,6 +372,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         title: "客户B - TikTok新加坡线",
         problem: "中转端口未通过检测",
         advice: "检查云安全组、云防火墙和服务器防火墙",
+        time: "09:42",
         tone: "warning",
       });
     }
@@ -378,6 +381,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         title: "客户A - Facebook越南主线",
         problem: "还没有可用直连节点",
         advice: "先添加落地服务器，再创建直连节点",
+        time: "10:15",
         tone: "warning",
       });
     }
@@ -386,10 +390,11 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
         title: "当前线路整体正常",
         problem: "没有需要立即处理的问题",
         advice: "建议定期查看任务记录和线路状态",
+        time: "刚刚",
         tone: "success",
       });
     }
-    return items.slice(0, 3);
+    return items.slice(0, 2);
   }, [activeNodes.length, activeRoutes.length, failedTasks, staleResources]);
 
   const nextStepTips = useMemo(() => {
@@ -409,16 +414,16 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
   return (
     <section className="dashboard-panel product-dashboard wide">
       <div className="product-stat-grid four">
-        <DashboardStat icon="lines" title="正常线路" value={`${normalLines}`} detail="当前可正常使用" tone="success" />
+        <DashboardStat icon="shield" title="正常线路" value={`${normalLines}`} detail="当前可正常使用" tone="success" />
         <DashboardStat icon="alert" title="风险线路" value={`${riskLines}`} detail="建议尽快检查" tone="warning" />
         <DashboardStat icon="alert" title="异常线路" value={`${abnormalLines}`} detail="需要处理" tone="danger" />
-        <DashboardStat icon="tasks" title="待处理" value={`${pendingItems}`} detail={healthOk ? "暂无紧急待办" : "有待办事项"} tone="info" />
+        <DashboardStat icon="clock" title="待处理" value={`${pendingItems}`} detail={healthOk ? "暂无紧急待办" : "有待办事项"} tone="info" />
       </div>
 
       <div className="product-dashboard-layout">
         <section className="product-section-card attention-card">
           <div className="product-section-head">
-            <h3>今日需要关注</h3>
+            <h3><ProductIcon name="bell" tone="red" />今日需要关注</h3>
             <span className={`product-badge ${abnormalLines ? "danger" : riskLines ? "warning" : "success"}`}>
               {abnormalLines ? "异常" : riskLines ? "风险" : "正常"}
             </span>
@@ -428,11 +433,9 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
               <button className={`attention-item ${item.tone}`} key={`${item.title}-${item.problem}`} type="button" onClick={() => onNavigate("tasks")}>
                 <ProductIcon name="alert" tone={item.tone === "danger" ? "red" : item.tone === "success" ? "green" : "orange"} />
                 <div>
-                  <strong>{item.title}</strong>
-                  <small>问题：{item.problem}</small>
-                  <small>建议：{item.advice}</small>
+                  <strong>{item.title}：{item.problem}，{item.advice}</strong>
+                  <small>发现时间：{item.time}</small>
                 </div>
-                <span>去查看</span>
                 <ProductIcon name="arrow" tone="slate" />
               </button>
             ))}
@@ -441,7 +444,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
 
         <section className="product-section-card quick-actions-card">
           <div className="product-section-head">
-            <h3>常用操作</h3>
+            <h3><ProductIcon name="action" tone="blue" />常用操作</h3>
             <span className="product-badge info">快捷入口</span>
           </div>
           <div className="quick-action-grid">
@@ -453,21 +456,21 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
               </span>
             </button>
             <button type="button" onClick={() => onNavigate("serverResources")}>
-              <ProductIcon name="servers" tone="orange" />
+              <ProductIcon name="servers" tone="green" />
               <span>
                 <strong>添加中转服务器</strong>
                 <small>准备自建中转入口</small>
               </span>
             </button>
             <button type="button" onClick={() => onNavigate("lineBuilder")}>
-              <ProductIcon name="builder" tone="green" />
+              <ProductIcon name="builder" tone="purple" />
               <span>
                 <strong>新建直连节点</strong>
                 <small>规划客户直连线路</small>
               </span>
             </button>
             <button type="button" onClick={() => onNavigate("lineBuilder")}>
-              <ProductIcon name="route" tone="purple" />
+              <ProductIcon name="lines" tone="orange" />
               <span>
                 <strong>新建中转线路</strong>
                 <small>规划中转访问路径</small>
@@ -478,7 +481,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
 
         <section className="product-section-card">
           <div className="product-section-head">
-            <h3>最近创建</h3>
+            <h3><ProductIcon name="document" tone="slate" />最近创建</h3>
             <span className="product-badge muted">最新 3 条</span>
           </div>
           {recentCreated.length ? (
@@ -488,6 +491,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
                   <ProductIcon name={item.type === "直连节点" ? "builder" : "route"} tone="blue" />
                   <strong>{item.name}</strong>
                   <span>{item.type}</span>
+                  <small>创建人：admin</small>
                   <small>{formatDate(item.created_at)}</small>
                 </div>
               ))}
@@ -499,7 +503,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
 
         <section className="product-section-card">
           <div className="product-section-head">
-            <h3>使用提示</h3>
+            <h3><ProductIcon name="bulb" tone="orange" />使用提示</h3>
             <span className="product-badge info">帮助</span>
           </div>
           <ul className="product-tip-list">
@@ -507,22 +511,10 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
             <li>在“我的线路”中查看线路状态与质量。</li>
             <li>遇到问题时，先查看“任务记录”获取检测结果。</li>
             <li>如需帮助，可点击右上角“帮助”查看说明。</li>
-          </ul>
-        </section>
-
-        <section className="product-section-card next-step-card">
-          <div className="product-section-head">
-            <h3>下一步建议</h3>
-            <span className="product-badge info">新手推荐</span>
-          </div>
-          <div className="next-step-list">
             {nextStepTips.map((tip) => (
-              <button key={tip} type="button" onClick={() => onNavigate("lineBuilder")}>
-                <ProductIcon name="arrow" tone="blue" />
-                <span>{tip}</span>
-              </button>
+              <li key={tip}>{tip}</li>
             ))}
-          </div>
+          </ul>
         </section>
       </div>
       <p className="message subtle-message">{message}</p>
