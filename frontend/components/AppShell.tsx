@@ -348,48 +348,38 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
     ...activeRoutes.map((route) => ({ created_at: route.created_at, name: route.name, type: "中转线路" })),
   ]);
   const attentionItems = useMemo(() => {
-    const items: Array<{ title: string; problem: string; advice: string; time: string; tone: "warning" | "danger" | "success" }> = [];
+    const items: Array<{ summary: string; time: string; tone: "warning" | "danger" | "success" }> = [];
     if (staleResources.length) {
       items.push({
-        title: staleResources[0].name,
-        problem: "服务器状态长时间未更新",
-        advice: "建议检查服务器是否正常运行",
+        summary: `${staleResources[0].name}：服务器状态长时间未更新，建议检查服务器是否正常运行`,
         time: "10:15",
         tone: "warning",
       });
     }
     if (failedTasks.length) {
       items.push({
-        title: businessTaskTitle(failedTasks[0].task_type),
-        problem: "最近一次操作失败",
-        advice: "建议到任务记录查看处理建议",
+        summary: `${businessTaskTitle(failedTasks[0].task_type)}：最近一次操作失败，建议到任务记录查看处理建议`,
         time: "09:42",
         tone: "danger",
       });
     }
     if (!activeRoutes.length) {
       items.push({
-        title: "客户B - TikTok新加坡线",
-        problem: "中转端口未通过检测",
-        advice: "检查云安全组、云防火墙和服务器防火墙",
+        summary: "客户B - TikTok新加坡线：中转端口未通过检测，建议检查端口放行",
         time: "09:42",
         tone: "warning",
       });
     }
     if (!activeNodes.length) {
       items.push({
-        title: "客户A - Facebook越南主线",
-        problem: "还没有可用直连节点",
-        advice: "先添加落地服务器，再创建直连节点",
+        summary: "客户A - Facebook越南主线：还没有可用直连节点，建议先添加落地服务器",
         time: "10:15",
         tone: "warning",
       });
     }
     if (!items.length) {
       items.push({
-        title: "当前线路整体正常",
-        problem: "没有需要立即处理的问题",
-        advice: "建议定期查看任务记录和线路状态",
+        summary: "当前线路整体正常：没有需要立即处理的问题，建议定期查看任务记录",
         time: "刚刚",
         tone: "success",
       });
@@ -430,10 +420,10 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           </div>
           <div className="attention-list">
             {attentionItems.map((item) => (
-              <button className={`attention-item ${item.tone}`} key={`${item.title}-${item.problem}`} type="button" onClick={() => onNavigate("tasks")}>
+              <button className={`attention-item ${item.tone}`} key={`${item.summary}-${item.time}`} type="button" onClick={() => onNavigate("tasks")}>
                 <ProductIcon name="alert" tone={item.tone === "danger" ? "red" : item.tone === "success" ? "green" : "orange"} />
-                <div>
-                  <strong>{item.title}：{item.problem}，{item.advice}</strong>
+                <div className="attention-copy">
+                  <strong>{item.summary}</strong>
                   <small>发现时间：{item.time}</small>
                 </div>
                 <ProductIcon name="arrow" tone="slate" />
