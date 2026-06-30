@@ -12,57 +12,16 @@ import { TaskHistoryPanel } from "@/components/TaskHistoryPanel";
 import {
   AUTH_EXPIRED_EVENT,
   apiFetch,
+  getProductOverview,
   type AuthUser,
   type CsrfResult,
+  type ProductOverviewAttentionItem,
+  type ProductOverviewHealth,
+  type ProductOverviewRecentCreatedItem,
+  type ProductOverviewResult,
 } from "@/lib/api";
 
 type PanelId = "dashboard" | "lineBuilder" | "customerLines" | "serverResources" | "tasks" | "settings" | "advancedDebug";
-
-type ProductOverviewHealth = {
-  ok: boolean;
-  status: "ok" | "warning" | "danger";
-  label: string;
-  detail: string;
-  last_refreshed_label: string;
-};
-
-type ProductOverviewStats = {
-  normal_lines: number;
-  risk_lines: number;
-  abnormal_lines: number;
-  pending_items: number;
-};
-
-type ProductOverviewAttentionItem = {
-  id: string;
-  summary: string;
-  detail: string;
-  tone: "success" | "warning" | "danger" | "info";
-  source_type: "health" | "task" | "vps" | "node" | "transit_resource" | "transit_route" | "system";
-  source_id: string | null;
-  created_at: string | null;
-  time_label: string;
-};
-
-type ProductOverviewRecentCreatedItem = {
-  id: string;
-  name: string;
-  type: "landing_server" | "direct_node" | "transit_resource" | "transit_route";
-  type_label: "落地服务器" | "直连节点" | "中转服务器" | "中转线路" | "商家中转入口";
-  status: string;
-  created_at: string | null;
-  created_by: string;
-};
-
-type ProductOverviewResult = {
-  generated_at: string;
-  health: ProductOverviewHealth;
-  stats: ProductOverviewStats;
-  attention_items: ProductOverviewAttentionItem[];
-  recent_created: ProductOverviewRecentCreatedItem[];
-  tips: string[];
-  safety_boundary: string[];
-};
 
 const panels: Array<{
   id: PanelId;
@@ -301,10 +260,6 @@ function recentIconName(type: ProductOverviewRecentCreatedItem["type"]) {
     return "builder";
   }
   return "route";
-}
-
-async function getProductOverview() {
-  return apiFetch<ProductOverviewResult>("/api/product/overview");
 }
 
 function DashboardPanel({

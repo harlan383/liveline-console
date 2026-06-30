@@ -52,6 +52,7 @@ Updated:
 The dashboard now:
 
 - Calls `GET /api/product/overview`.
+- Imports the ProductOverview response types and `getProductOverview()` helper from `frontend/lib/api.ts`.
 - Uses `overview.stats` for the four summary cards.
 - Uses `overview.attention_items` for "今日需要关注".
 - Uses `overview.recent_created` for "最近创建".
@@ -84,6 +85,14 @@ The backend overview service reads only local control-plane data:
 - latest landing/transit `Worker` heartbeat summaries
 - database/Redis/RQ health checks
 
+The SQLAlchemy overview queries intentionally load only the columns required by this endpoint. They avoid loading sensitive or raw payload columns, including:
+
+- `nodes.share_link`
+- node UUID / Reality public key / short ID and other client-link configuration fields
+- `transit_routes.share_link`
+- route service path / target host / target port fields that are not needed by the product overview
+- `tasks.result_data`
+
 It does not read or return complete client links, Worker install commands, tokens, private keys, passwords, or raw task result payloads.
 
 ## Safety Boundary
@@ -97,6 +106,7 @@ This stage does not:
 - Delete or mutate nodes, routes, resources, tasks, or workers.
 - Read, write, or return full `nodes.share_link`.
 - Read, write, or return full `transit_routes.share_link`.
+- Read raw `tasks.result_data`.
 - Perform cutover.
 - Add ports.
 - Modify firewall, cloud firewall, or cloud security groups.
@@ -115,5 +125,6 @@ git diff --check
 git diff --cached --check
 PYTHONPYCACHEPREFIX=/tmp/liveline-pycache python3 -m compileall backend/app backend/tests
 cd frontend
-node node_modules/next/dist/bin/next build
+npm run typecheck
+/Users/peng/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node node_modules/next/dist/bin/next build
 ```
