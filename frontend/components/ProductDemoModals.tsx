@@ -1,13 +1,17 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { ProductIcon } from "@/components/ProductIcons";
 import {
   apiFetch,
+  createLandingNodeExecution,
+  createLandingNodePlan,
   createTransitWorkerBootstrap,
   createVpsWorkerBootstrap,
   type CsrfResult,
+  type LandingNodeCreateResponse,
+  type LandingNodePlanResponse,
   type NodeData,
   type TransitResourceData,
   type TransitWorkerBootstrapResult,
@@ -41,10 +45,12 @@ const transitLineSteps: StepDefinition[] = [
 ];
 
 const directNodeSteps: StepDefinition[] = [
-  { label: "这条线给谁用", detail: "选择客户和用途" },
-  { label: "选择服务器和端口", detail: "选择落地服务器" },
-  { label: "创建前确认", detail: "核对入口信息" },
-  { label: "完成", detail: "完成本页展示" },
+  { label: "选择服务器", detail: "选择在线落地 Worker" },
+  { label: "填写节点参数", detail: "填写端口和 Reality 参数" },
+  { label: "创建计划", detail: "生成受保护计划" },
+  { label: "安全确认", detail: "确认端口和风险" },
+  { label: "创建命令", detail: "创建 Worker command" },
+  { label: "等待执行", detail: "等待 Worker 轮询执行" },
 ];
 
 function ModalShell({
@@ -638,88 +644,568 @@ export function CreateTransitLineModal({
   );
 }
 
+const DIRECT_NODE_CONFIRM_TEXT = "CONFIRM_CREATE_DIRECT_NODE";
+const RESERVED_DIRECT_NODE_PORTS = new Set([22, 80, 443, 5432, 6379, 8000, 8200, 3000, 3200, 15432, 16379]);
+
+type DirectNodeConfirmationKey =
+  | "cloudSecurityGroup"
+  | "cloudFirewall"
+  | "serverFirewall"
+  | "realListener"
+  | "noCloudFirewallChange"
+  | "noCutover"
+  | "rollbackOnly"
+  | "noExistingXrayConflict";
+
+const directNodeConfirmationItems: Array<{ key: DirectNodeConfirmationKey; label: string; detail: string }> = [
+  {
+    key: "cloudSecurityGroup",
+    label: "我已在云服务器安全组放行该 TCP 端口",
+    detail: "云厂商安全组需允许客户连接端口入站。",
+  },
+  {
+    key: "cloudFirewall",
+    label: "我已在云防火墙放行该 TCP 端口",
+    detail: "如云平台有额外防火墙，也需要同步放行。",
+  },
+  {
+    key: "serverFirewall",
+    label: "我已确认服务器系统防火墙允许该 TCP 端口",
+    detail: "系统不会替你修改云安全组或云防火墙。",
+  },
+  {
+    key: "realListener",
+    label: "我理解本操作会新增真实客户端监听端口",
+    detail: "Worker 执行成功后会在落地 VPS 上创建 VLESS Reality 入口。",
+  },
+  {
+    key: "noCloudFirewallChange",
+    label: "我理解系统不会自动修改云安全组 / 云防火墙",
+    detail: "云侧放行必须由管理员提前确认。",
+  },
+  {
+    key: "noCutover",
+    label: "我确认本次不会 cutover，不会影响现有节点链接",
+    detail: "本次只创建新的直连节点命令，不切换正式线路。",
+  },
+  {
+    key: "rollbackOnly",
+    label: "我确认失败时只回滚本次新增内容",
+    detail: "不会清理历史节点或既有配置。",
+  },
+  {
+    key: "noExistingXrayConflict",
+    label: "我确认创建计划 / 最新预检未发现已有 Xray、3x-ui 或 LiveLine 管理配置冲突",
+    detail: "若计划或预检提示存在冲突，不能继续正式创建。",
+  },
+];
+
+const initialDirectNodeConfirmations: Record<DirectNodeConfirmationKey, boolean> = {
+  cloudSecurityGroup: false,
+  cloudFirewall: false,
+  serverFirewall: false,
+  realListener: false,
+  noCloudFirewallChange: false,
+  noCutover: false,
+  rollbackOnly: false,
+  noExistingXrayConflict: false,
+};
+
+function validateDirectNodePort(value: string) {
+  const parsed = Number(value);
+  if (!/^\d+$/.test(value.trim())) {
+    return "端口必须是数字。";
+  }
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    return "端口必须在 1-65535 之间。";
+  }
+  if (RESERVED_DIRECT_NODE_PORTS.has(parsed)) {
+    return "该端口属于系统 / 控制台常用端口，请换用 10000-30000 范围内的端口。";
+  }
+  return null;
+}
+
+function allDirectNodeConfirmationsChecked(confirmations: Record<DirectNodeConfirmationKey, boolean>) {
+  return directNodeConfirmationItems.every((item) => confirmations[item.key]);
+}
+
+function safePlanValue(value: unknown) {
+  if (typeof value === "string") {
+    return value || "未返回";
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "是" : "否";
+  }
+  if (value === null || value === undefined) {
+    return "未返回";
+  }
+  if (Array.isArray(value)) {
+    return `${value.length} 项`;
+  }
+  return "已返回";
+}
+
+function DirectNodePlanSummary({ plan }: { plan: LandingNodePlanResponse }) {
+  const preflightEntries = Object.entries(plan.preflight_summary ?? {}).slice(0, 8);
+  return (
+    <section className="direct-node-result-card">
+      <div className="product-section-head">
+        <h4>创建计划</h4>
+        <span className={plan.ready && plan.blocked_reasons.length === 0 ? "product-badge success" : "product-badge warning"}>
+          {plan.ready && plan.blocked_reasons.length === 0 ? "ready" : "需要处理"}
+        </span>
+      </div>
+      <div className="direct-node-plan-grid">
+        <span>监听端口</span>
+        <strong>{plan.listen_port}</strong>
+        <span>Reality SNI</span>
+        <strong>{plan.server_name}</strong>
+        <span>Reality dest</span>
+        <strong>{plan.dest}</strong>
+        <span>fingerprint</span>
+        <strong>{plan.fingerprint}</strong>
+        <span>安装 / 更新 Xray</span>
+        <strong>{plan.will_install_xray ? "可能需要" : "不需要"}</strong>
+        <span>创建配置</span>
+        <strong>{plan.will_create_config ? "是" : "否"}</strong>
+        <span>本机防火墙</span>
+        <strong>{plan.will_open_local_firewall ? "可能调整" : "不调整"}</strong>
+        <span>云安全组</span>
+        <strong>{plan.will_modify_cloud_security_group ? "会修改" : "不会修改"}</strong>
+      </div>
+      <PlanTextList title="warnings" items={plan.warnings} emptyText="无警告。" />
+      <PlanTextList title="blocked_reasons" items={plan.blocked_reasons} emptyText="无阻断。" />
+      <PlanTextList title="required_user_confirmations" items={plan.required_user_confirmations} emptyText="无额外确认。" />
+      <PlanTextList title="safety_boundary" items={plan.safety_boundary} emptyText="未返回。" />
+      {preflightEntries.length ? (
+        <div className="direct-node-preflight">
+          <strong>preflight_summary</strong>
+          {preflightEntries.map(([key, value]) => (
+            <span key={key}>
+              <small>{key}</small>
+              <em>{safePlanValue(value)}</em>
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function DirectNodeCreateSummary({ result }: { result: LandingNodeCreateResponse }) {
+  return (
+    <section className="direct-node-result-card success">
+      <div className="product-section-head">
+        <h4>正式创建命令已创建</h4>
+        <span className="product-badge success">{result.status}</span>
+      </div>
+      <div className="direct-node-plan-grid">
+        <span>command_id</span>
+        <strong>{result.command_id}</strong>
+        <span>approved_port</span>
+        <strong>{result.approved_port}</strong>
+        <span>target_worker_id</span>
+        <strong>{result.target_worker_id}</strong>
+        <span>target_worker_version</span>
+        <strong>{result.target_worker_version ?? "未返回"}</strong>
+        <span>next_action</span>
+        <strong>{result.next_action}</strong>
+      </div>
+      <PlanTextList title="safety_boundary" items={result.safety_boundary} emptyText="未返回。" />
+      <p className="demo-safety-note compact">
+        正式创建命令已创建，等待落地 Worker 轮询执行。创建成功后可在任务记录 / 客户端信息导出流程中查看结果。
+      </p>
+    </section>
+  );
+}
+
+function PlanTextList({ emptyText, items, title }: { emptyText: string; items: string[]; title: string }) {
+  return (
+    <div className="direct-node-text-list">
+      <strong>{title}</strong>
+      {items.length ? (
+        <ul>
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <span>{emptyText}</span>
+      )}
+    </div>
+  );
+}
+
 export function CreateDirectNodeModal({
   onClose,
+  onCompleted,
   servers,
 }: ModalProps & {
   servers: VpsServerData[];
 }) {
+  const onlineServers = useMemo(
+    () => servers.filter((server) => server.worker_online && server.status !== "deleted"),
+    [servers],
+  );
   const [step, setStep] = useState(0);
-  const [customer, setCustomer] = useState("客户A");
-  const [purpose, setPurpose] = useState("Facebook 主线");
+  const [selectedServerId, setSelectedServerId] = useState(onlineServers[0]?.id ?? "");
+  const [nodeName, setNodeName] = useState("");
   const [port, setPort] = useState("28917");
-  const defaultServer = useMemo(() => servers.find((server) => server.worker_online) ?? servers[0] ?? null, [servers]);
-  const suggestedName = `${customer}-${purpose.replace(/\s+/g, "")}-直连`;
+  const [serverName, setServerName] = useState("www.cloudflare.com");
+  const [dest, setDest] = useState("www.cloudflare.com:443");
+  const [fingerprint, setFingerprint] = useState("chrome");
+  const [confirmations, setConfirmations] = useState<Record<DirectNodeConfirmationKey, boolean>>(initialDirectNodeConfirmations);
+  const [planResult, setPlanResult] = useState<LandingNodePlanResponse | null>(null);
+  const [createResult, setCreateResult] = useState<LandingNodeCreateResponse | null>(null);
+  const [exactConfirm, setExactConfirm] = useState("");
+  const [submitting, setSubmitting] = useState<"plan" | "create" | null>(null);
+  const [message, setMessage] = useState("请选择在线落地服务器，填写端口，并完成端口放行确认。");
+
+  useEffect(() => {
+    if (onlineServers[0] && (!selectedServerId || !onlineServers.some((server) => server.id === selectedServerId))) {
+      setSelectedServerId(onlineServers[0].id);
+    }
+  }, [onlineServers, selectedServerId]);
+
+  const selectedServer = onlineServers.find((server) => server.id === selectedServerId) ?? onlineServers[0] ?? null;
+  const resolvedNodeName = nodeName.trim() || (selectedServer ? `${selectedServer.name} 直连节点` : "香港直连15m");
+  const portError = validateDirectNodePort(port);
+  const parsedPort = Number(port);
+  const realityConfigMissing = !serverName.trim() || !dest.trim() || !fingerprint.trim();
+  const confirmationsComplete = allDirectNodeConfirmationsChecked(confirmations);
+  const planReady = !!planResult?.ready && (planResult.blocked_reasons?.length ?? 0) === 0;
+  const canRequestPlan = !!selectedServer && !portError && !realityConfigMissing && confirmationsComplete && submitting === null && !createResult;
+  const canCreate =
+    !!selectedServer &&
+    !!planResult &&
+    planReady &&
+    planResult.server_id === selectedServer.id &&
+    planResult.listen_port === parsedPort &&
+    !portError &&
+    !realityConfigMissing &&
+    confirmationsComplete &&
+    exactConfirm === DIRECT_NODE_CONFIRM_TEXT &&
+    submitting === null &&
+    !createResult;
+
+  function markConfigDirty() {
+    if (planResult || createResult) {
+      setPlanResult(null);
+      setCreateResult(null);
+      setExactConfirm("");
+      setStep(1);
+      setMessage("配置已变更，请重新生成创建计划。");
+    }
+  }
+
+  function closeModal() {
+    setPlanResult(null);
+    setCreateResult(null);
+    setExactConfirm("");
+    onClose();
+  }
+
+  async function handlePlan() {
+    if (!selectedServer) {
+      setMessage("暂无在线落地服务器，请先添加落地服务器并安装 Worker。");
+      return;
+    }
+    if (portError) {
+      setMessage(portError);
+      return;
+    }
+    if (realityConfigMissing) {
+      setMessage("请填写 Reality SNI、dest 和 fingerprint。");
+      return;
+    }
+    if (!confirmationsComplete) {
+      setMessage("请先完成全部端口放行与安全确认。");
+      return;
+    }
+    setSubmitting("plan");
+    setMessage("正在生成创建计划，不会创建 Worker command。");
+    try {
+      const csrfToken = await fetchCsrfToken();
+      if (!csrfToken) {
+        setMessage("登录状态或安全校验失败，请刷新后重试。");
+        return;
+      }
+      const result = await createLandingNodePlan(
+        selectedServer.id,
+        {
+          listen_port: parsedPort,
+          protocol: "vless",
+          security: "reality",
+          flow: "xtls-rprx-vision",
+          server_name: serverName.trim(),
+          dest: dest.trim(),
+          fingerprint: fingerprint.trim(),
+          remark: resolvedNodeName,
+          allow_install_xray: true,
+          allow_modify_firewall: true,
+          allow_generate_share_link: true,
+          allow_overwrite_existing_config: false,
+          cloud_security_group_confirmed: confirmations.cloudSecurityGroup,
+          cloud_firewall_confirmed: confirmations.cloudFirewall,
+          server_firewall_confirmed: confirmations.serverFirewall,
+          require_manual_cloud_firewall_confirmation: true,
+          require_preflight_success: true,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(result.message || "生成创建计划失败。");
+        return;
+      }
+      setPlanResult(result.data);
+      setCreateResult(null);
+      setStep(result.data.ready && result.data.blocked_reasons.length === 0 ? 3 : 2);
+      setMessage(
+        result.data.ready && result.data.blocked_reasons.length === 0
+          ? "预检计划已生成。确认无误后输入确认文本创建正式 Worker command。"
+          : "预检计划已生成，但存在阻断项，不能正式创建。",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成创建计划失败。");
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function handleCreate() {
+    if (!selectedServer || !planResult || !planReady) {
+      setMessage("请先生成 ready 状态的创建计划。");
+      return;
+    }
+    if (!confirmationsComplete) {
+      setMessage("请先完成全部端口放行与安全确认。");
+      return;
+    }
+    if (realityConfigMissing) {
+      setMessage("请填写 Reality SNI、dest 和 fingerprint。");
+      return;
+    }
+    if (portError) {
+      setMessage(portError);
+      return;
+    }
+    if (planResult.blocked_reasons.length > 0) {
+      setMessage("创建计划仍存在阻断项，不能正式创建。");
+      return;
+    }
+    if (planResult.server_id !== selectedServer.id) {
+      setMessage("当前选择的服务器与创建计划不一致，请重新生成计划。");
+      return;
+    }
+    if (planResult.listen_port !== parsedPort) {
+      setMessage("端口已变更，请重新生成创建计划。");
+      return;
+    }
+    if (exactConfirm !== DIRECT_NODE_CONFIRM_TEXT) {
+      setMessage(`请输入 ${DIRECT_NODE_CONFIRM_TEXT} 后再创建。`);
+      return;
+    }
+    setSubmitting("create");
+    setMessage("正在创建正式 landing_node_create Worker command。");
+    try {
+      const csrfToken = await fetchCsrfToken();
+      if (!csrfToken) {
+        setMessage("登录状态或安全校验失败，请刷新后重试。");
+        return;
+      }
+      const result = await createLandingNodeExecution(
+        selectedServer.id,
+        {
+          approved_port: parsedPort,
+          node_name: resolvedNodeName,
+          server_name: serverName.trim(),
+          dest: dest.trim(),
+          fingerprint: fingerprint.trim(),
+          confirm_firewall_open: true,
+          confirm_generate_share_link: true,
+          confirm_write_share_link_after_success: true,
+          confirm_no_existing_xray: true,
+          confirm_rollback_new_artifacts_only: true,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(result.message || "创建正式命令失败。");
+        return;
+      }
+      setCreateResult(result.data);
+      setStep(5);
+      setMessage("正式创建命令已创建，等待落地 Worker 轮询执行。");
+      await onCompleted?.();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建正式命令失败。");
+    } finally {
+      setSubmitting(null);
+    }
+  }
 
   return (
-    <ModalShell onClose={onClose} title="新建直连节点" wide>
+    <ModalShell onClose={closeModal} title="新建直连节点" wide>
       <ProductSteps activeStep={step} steps={directNodeSteps} />
-      <div className="product-modal-layout">
-        <form className="product-form">
-          <div className="form-group-title">第 1 步：这条线给谁用？</div>
-          <label>
-            分配给谁
-            <select value={customer} onChange={(event) => setCustomer(event.target.value)}>
-              <option>自己使用</option>
-              <option>客户A</option>
-              <option>客户B</option>
-              <option>未分配</option>
-              <option>新建客户</option>
-            </select>
-          </label>
-          <label>
-            用途是什么
-            <select value={purpose} onChange={(event) => setPurpose(event.target.value)}>
-              <option>看视频 / 日常使用</option>
-              <option>Facebook 主线</option>
-              <option>Facebook 备用线</option>
-              <option>TikTok 主线</option>
-              <option>TikTok 备用线</option>
-              <option>YouTube 主线</option>
-              <option>测试线路</option>
-            </select>
-          </label>
-          <div className="form-group-title">第 2 步：选择服务器和端口</div>
-          <label className="product-form-wide">
-            落地服务器
-            <select defaultValue={defaultServer?.id ?? ""}>
-              {servers.length ? (
-                servers.map((server) => (
-                  <option key={server.id} value={server.id}>
-                    {server.name} / {server.ip}
-                  </option>
-                ))
-              ) : (
-                <option value="">暂无落地服务器</option>
-              )}
-            </select>
-          </label>
-          <label>
-            客户连接端口
-            <input value={port} onChange={(event) => setPort(event.target.value)} />
-          </label>
-          <label>
-            系统建议名称
-            <input readOnly value={suggestedName} />
-          </label>
-        </form>
-        <InfoCard title="创建前确认">
-          <li>线路名称：{suggestedName}</li>
-          <li>接入方式：直连节点</li>
-          <li>入口地址：{endpoint(defaultServer?.ip, Number(port) || null)}</li>
-          <li>用途：{purpose}</li>
-        </InfoCard>
-      </div>
-      <p className="demo-safety-note">当前仅为前端演示，不会创建真实节点。</p>
+      {!onlineServers.length ? (
+        <div className="product-empty-state direct-node-empty">
+          <ProductIcon name="server" tone="blue" />
+          <strong>暂无在线落地服务器</strong>
+          <p>请先添加落地服务器并安装 Worker。未上线 Worker 的服务器不能创建直连节点。</p>
+        </div>
+      ) : (
+        <>
+          <div className="product-modal-layout">
+            <form className="product-form" onSubmit={(event) => event.preventDefault()}>
+              <div className="form-group-title">选择落地服务器</div>
+              <label className="product-form-wide">
+                <span>在线落地服务器 <em>*</em></span>
+                <select
+                  disabled={!!createResult || submitting !== null}
+                  value={selectedServer?.id ?? ""}
+                  onChange={(event) => {
+                    setSelectedServerId(event.target.value);
+                    markConfigDirty();
+                  }}
+                >
+                  {onlineServers.map((server) => (
+                    <option key={server.id} value={server.id}>
+                      {server.name} / {server.ip} / Worker {server.worker_version ?? "未返回版本"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="form-group-title">填写节点参数</div>
+              <label>
+                <span>节点名称</span>
+                <input
+                  disabled={!!createResult || submitting !== null}
+                  placeholder="香港直连15m"
+                  value={nodeName}
+                  onChange={(event) => {
+                    setNodeName(event.target.value);
+                    markConfigDirty();
+                  }}
+                />
+              </label>
+              <label>
+                <span>客户连接端口 <em>*</em></span>
+                <small>推荐 10000-30000，请避开控制台和系统常用端口。</small>
+                <input
+                  disabled={!!createResult || submitting !== null}
+                  value={port}
+                  onChange={(event) => {
+                    setPort(event.target.value);
+                    markConfigDirty();
+                  }}
+                />
+              </label>
+              <label>
+                <span>Reality SNI <em>*</em></span>
+                <input
+                  disabled={!!createResult || submitting !== null}
+                  value={serverName}
+                  onChange={(event) => {
+                    setServerName(event.target.value);
+                    markConfigDirty();
+                  }}
+                />
+              </label>
+              <label>
+                <span>Reality dest <em>*</em></span>
+                <input
+                  disabled={!!createResult || submitting !== null}
+                  value={dest}
+                  onChange={(event) => {
+                    setDest(event.target.value);
+                    markConfigDirty();
+                  }}
+                />
+              </label>
+              <label>
+                <span>fingerprint <em>*</em></span>
+                <select
+                  disabled={!!createResult || submitting !== null}
+                  value={fingerprint}
+                  onChange={(event) => {
+                    setFingerprint(event.target.value);
+                    markConfigDirty();
+                  }}
+                >
+                  <option value="chrome">chrome</option>
+                  <option value="firefox">firefox</option>
+                  <option value="safari">safari</option>
+                  <option value="edge">edge</option>
+                </select>
+              </label>
+              <div className="direct-node-protection-card product-form-wide">
+                <strong>端口放行与安全确认</strong>
+                <p>生成计划前，请先确认客户连接 TCP 端口已经在云服务器安全组、云防火墙和服务器防火墙放行。</p>
+                <div className="port-confirm-list direct-node-confirm-list">
+                  {directNodeConfirmationItems.map((item) => (
+                    <label key={item.key}>
+                      <input
+                        checked={confirmations[item.key]}
+                        disabled={!!createResult || submitting !== null}
+                        type="checkbox"
+                        onChange={(event) => {
+                          setConfirmations((current) => ({ ...current, [item.key]: event.target.checked }));
+                          markConfigDirty();
+                        }}
+                      />
+                      <span>
+                        <strong>{item.label}</strong>
+                        <small>{item.detail}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {portError ? <p className="direct-node-form-error product-form-wide">{portError}</p> : null}
+              <button className="product-form-submit" disabled={!canRequestPlan} type="button" onClick={() => void handlePlan()}>
+                {submitting === "plan" ? "生成中..." : "生成创建计划"}
+              </button>
+            </form>
+            <InfoCard title="正式创建提醒">
+              <li>这是正式创建直连节点流程。</li>
+              <li>Worker 执行成功后会新增客户端监听端口。</li>
+              <li>系统不会修改云安全组 / 云防火墙。</li>
+              <li>本次不会 cutover，不会影响现有节点链接。</li>
+              <li>失败只允许回滚本次新增内容。</li>
+            </InfoCard>
+          </div>
+
+          <div className="direct-node-flow-results">
+            {planResult ? <DirectNodePlanSummary plan={planResult} /> : null}
+            {planResult ? (
+              <section className="direct-node-create-confirm">
+                <strong>正式创建确认</strong>
+                <p>
+                  输入 <code>{DIRECT_NODE_CONFIRM_TEXT}</code> 后，才会创建受保护的 landing_node_create Worker command。
+                </p>
+                <input
+                  disabled={!planReady || !!createResult || submitting !== null}
+                  placeholder={DIRECT_NODE_CONFIRM_TEXT}
+                  value={exactConfirm}
+                  onChange={(event) => setExactConfirm(event.target.value)}
+                />
+                <button disabled={!canCreate} type="button" onClick={() => void handleCreate()}>
+                  {submitting === "create" ? "创建中..." : "创建正式命令"}
+                </button>
+              </section>
+            ) : null}
+            {createResult ? <DirectNodeCreateSummary result={createResult} /> : null}
+          </div>
+        </>
+      )}
+      <p className="demo-safety-note">{message}</p>
       <div className="modal-actions">
-        <button className="secondary" type="button" onClick={onClose}>
-          取消
-        </button>
-        <button className="secondary" type="button" onClick={() => setStep((current) => Math.min(current + 1, 3))}>
-          下一步
-        </button>
-        <button type="button" onClick={() => setStep(3)}>
-          完成演示流程
+        <button className="secondary" type="button" onClick={closeModal}>
+          关闭
         </button>
       </div>
     </ModalShell>
