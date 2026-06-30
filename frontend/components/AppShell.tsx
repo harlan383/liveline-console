@@ -430,6 +430,9 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
               </button>
             ))}
           </div>
+          <button className="attention-view-all" type="button" onClick={() => onNavigate("tasks")}>
+            查看全部告警 <span aria-hidden="true">›</span>
+          </button>
         </section>
 
         <section className="product-section-card quick-actions-card">
