@@ -522,6 +522,8 @@ export type TransitHaproxyRouteCreateFinalApprovalResult = {
   forwarding_method: "haproxy_tcp";
   route_name: string;
   route_display_name?: string | null;
+  final_approval_text: string;
+  expected_real_execution_text: string;
   target_worker_id: string | null;
   target_worker_version: string | null;
   minimum_supported_worker_version: string;
@@ -573,6 +575,8 @@ export type TransitHaproxyRouteCreateRealExecutionResult = {
   forwarding_method: "haproxy_tcp";
   route_name: string;
   route_display_name?: string | null;
+  final_approval_text: string;
+  expected_real_execution_text: string;
   target_worker_id: string | null;
   target_worker_version: string | null;
   minimum_supported_worker_version: string;
@@ -589,6 +593,8 @@ export type TransitHaproxyRouteCreateRealExecutionResult = {
   share_link_mutated: boolean;
   cutover: boolean;
 };
+
+export type TransitHaproxyRouteRealExecutionReadinessResult = TransitHaproxyRouteCreateRealExecutionResult;
 
 export type TransitRouteWorkerCreateExecuteRequest = {
   transit_resource_id: string;
@@ -1330,6 +1336,20 @@ export async function createTransitHaproxyRouteRealExecution(
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
   });
+}
+
+export async function requestTransitHaproxyRouteRealExecutionReadiness(
+  payload: TransitHaproxyRouteCreateRealExecutionRequest,
+  csrfToken: string,
+): Promise<ApiResponse<TransitHaproxyRouteRealExecutionReadinessResult>> {
+  return apiFetch<TransitHaproxyRouteRealExecutionReadinessResult>(
+    "/api/transit-routes/haproxy-route-real-execution-readiness",
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function createTransitRouteWorkerExecuteCommand(
