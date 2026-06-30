@@ -244,8 +244,8 @@ export function LineBuilderPanel() {
 
       <p className="message">{message}</p>
 
-      {activeModal === "landing" ? <AddLandingServerModal onClose={() => setActiveModal(null)} /> : null}
-      {activeModal === "transit" ? <AddTransitServerModal onClose={() => setActiveModal(null)} /> : null}
+      {activeModal === "landing" ? <AddLandingServerModal onClose={() => setActiveModal(null)} onCompleted={loadData} /> : null}
+      {activeModal === "transit" ? <AddTransitServerModal onClose={() => setActiveModal(null)} onCompleted={loadData} /> : null}
       {activeModal === "direct" ? <CreateDirectNodeModal servers={servers} onClose={() => setActiveModal(null)} /> : null}
       {activeModal === "transitLine" ? (
         <CreateTransitLineModal nodes={activeNodes} resources={visibleTransitResources} onClose={() => setActiveModal(null)} />

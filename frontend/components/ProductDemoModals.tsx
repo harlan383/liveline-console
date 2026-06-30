@@ -1,12 +1,23 @@
 "use client";
 
-import { type ReactNode, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 
 import { ProductIcon } from "@/components/ProductIcons";
-import { type NodeData, type TransitResourceData, type VpsServerData } from "@/lib/api";
+import {
+  apiFetch,
+  createTransitWorkerBootstrap,
+  createVpsWorkerBootstrap,
+  type CsrfResult,
+  type NodeData,
+  type TransitResourceData,
+  type TransitWorkerBootstrapResult,
+  type VpsServerData,
+  type VpsWorkerBootstrapResult,
+} from "@/lib/api";
 
 type ModalProps = {
   onClose: () => void;
+  onCompleted?: () => void | Promise<void>;
 };
 
 type StepDefinition = {
@@ -85,123 +96,381 @@ function InfoCard({ children, title }: { children: ReactNode; title: string }) {
   );
 }
 
-export function AddLandingServerModal({ onClose }: ModalProps) {
+const bootstrapExpiryOptions = [30, 60, 120, 1440];
+
+function formatExpiresAt(value: string | null | undefined) {
+  if (!value) {
+    return "未返回";
+  }
+  return new Date(value).toLocaleString();
+}
+
+async function copyText(value: string) {
+  if (!navigator.clipboard) {
+    return false;
+  }
+  await navigator.clipboard.writeText(value);
+  return true;
+}
+
+async function fetchCsrfToken() {
+  const csrfResult = await apiFetch<CsrfResult>("/api/auth/csrf");
+  return csrfResult.success ? csrfResult.data.csrf_token : null;
+}
+
+function BootstrapCommandPanel({
+  command,
+  expiresAt,
+  host,
+  message,
+  name,
+  onCopy,
+  roleLabel,
+}: {
+  command: string;
+  expiresAt: string;
+  host: string;
+  message: string;
+  name: string;
+  onCopy: () => void;
+  roleLabel: string;
+}) {
+  return (
+    <section className="product-bootstrap-result">
+      <div className="product-bootstrap-meta">
+        <span>
+          <small>{roleLabel}</small>
+          <strong>{name}</strong>
+        </span>
+        <span>
+          <small>公网 IP</small>
+          <strong>{host}</strong>
+        </span>
+        <span>
+          <small>命令有效期</small>
+          <strong>{formatExpiresAt(expiresAt)}</strong>
+        </span>
+      </div>
+      <label className="product-form-wide product-command-field">
+        安装命令
+        <textarea readOnly value={command} />
+      </label>
+      <div className="product-command-actions">
+        <button type="button" onClick={onCopy}>
+          复制安装命令
+        </button>
+        <small>{message}</small>
+      </div>
+      <p className="demo-safety-note compact">
+        命令包含一次性 token，只在当前弹窗临时展示；请勿写入文档、PR、聊天记录、日志或浏览器存储。
+      </p>
+    </section>
+  );
+}
+
+export function AddLandingServerModal({ onClose, onCompleted }: ModalProps) {
   const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
+  const [ip, setIp] = useState("");
+  const [interfaceName, setInterfaceName] = useState("ens17");
+  const [expiresInMinutes, setExpiresInMinutes] = useState(60);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState("填写信息后生成一次性 Worker 安装命令。");
+  const [bootstrapResult, setBootstrapResult] = useState<VpsWorkerBootstrapResult | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  function resetForm() {
+    setStep(0);
+    setBootstrapResult(null);
+    setCopied(false);
+    setMessage("填写信息后生成一次性 Worker 安装命令。");
+  }
+
+  function closeModal() {
+    setBootstrapResult(null);
+    setCopied(false);
+    onClose();
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextName = name.trim();
+    const nextIp = ip.trim();
+    const nextInterfaceName = interfaceName.trim();
+    if (!nextName || !nextIp || !nextInterfaceName) {
+      setMessage("请填写服务器名称、公网 IP 和网卡名。");
+      return;
+    }
+
+    setSubmitting(true);
+    setCopied(false);
+    setMessage("正在生成落地服务器安装命令。");
+    try {
+      const csrfToken = await fetchCsrfToken();
+      if (!csrfToken) {
+        setMessage("登录状态或安全校验失败，请刷新后重试。");
+        return;
+      }
+      const result = await createVpsWorkerBootstrap(
+        {
+          name: nextName,
+          ip: nextIp,
+          interface_name: nextInterfaceName,
+          expires_in_minutes: expiresInMinutes,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(result.message || "生成安装命令失败。");
+        return;
+      }
+      setBootstrapResult(result.data);
+      setStep(1);
+      setMessage("安装命令已生成，请复制到对应落地 VPS 手动执行。");
+      await onCompleted?.();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成安装命令失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleCopyCommand() {
+    if (!bootstrapResult?.install_command) {
+      setMessage("请先生成安装命令。");
+      return;
+    }
+    try {
+      const copiedToClipboard = await copyText(bootstrapResult.install_command);
+      setCopied(copiedToClipboard);
+      setStep(2);
+      setMessage(
+        copiedToClipboard
+          ? "安装命令已复制，请立即在对应落地 VPS 手动执行。"
+          : "浏览器未允许自动复制，请手动选择命令复制。",
+      );
+    } catch {
+      setCopied(false);
+      setMessage("复制失败，请手动选择命令复制。");
+    }
+  }
 
   return (
-    <ModalShell onClose={onClose} title="添加落地服务器" wide>
+    <ModalShell onClose={closeModal} title="添加落地服务器" wide>
       <ProductSteps activeStep={step} steps={serverSteps} />
       <div className="product-modal-layout">
-        <form className="product-form">
+        <form className="product-form" onSubmit={handleSubmit}>
           <p className="required-hint">带 <span>*</span> 的为必填项。</p>
           <label>
             <span>服务器名称 <em>*</em></span>
-            <input placeholder="例如：香港落地15m" />
+            <input disabled={!!bootstrapResult || submitting} placeholder="例如：香港落地15m" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label>
-            <span>服务器 IP <em>*</em></span>
-            <input placeholder="例如：64.90.13.19" />
+            <span>服务器公网 IP <em>*</em></span>
+            <input disabled={!!bootstrapResult || submitting} placeholder="例如：64.90.13.19" value={ip} onChange={(event) => setIp(event.target.value)} />
           </label>
           <label>
-            <span>SSH 端口 <em>*</em></span>
-            <input placeholder="22" />
+            <span>网卡名 <em>*</em></span>
+            <small>常见为 ens17 / eth0，请以 VPS 实际网卡为准。</small>
+            <input disabled={!!bootstrapResult || submitting} placeholder="例如：ens17、eth0、enp1s0" value={interfaceName} onChange={(event) => setInterfaceName(event.target.value)} />
           </label>
           <label>
-            <span>SSH 用户 <em>*</em></span>
-            <input placeholder="root" />
+            <span>命令有效期 <em>*</em></span>
+            <select disabled={!!bootstrapResult || submitting} value={expiresInMinutes} onChange={(event) => setExpiresInMinutes(Number(event.target.value))}>
+              {bootstrapExpiryOptions.map((minutes) => (
+                <option key={minutes} value={minutes}>{minutes} 分钟</option>
+              ))}
+            </select>
           </label>
-          <label className="product-form-wide">
-            备注
-            <textarea placeholder="填写地区、用途或客户备注。本阶段不会保存到后端。" />
-          </label>
+          {!bootstrapResult ? (
+            <button className="product-form-submit" disabled={submitting} type="submit">
+              {submitting ? "生成中..." : "生成安装命令"}
+            </button>
+          ) : null}
+          {bootstrapResult ? (
+            <BootstrapCommandPanel
+              command={bootstrapResult.install_command}
+              expiresAt={bootstrapResult.expires_at}
+              host={bootstrapResult.server.ip}
+              message={copied ? "已复制。请勿把命令写入文档、日志或 Git。" : message}
+              name={bootstrapResult.server.name}
+              roleLabel="落地服务器"
+              onCopy={handleCopyCommand}
+            />
+          ) : null}
         </form>
         <InfoCard title="这一步要做什么？">
-          <li>填写你要接入的落地服务器信息。</li>
-          <li>添加完成后，系统会引导你安装服务器助手。</li>
-          <li>这里只是接入服务器，不会立即创建线路。</li>
+          <li>本阶段只生成安装命令，不会自动 SSH。</li>
+          <li>请复制命令到对应落地 VPS 手动执行。</li>
+          <li>命令包含一次性 token，请勿发到文档、PR、聊天记录或日志。</li>
+          <li>安装 Worker 不会创建节点，不会开放客户端口。</li>
         </InfoCard>
       </div>
-      <p className="demo-safety-note">当前仅展示接入流程，不会保存数据或安装服务。</p>
+      <p className="demo-safety-note">{message}</p>
       <div className="modal-actions">
-        <button className="secondary" type="button" onClick={onClose}>
-          取消
+        <button className="secondary" type="button" onClick={closeModal}>
+          关闭
         </button>
-        <button type="button" onClick={() => setStep((current) => Math.min(current + 1, serverSteps.length - 1))}>
-          {step >= serverSteps.length - 1 ? "完成演示" : "下一步"}
-        </button>
+        {bootstrapResult ? (
+          <button className="secondary" type="button" onClick={resetForm}>
+            重新填写
+          </button>
+        ) : null}
       </div>
     </ModalShell>
   );
 }
 
-export function AddTransitServerModal({ onClose }: ModalProps) {
+export function AddTransitServerModal({ onClose, onCompleted }: ModalProps) {
   const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
+  const [ip, setIp] = useState("");
+  const [interfaceName, setInterfaceName] = useState("ens17");
+  const [expiresInMinutes, setExpiresInMinutes] = useState(60);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState("填写信息后生成一次性中转 Worker 安装命令。");
+  const [bootstrapResult, setBootstrapResult] = useState<TransitWorkerBootstrapResult | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  function resetForm() {
+    setStep(0);
+    setBootstrapResult(null);
+    setCopied(false);
+    setMessage("填写信息后生成一次性中转 Worker 安装命令。");
+  }
+
+  function closeModal() {
+    setBootstrapResult(null);
+    setCopied(false);
+    onClose();
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextName = name.trim();
+    const nextIp = ip.trim();
+    const nextInterfaceName = interfaceName.trim();
+    if (!nextName || !nextIp || !nextInterfaceName) {
+      setMessage("请填写中转服务器名称、公网 IP 和网卡名。");
+      return;
+    }
+
+    setSubmitting(true);
+    setCopied(false);
+    setMessage("正在生成中转服务器安装命令。");
+    try {
+      const csrfToken = await fetchCsrfToken();
+      if (!csrfToken) {
+        setMessage("登录状态或安全校验失败，请刷新后重试。");
+        return;
+      }
+      const result = await createTransitWorkerBootstrap(
+        {
+          name: nextName,
+          ip: nextIp,
+          interface_name: nextInterfaceName,
+          expires_in_minutes: expiresInMinutes,
+        },
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(result.message || "生成安装命令失败。");
+        return;
+      }
+      setBootstrapResult(result.data);
+      setStep(1);
+      setMessage("安装命令已生成，请复制到对应中转 VPS 手动执行。");
+      await onCompleted?.();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成安装命令失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleCopyCommand() {
+    if (!bootstrapResult?.install_command) {
+      setMessage("请先生成安装命令。");
+      return;
+    }
+    try {
+      const copiedToClipboard = await copyText(bootstrapResult.install_command);
+      setCopied(copiedToClipboard);
+      setStep(2);
+      setMessage(
+        copiedToClipboard
+          ? "安装命令已复制，请立即在对应中转 VPS 手动执行。"
+          : "浏览器未允许自动复制，请手动选择命令复制。",
+      );
+    } catch {
+      setCopied(false);
+      setMessage("复制失败，请手动选择命令复制。");
+    }
+  }
 
   return (
-    <ModalShell onClose={onClose} title="添加中转服务器" wide>
+    <ModalShell onClose={closeModal} title="添加中转服务器" wide>
       <ProductSteps activeStep={step} steps={serverSteps} />
       <div className="product-modal-layout">
-        <form className="product-form">
+        <form className="product-form" onSubmit={handleSubmit}>
           <p className="required-hint">带 <span>*</span> 的为必填项。</p>
           <div className="form-group-title">基础信息</div>
           <label>
-            <span>中转名称 <em>*</em></span>
-            <input placeholder="例如：广州IEPL-香港出口01" />
+            <span>中转服务器名称 <em>*</em></span>
+            <input disabled={!!bootstrapResult || submitting} placeholder="例如：mk香港中转 / 香港中转01" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label>
-            <span>客户连接 IP <em>*</em></span>
-            <small>客户或 OBS 最终连接的地址。</small>
-            <input placeholder="客户最终连接的入口 IP" />
+            <span>中转 VPS 公网 IP <em>*</em></span>
+            <input disabled={!!bootstrapResult || submitting} placeholder="例如：109.244.79.147" value={ip} onChange={(event) => setIp(event.target.value)} />
           </label>
           <label>
-            <span>SSH 登录 IP <em>*</em></span>
-            <small>系统连接这台中转服务器使用的管理地址。</small>
-            <input placeholder="用于安装助手的管理 IP" />
+            <span>网卡名 <em>*</em></span>
+            <small>常见为 ens17 / eth0，请以 VPS 实际网卡为准。</small>
+            <input disabled={!!bootstrapResult || submitting} placeholder="例如：ens17、eth0、enp1s0" value={interfaceName} onChange={(event) => setInterfaceName(event.target.value)} />
           </label>
           <label>
-            <span>SSH 端口 <em>*</em></span>
-            <input placeholder="22" />
+            <span>命令有效期 <em>*</em></span>
+            <select disabled={!!bootstrapResult || submitting} value={expiresInMinutes} onChange={(event) => setExpiresInMinutes(Number(event.target.value))}>
+              {bootstrapExpiryOptions.map((minutes) => (
+                <option key={minutes} value={minutes}>{minutes} 分钟</option>
+              ))}
+            </select>
           </label>
-          <label>
-            <span>SSH 用户 <em>*</em></span>
-            <input placeholder="root" />
-          </label>
-          <div className="form-group-title optional">补充信息（可选）</div>
-          <label>
-            入口地区
-            <input placeholder="广州 / 香港 / 新加坡" />
-          </label>
-          <label>
-            出口地区
-            <input placeholder="香港 / 美国 / 越南" />
-          </label>
-          <label>
-            带宽
-            <input placeholder="例如：100 Mbps" />
-          </label>
-          <label>
-            月流量
-            <input placeholder="例如：1000 GB" />
-          </label>
-          <label className="product-form-wide">
-            备注
-            <textarea placeholder="填写线路商、客户用途或到期提醒。本阶段不会保存到后端。" />
-          </label>
+          {!bootstrapResult ? (
+            <button className="product-form-submit" disabled={submitting} type="submit">
+              {submitting ? "生成中..." : "生成安装命令"}
+            </button>
+          ) : null}
+          {bootstrapResult ? (
+            <BootstrapCommandPanel
+              command={bootstrapResult.install_command}
+              expiresAt={bootstrapResult.expires_at}
+              host={bootstrapResult.resource.entry_host ?? ip}
+              message={copied ? "已复制。请勿把命令写入文档、日志或 Git。" : message}
+              name={bootstrapResult.resource.name}
+              roleLabel="中转服务器"
+              onCopy={handleCopyCommand}
+            />
+          ) : null}
         </form>
         <InfoCard title="这一步要做什么？">
-          <li>客户会先连接到这台中转服务器。</li>
-          <li>它再把流量转发到落地节点。</li>
-          <li>添加完成后，才能继续创建中转线路。</li>
+          <li>本阶段只接入中转服务器助手。</li>
+          <li>不会创建 HAProxy 转发规则。</li>
+          <li>不会新增客户连接端口。</li>
+          <li>不会修改防火墙 / 云安全组 / 云防火墙。</li>
+          <li>后续中转线路创建将在 Stage 3.4.18 接入。</li>
         </InfoCard>
       </div>
-      <p className="demo-safety-note">当前仅展示接入流程，不会保存数据或安装服务。</p>
+      <p className="demo-safety-note">{message}</p>
       <div className="modal-actions">
-        <button className="secondary" type="button" onClick={onClose}>
-          取消
+        <button className="secondary" type="button" onClick={closeModal}>
+          关闭
         </button>
-        <button type="button" onClick={() => setStep((current) => Math.min(current + 1, serverSteps.length - 1))}>
-          {step >= serverSteps.length - 1 ? "完成演示" : "下一步"}
-        </button>
+        {bootstrapResult ? (
+          <button className="secondary" type="button" onClick={resetForm}>
+            重新填写
+          </button>
+        ) : null}
       </div>
     </ModalShell>
   );

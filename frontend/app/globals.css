@@ -8990,6 +8990,88 @@ button.modal-close-button {
   margin: 12px 24px 0;
 }
 
+.demo-safety-note.compact {
+  margin: 0;
+}
+
+.product-form-submit {
+  grid-column: 1 / -1;
+  justify-self: flex-start;
+  min-height: 40px;
+  min-width: 132px;
+}
+
+.product-bootstrap-result {
+  background: #f7fbff;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  grid-column: 1 / -1;
+  padding: 14px;
+}
+
+.product-bootstrap-meta {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.product-bootstrap-meta span {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.product-bootstrap-meta small,
+.product-command-actions small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.product-bootstrap-meta strong {
+  color: var(--text-main);
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-form .product-command-field {
+  grid-template-columns: 1fr;
+}
+
+.product-form .product-command-field textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height: 1.55;
+  min-height: 118px;
+  overflow-wrap: anywhere;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.product-command-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.product-command-actions button {
+  min-height: 36px;
+}
+
+@media (max-width: 760px) {
+  .product-bootstrap-meta {
+    grid-template-columns: 1fr;
+  }
+}
+
 .my-lines-page .product-stat-card {
   min-height: 114px;
 }
