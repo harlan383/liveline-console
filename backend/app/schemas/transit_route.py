@@ -44,6 +44,10 @@ PROTECTED_CREATE_PORT_MESSAGES = {
 SOCAT_RESERVED_PORTS = PROTECTED_CREATE_PORTS
 
 
+def haproxy_real_execution_confirmation_text(planned_listen_port: int) -> str:
+    return f"CONFIRM_REAL_HAPROXY_ROUTE_CREATE_{planned_listen_port}"
+
+
 def normalize_forwarding_method(value: str) -> str:
     cleaned = value.strip().lower().replace("-", "_")
     if cleaned == "haproxy":

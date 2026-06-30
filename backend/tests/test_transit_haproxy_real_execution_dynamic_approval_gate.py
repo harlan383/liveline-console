@@ -8,8 +8,8 @@ from app.schemas.transit_route import (
     FORWARDING_METHOD_HAPROXY_TCP,
     HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
     HAPROXY_ROUTE_CREATE_REAL_EXECUTION_STAGE,
-    HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
     TransitHaproxyRouteCreateRealExecutionRequest,
+    haproxy_real_execution_confirmation_text,
 )
 
 TRANSIT_WORKER_ID = "4072fcf0-dc40-473f-bf43-b785bf18a859"
@@ -27,7 +27,7 @@ def dynamic_payload(**overrides):
         "route_name": "haproxy-tcp-25867",
         "approval_stage": HAPROXY_ROUTE_CREATE_REAL_EXECUTION_STAGE,
         "final_approval_text": HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
-        "real_execution_text": HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
+        "real_execution_text": haproxy_real_execution_confirmation_text(25867),
         "firewall_security_group_confirmed": True,
         "cloud_firewall_confirmed": True,
         "server_firewall_confirmed": True,
@@ -36,6 +36,8 @@ def dynamic_payload(**overrides):
         "no_full_client_link_confirmed": True,
     }
     payload.update(overrides)
+    if "planned_listen_port" in overrides and "real_execution_text" not in overrides:
+        payload["real_execution_text"] = haproxy_real_execution_confirmation_text(payload["planned_listen_port"])
     return TransitHaproxyRouteCreateRealExecutionRequest(**payload)
 
 
@@ -147,6 +149,13 @@ class TransitHaproxyRealExecutionDynamicApprovalGateTests(unittest.TestCase):
 
     def test_request_confirmation_texts_still_required(self):
         checks = dynamic_checks(payload=dynamic_payload(real_execution_text="WRONG_CONFIRMATION"))
+
+        self.assertFalse(check_by_id(checks, "request_real_execution_text_valid")["passed"])
+
+    def test_legacy_23843_confirmation_text_does_not_approve_dynamic_port(self):
+        checks = dynamic_checks(
+            payload=dynamic_payload(real_execution_text=haproxy_real_execution_confirmation_text(23843))
+        )
 
         self.assertFalse(check_by_id(checks, "request_real_execution_text_valid")["passed"])
 

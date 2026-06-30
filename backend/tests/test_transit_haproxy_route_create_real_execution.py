@@ -15,8 +15,8 @@ from app.models.worker import Worker
 from app.models.worker_command import WorkerCommand
 from app.schemas.transit_route import (
     HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
-    HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
     TransitHaproxyRouteCreateRealExecutionRequest,
+    haproxy_real_execution_confirmation_text,
 )
 
 TRANSIT_RESOURCE_ID = "80ec346d-3ac1-402e-ab09-33cb404ca81c"
@@ -272,9 +272,11 @@ def valid_payload(**overrides):
         "no_node_share_link_change_confirmed": True,
         "no_full_client_link_confirmed": True,
         "final_approval_text": HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
-        "real_execution_text": HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
+        "real_execution_text": haproxy_real_execution_confirmation_text(23843),
     }
     payload.update(overrides)
+    if "planned_listen_port" in overrides and "real_execution_text" not in overrides:
+        payload["real_execution_text"] = haproxy_real_execution_confirmation_text(payload["planned_listen_port"])
     return TransitHaproxyRouteCreateRealExecutionRequest(**payload)
 
 
@@ -367,6 +369,28 @@ class TransitHaproxyRouteCreateRealExecutionTests(unittest.TestCase):
             FakeSession(),
             "real_execution_text_matches",
             valid_payload(real_execution_text="WRONG_CONFIRMATION"),
+        )
+
+    def test_legacy_23843_confirmation_text_blocks_dynamic_port_real_execution(self):
+        self.assert_blocked_by(
+            FakeSession(
+                command_payload=dry_run_payload(
+                    planned_listen_port=25867,
+                    approved_planned_listen_port=25867,
+                    landing_target_port=28917,
+                    approved_landing_target_port=28917,
+                    route_name="haproxy-tcp-25867",
+                    planned_service_name="liveline-haproxy-25867.service",
+                ),
+                node_port=28917,
+            ),
+            "real_execution_text_matches",
+            valid_payload(
+                planned_listen_port=25867,
+                landing_target_port=28917,
+                route_name="haproxy-tcp-25867",
+                real_execution_text=haproxy_real_execution_confirmation_text(23843),
+            ),
         )
 
     def test_existing_active_haproxy_route_blocks_real_execution(self):

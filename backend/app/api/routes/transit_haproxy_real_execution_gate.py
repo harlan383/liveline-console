@@ -11,8 +11,8 @@ from app.schemas.transit_route import (
     FORWARDING_METHOD_HAPROXY_TCP,
     HAPROXY_ROUTE_CREATE_DRY_RUN_STAGE,
     HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
-    HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
     TransitHaproxyRouteCreateRealExecutionRequest,
+    haproxy_real_execution_confirmation_text,
 )
 
 from . import transit_routes
@@ -70,6 +70,7 @@ def build_haproxy_real_execution_dynamic_approval_checks(
     approved_planned_listen_port = command_payload.get("approved_planned_listen_port")
     approved_landing_target_host = command_payload.get("approved_landing_target_host")
     approved_landing_target_port = command_payload.get("approved_landing_target_port")
+    expected_real_execution_text = haproxy_real_execution_confirmation_text(payload.planned_listen_port)
 
     checks = [
         _check_item(
@@ -203,9 +204,9 @@ def build_haproxy_real_execution_dynamic_approval_checks(
         _check_item(
             check_id="request_real_execution_text_valid",
             label="request real execution 文本正确",
-            passed=payload.real_execution_text.strip() == HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
-            message="request real execution 文本正确。" if payload.real_execution_text.strip() == HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT else "request real execution 文本不正确。",
-            next_action="输入正确的 real execution 确认文本。" if payload.real_execution_text.strip() != HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT else "继续检查。",
+            passed=payload.real_execution_text.strip() == expected_real_execution_text,
+            message="request real execution 文本正确。" if payload.real_execution_text.strip() == expected_real_execution_text else "request real execution 文本不正确。",
+            next_action=f"输入 {expected_real_execution_text}。" if payload.real_execution_text.strip() != expected_real_execution_text else "继续检查。",
             evidence_summary="typed_confirmation",
         ),
         _check_item(

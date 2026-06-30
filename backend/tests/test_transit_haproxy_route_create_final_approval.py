@@ -16,6 +16,7 @@ from app.models.worker_command import WorkerCommand
 from app.schemas.transit_route import (
     HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
     TransitHaproxyRouteCreateFinalApprovalRequest,
+    haproxy_real_execution_confirmation_text,
 )
 
 TRANSIT_RESOURCE_ID = "80ec346d-3ac1-402e-ab09-33cb404ca81c"
@@ -398,6 +399,11 @@ class TransitHaproxyRouteCreateFinalApprovalTests(unittest.TestCase):
         self.assertEqual(data["data"]["dry_run_command_id"], DRY_RUN_COMMAND_ID)
         self.assertEqual(data["data"]["planned_service_name"], "liveline-haproxy-23843.service")
         self.assertEqual(data["data"]["route_display_name"], "mk香港落地15m")
+        self.assertEqual(data["data"]["final_approval_text"], HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT)
+        self.assertEqual(
+            data["data"]["expected_real_execution_text"],
+            haproxy_real_execution_confirmation_text(23843),
+        )
         self.assertEqual(data["data"]["next_stage"], "Stage 3.3.139-new-transit-haproxy-route-create-real-execution")
         self.assertFalse(data["data"]["worker_command_created"])
         self.assertFalse(data["data"]["real_execution_command_created"])
@@ -416,6 +422,43 @@ class TransitHaproxyRouteCreateFinalApprovalTests(unittest.TestCase):
         self.assertEqual(db.node.share_link if db.node else None, original_share_link)
         self.assertEqual([item for item in db.added if isinstance(item, WorkerCommand)], [])
         self.assertEqual([item for item in db.added if isinstance(item, TransitRoute)], [])
+        self.assertFalse(db.commit_called)
+
+    def test_ready_success_returns_dynamic_real_execution_text_for_planned_port(self):
+        db = FakeSession(
+            command_payload=dry_run_payload(
+                planned_listen_port=25867,
+                approved_planned_listen_port=25867,
+                landing_target_port=28917,
+                approved_landing_target_port=28917,
+                route_name="haproxy-tcp-25867",
+                route_display_name="mk香港落地15m",
+                planned_service_name="liveline-haproxy-25867.service",
+            ),
+            node_port=28917,
+        )
+        response = call_final_approval(
+            valid_payload(
+                planned_listen_port=25867,
+                landing_target_port=28917,
+                route_name="haproxy-tcp-25867",
+                planned_service_name="liveline-haproxy-25867.service",
+            ),
+            db,
+        )
+        data = response_payload(response)
+
+        self.assertTrue(data["success"])
+        self.assertTrue(data["data"]["ready_for_real_create"])
+        self.assertEqual(
+            data["data"]["expected_real_execution_text"],
+            "CONFIRM_REAL_HAPROXY_ROUTE_CREATE_25867",
+        )
+        self.assertEqual(
+            data["data"]["expected_real_execution_text"],
+            haproxy_real_execution_confirmation_text(25867),
+        )
+        self.assertEqual([item for item in db.added if isinstance(item, WorkerCommand)], [])
         self.assertFalse(db.commit_called)
 
 
