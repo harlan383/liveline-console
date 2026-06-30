@@ -205,6 +205,24 @@ HAPROXY_ROUTE_CREATE_REAL_EXECUTION_BOUNDARY = [
     "no Xray modification",
     "no cutover",
 ]
+HAPROXY_ROUTE_REAL_EXECUTION_READINESS_BOUNDARY = [
+    "advanced-debug readiness only",
+    "no Worker command created",
+    "no real execution command created",
+    "no HAProxy route created",
+    "no TransitRoute active record created",
+    "no HAProxy install, start, stop, or restart",
+    "no listener binding",
+    "no firewall, cloud firewall, or cloud security group mutation",
+    "no SSH",
+    "no remote execution",
+    "no arbitrary shell accepted",
+    "no arbitrary systemd or HAProxy config accepted from API",
+    "no nodes.share_link read or mutation",
+    "no transit_routes.share_link write",
+    "no full client link export",
+    "no cutover",
+]
 
 
 def redact_hint(value: str | None) -> str:
@@ -1875,18 +1893,12 @@ def find_existing_haproxy_real_execution_command(
     return None
 
 
-@router.post("/haproxy-route-create-real-execution")
-def create_haproxy_route_create_real_execution(
+def build_haproxy_route_real_execution_readiness(
+    db: Session,
     payload: TransitHaproxyRouteCreateRealExecutionRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    session = require_admin_session(db, request)
-    if not session:
-        return auth_error()
-    if not csrf_valid(request, session):
-        return csrf_error()
-
+    *,
+    safety_boundary: list[str] | None = None,
+) -> dict:
     command = db.get(WorkerCommand, payload.dry_run_command_id)
     command_payload = command.payload_json if command and isinstance(command.payload_json, dict) else {}
     resource = db.get(TransitResource, payload.transit_resource_id)
@@ -1895,6 +1907,7 @@ def create_haproxy_route_create_real_execution(
     landing_host = node.vps.ip if node and node.vps else None
     worker_status = worker_runtime_status(target_worker) if target_worker else "missing"
     planned_service_name = f"liveline-haproxy-{payload.planned_listen_port}.service"
+    expected_real_execution_text = haproxy_real_execution_confirmation_text(payload.planned_listen_port)
 
     payload_match_fields = {
         "transit_resource_id": payload.transit_resource_id,
@@ -1930,6 +1943,7 @@ def create_haproxy_route_create_real_execution(
         and command_payload.get("approved_firewall_confirmation") is True
         and command_payload.get("approved_landing_target_host") == payload.landing_target_host
         and command_payload.get("approved_landing_target_port") == payload.landing_target_port
+        and command_payload.get("planned_service_name") == planned_service_name
         and command_payload.get("route_created", False) is False
         and command_payload.get("listener_bound", False) is False
         and command_payload.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP
@@ -1937,12 +1951,12 @@ def create_haproxy_route_create_real_execution(
     dry_run_succeeded = bool(command and command.status == "succeeded")
     dry_run_worker_matches_target = bool(command and target_worker and command.worker_id == target_worker.id)
     final_text_ok = payload.final_approval_text.strip() == HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT
-    expected_real_execution_text = haproxy_real_execution_confirmation_text(payload.planned_listen_port)
     real_execution_text_ok = payload.real_execution_text.strip() == expected_real_execution_text
     worker_version_supported = worker_supports_transit_forwarding_method(
         target_worker,
         FORWARDING_METHOD_HAPROXY_TCP,
     )
+    listen_port_allowed = payload.planned_listen_port not in HAPROXY_READINESS_RESERVED_PORTS
     active_route = db.scalar(
         select(TransitRoute).where(
             TransitRoute.transit_resource_id == payload.transit_resource_id,
@@ -2081,6 +2095,14 @@ def create_haproxy_route_create_real_execution(
             evidence_summary=node.node_name if node else None,
         ),
         make_haproxy_readiness_check(
+            check_id="landing_node_active",
+            label="落地节点 active",
+            passed=bool(node and node.deleted_at is None and node.status == "active"),
+            message="落地节点为 active。" if node and node.deleted_at is None and node.status == "active" else "落地节点不是 active。",
+            next_action="选择 active 的落地节点。" if not node or node.deleted_at is not None or node.status != "active" else "继续检查。",
+            evidence_summary=node.status if node else None,
+        ),
+        make_haproxy_readiness_check(
             check_id="landing_target_host_matches_current_node",
             label="落地目标 Host 匹配",
             passed=bool(landing_host and landing_host == payload.landing_target_host),
@@ -2103,6 +2125,14 @@ def create_haproxy_route_create_real_execution(
             message="转发方式为 haproxy_tcp。" if payload.forwarding_method == FORWARDING_METHOD_HAPROXY_TCP else "转发方式不是 haproxy_tcp。",
             next_action="选择 HAProxy TCP mode。" if payload.forwarding_method != FORWARDING_METHOD_HAPROXY_TCP else "继续检查。",
             evidence_summary=payload.forwarding_method,
+        ),
+        make_haproxy_readiness_check(
+            check_id="planned_listen_port_not_reserved",
+            label="计划监听端口未保留",
+            passed=listen_port_allowed,
+            message="计划监听端口未命中保留端口。" if listen_port_allowed else "计划监听端口是保留端口。",
+            next_action="换用未保留且已人工放行的监听端口。" if not listen_port_allowed else "继续检查。",
+            evidence_summary=str(payload.planned_listen_port),
         ),
         make_haproxy_readiness_check(
             check_id="security_group_confirmation_present",
@@ -2173,7 +2203,7 @@ def create_haproxy_route_create_real_execution(
     ]
 
     ready = all(check["passed"] for check in checks)
-    blocked_response = {
+    response = {
         "ready_for_real_execution": ready,
         "blocked": not ready,
         "summary": "HAProxy TCP route 真实创建条件已满足。" if ready else "HAProxy TCP route real execution blocked",
@@ -2190,6 +2220,7 @@ def create_haproxy_route_create_real_execution(
         "forwarding_method": payload.forwarding_method,
         "route_name": payload.route_name,
         "route_display_name": payload.route_display_name,
+        "final_approval_text": HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
         "expected_real_execution_text": expected_real_execution_text,
         "target_worker_id": target_worker.id if target_worker else None,
         "target_worker_version": target_worker.worker_version if target_worker else None,
@@ -2197,7 +2228,7 @@ def create_haproxy_route_create_real_execution(
             FORWARDING_METHOD_HAPROXY_TCP
         ),
         "checks": checks,
-        "safety_boundary": HAPROXY_ROUTE_CREATE_REAL_EXECUTION_BOUNDARY,
+        "safety_boundary": safety_boundary or HAPROXY_ROUTE_REAL_EXECUTION_READINESS_BOUNDARY,
         "worker_command_created": False,
         "real_execution_command_created": False,
         "route_created": False,
@@ -2208,11 +2239,70 @@ def create_haproxy_route_create_real_execution(
         "share_link_mutated": False,
         "cutover": False,
     }
-    if not ready:
+    return {
+        "ready": ready,
+        "response": response,
+        "resource": resource,
+        "node": node,
+        "target_worker": target_worker,
+        "planned_service_name": planned_service_name,
+    }
+
+
+@router.post("/haproxy-route-real-execution-readiness")
+def haproxy_route_real_execution_readiness(
+    payload: TransitHaproxyRouteCreateRealExecutionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    readiness = build_haproxy_route_real_execution_readiness(
+        db,
+        payload,
+        safety_boundary=HAPROXY_ROUTE_REAL_EXECUTION_READINESS_BOUNDARY,
+    )
+    return success_response(
+        readiness["response"],
+        (
+            "HAProxy TCP route 真实创建运行时条件已满足；本接口只读，未创建 Worker command。"
+            if readiness["ready"]
+            else "HAProxy TCP route 真实创建运行时条件未满足；本接口只读，未创建 Worker command。"
+        ),
+    )
+
+
+@router.post("/haproxy-route-create-real-execution")
+def create_haproxy_route_create_real_execution(
+    payload: TransitHaproxyRouteCreateRealExecutionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    readiness = build_haproxy_route_real_execution_readiness(
+        db,
+        payload,
+        safety_boundary=HAPROXY_ROUTE_CREATE_REAL_EXECUTION_BOUNDARY,
+    )
+    blocked_response = readiness["response"]
+    if not readiness["ready"]:
         return success_response(
             blocked_response,
             "HAProxy route 真实创建被阻塞；未创建 Worker command、HAProxy route 或监听端口。",
         )
+    resource = readiness["resource"]
+    node = readiness["node"]
+    target_worker = readiness["target_worker"]
+    planned_service_name = readiness["planned_service_name"]
 
     command_payload = {
         "command_intent": "haproxy_route_create_real_execution",
