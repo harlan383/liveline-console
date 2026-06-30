@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AdvancedDebugPanel } from "@/components/AdvancedDebugPanel";
 import { CustomerLinesPanel } from "@/components/CustomerLinesPanel";
@@ -14,20 +14,55 @@ import {
   apiFetch,
   type AuthUser,
   type CsrfResult,
-  type HealthData,
-  type NodeData,
-  type NodeListResult,
-  type TaskData,
-  type TaskListResult,
-  type TransitResourceData,
-  type TransitResourceListResult,
-  type TransitRouteData,
-  type TransitRouteListResult,
-  type VpsServerData,
-  type VpsServerListResult,
 } from "@/lib/api";
 
 type PanelId = "dashboard" | "lineBuilder" | "customerLines" | "serverResources" | "tasks" | "settings" | "advancedDebug";
+
+type ProductOverviewHealth = {
+  ok: boolean;
+  status: "ok" | "warning" | "danger";
+  label: string;
+  detail: string;
+  last_refreshed_label: string;
+};
+
+type ProductOverviewStats = {
+  normal_lines: number;
+  risk_lines: number;
+  abnormal_lines: number;
+  pending_items: number;
+};
+
+type ProductOverviewAttentionItem = {
+  id: string;
+  summary: string;
+  detail: string;
+  tone: "success" | "warning" | "danger" | "info";
+  source_type: "health" | "task" | "vps" | "node" | "transit_resource" | "transit_route" | "system";
+  source_id: string | null;
+  created_at: string | null;
+  time_label: string;
+};
+
+type ProductOverviewRecentCreatedItem = {
+  id: string;
+  name: string;
+  type: "landing_server" | "direct_node" | "transit_resource" | "transit_route";
+  type_label: "落地服务器" | "直连节点" | "中转服务器" | "中转线路" | "商家中转入口";
+  status: string;
+  created_at: string | null;
+  created_by: string;
+};
+
+type ProductOverviewResult = {
+  generated_at: string;
+  health: ProductOverviewHealth;
+  stats: ProductOverviewStats;
+  attention_items: ProductOverviewAttentionItem[];
+  recent_created: ProductOverviewRecentCreatedItem[];
+  tips: string[];
+  safety_boundary: string[];
+};
 
 const panels: Array<{
   id: PanelId;
@@ -95,30 +130,6 @@ const panels: Array<{
   },
 ];
 
-function taskStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "等待中",
-    running: "执行中",
-    success: "成功",
-    completed: "成功",
-    failed: "失败",
-    cancelled: "已取消",
-    timeout: "超时",
-    unknown: "未知",
-  };
-  return labels[status] ?? status;
-}
-
-function statusTone(status: string | null | undefined) {
-  if (status === "active" || status === "success" || status === "completed" || status === "online" || status === "worker_online") {
-    return "ok";
-  }
-  if (status === "failed" || status === "deleted" || status === "timeout") {
-    return "bad";
-  }
-  return "warn";
-}
-
 function formatDate(value: string | null | undefined) {
   if (!value) {
     return "-";
@@ -126,18 +137,12 @@ function formatDate(value: string | null | undefined) {
   return new Date(value).toLocaleString();
 }
 
-function entryWithPort(host: string | null | undefined, port: number | null | undefined) {
-  if (!host) {
-    return "未返回";
-  }
-  return port ? `${host}:${port}` : host;
-}
-
 export function AppShell() {
   const [activePanel, setActivePanel] = useState<PanelId>("dashboard");
   const [currentAdmin, setCurrentAdmin] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [sidebarHealth, setSidebarHealth] = useState<ProductOverviewHealth | null>(null);
   const activePanelMeta = panels.find((panel) => panel.id === activePanel) ?? panels[0];
 
   useEffect(() => {
@@ -227,11 +232,11 @@ export function AppShell() {
             </button>
           ))}
         </nav>
-        <button className="sidebar-health-card" type="button" onClick={() => setActivePanel("advancedDebug")}>
+        <button className={`sidebar-health-card ${sidebarHealth?.status ?? "loading"}`} type="button" onClick={() => setActivePanel("advancedDebug")}>
           <span className="health-dot" />
           <span>
-            <strong>系统运行正常</strong>
-            <small>最近更新：5分钟前</small>
+            <strong>{sidebarHealth?.label ?? "系统状态读取中"}</strong>
+            <small>{sidebarHealth ? `最近更新：${sidebarHealth.last_refreshed_label}` : "等待总览数据"}</small>
           </span>
           <ProductIcon name="arrow" tone="slate" />
         </button>
@@ -262,7 +267,7 @@ export function AppShell() {
         </header>
 
         <div className="grid product-grid">
-          {activePanel === "dashboard" ? <DashboardPanel onNavigate={setActivePanel} /> : null}
+          {activePanel === "dashboard" ? <DashboardPanel onNavigate={setActivePanel} onOverviewHealth={setSidebarHealth} /> : null}
           {activePanel === "lineBuilder" ? <LineBuilderPanel /> : null}
           {activePanel === "customerLines" ? <CustomerLinesPanel /> : null}
           {activePanel === "serverResources" ? <ServerResourcesPanel /> : null}
@@ -275,131 +280,68 @@ export function AppShell() {
   );
 }
 
-function latestCreatedLabel(items: Array<{ created_at: string | null; name: string; type: string }>) {
-  const sorted = [...items].sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
-  return sorted.slice(0, 3);
+function attentionIconTone(tone: ProductOverviewAttentionItem["tone"]) {
+  if (tone === "danger") {
+    return "red";
+  }
+  if (tone === "warning") {
+    return "orange";
+  }
+  if (tone === "success") {
+    return "green";
+  }
+  return "blue";
 }
 
-function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }) {
-  const [servers, setServers] = useState<VpsServerData[]>([]);
-  const [nodes, setNodes] = useState<NodeData[]>([]);
-  const [resources, setResources] = useState<TransitResourceData[]>([]);
-  const [routes, setRoutes] = useState<TransitRouteData[]>([]);
-  const [tasks, setTasks] = useState<TaskData[]>([]);
-  const [healthOk, setHealthOk] = useState(false);
-  const [message, setMessage] = useState("正在读取运营看板。");
+function recentIconName(type: ProductOverviewRecentCreatedItem["type"]) {
+  if (type === "landing_server" || type === "transit_resource") {
+    return "server";
+  }
+  if (type === "direct_node") {
+    return "builder";
+  }
+  return "route";
+}
+
+async function getProductOverview() {
+  return apiFetch<ProductOverviewResult>("/api/product/overview");
+}
+
+function DashboardPanel({
+  onNavigate,
+  onOverviewHealth,
+}: {
+  onNavigate: (panel: PanelId) => void;
+  onOverviewHealth: (health: ProductOverviewHealth) => void;
+}) {
+  const [overview, setOverview] = useState<ProductOverviewResult | null>(null);
+  const [message, setMessage] = useState("正在读取真实总览数据。");
 
   async function loadDashboard() {
-    const [healthResult, vpsResult, nodeResult, resourceResult, routeResult, taskResult] = await Promise.all([
-      apiFetch<HealthData>("/api/health"),
-      apiFetch<VpsServerListResult>("/api/vps"),
-      apiFetch<NodeListResult>("/api/nodes"),
-      apiFetch<TransitResourceListResult>("/api/transit-resources"),
-      apiFetch<TransitRouteListResult>("/api/transit-routes"),
-      apiFetch<TaskListResult>("/api/tasks?limit=8"),
-    ]);
+    const result = await getProductOverview();
+    if (result.success) {
+      setOverview(result.data);
+      onOverviewHealth(result.data.health);
+      setMessage("总览数据已刷新。");
+      return;
+    }
 
-    if (vpsResult.success) {
-      setServers(vpsResult.data.servers);
-    }
-    if (nodeResult.success) {
-      setNodes(nodeResult.data.nodes);
-    }
-    if (resourceResult.success) {
-      setResources(resourceResult.data.resources);
-    }
-    if (routeResult.success) {
-      setRoutes(routeResult.data.routes);
-    }
-    if (taskResult.success) {
-      setTasks(taskResult.data.tasks);
-    }
-    setHealthOk(
-      healthResult.success &&
-        Object.values(healthResult.data).every((component) => component.status === "ok"),
-    );
-    setMessage(
-      [healthResult, vpsResult, nodeResult, resourceResult, routeResult, taskResult].every((result) => result.success)
-        ? "运营看板已刷新。"
-        : "部分看板数据暂时无法读取。",
-    );
+    setOverview(null);
+    setMessage("总览数据暂时无法读取。");
   }
 
   useEffect(() => {
     void loadDashboard();
   }, []);
 
-  const activeNodes = nodes.filter((node) => node.status === "active");
-  const activeRoutes = routes.filter((route) => route.status === "active" && !route.deleted_at);
-  const failedTasks = tasks.filter((task) => task.status === "failed" || task.status === "timeout");
-  const runningTasks = tasks.filter((task) => task.status === "pending" || task.status === "running");
-  const staleResources = resources.filter((resource) => resource.worker_heartbeat_status === "stale" || resource.worker_is_heartbeat_stale);
-  const normalLines = activeNodes.length + activeRoutes.length;
-  const riskLines = staleResources.length + routes.filter((route) => route.status === "creating").length;
-  const abnormalLines = failedTasks.length + routes.filter((route) => route.status === "failed").length;
-  const pendingItems = runningTasks.length + (servers.length ? 0 : 1) + (activeNodes.length ? 0 : 1);
-  const recentCreated = latestCreatedLabel([
-    ...activeNodes.map((node) => ({ created_at: node.created_at, name: node.node_name, type: "直连节点" })),
-    ...resources.filter((resource) => !resource.deleted_at).map((resource) => ({
-      created_at: resource.created_at,
-      name: resource.name,
-      type: resource.resource_type === "server" ? "中转服务器" : "商家中转入口",
-    })),
-    ...activeRoutes.map((route) => ({ created_at: route.created_at, name: route.name, type: "中转线路" })),
-  ]);
-  const attentionItems = useMemo(() => {
-    const items: Array<{ summary: string; time: string; tone: "warning" | "danger" | "success" }> = [];
-    if (staleResources.length) {
-      items.push({
-        summary: `${staleResources[0].name}：服务器状态长时间未更新，建议检查服务器是否正常运行`,
-        time: "10:15",
-        tone: "warning",
-      });
-    }
-    if (failedTasks.length) {
-      items.push({
-        summary: `${businessTaskTitle(failedTasks[0].task_type)}：最近一次操作失败，建议到任务记录查看处理建议`,
-        time: "09:42",
-        tone: "danger",
-      });
-    }
-    if (!activeRoutes.length) {
-      items.push({
-        summary: "客户B - TikTok新加坡线：中转端口未通过检测，建议检查端口放行",
-        time: "09:42",
-        tone: "warning",
-      });
-    }
-    if (!activeNodes.length) {
-      items.push({
-        summary: "客户A - Facebook越南主线：还没有可用直连节点，建议先添加落地服务器",
-        time: "10:15",
-        tone: "warning",
-      });
-    }
-    if (!items.length) {
-      items.push({
-        summary: "当前线路整体正常：没有需要立即处理的问题，建议定期查看任务记录",
-        time: "刚刚",
-        tone: "success",
-      });
-    }
-    return items.slice(0, 2);
-  }, [activeNodes.length, activeRoutes.length, failedTasks, staleResources]);
-
-  const nextStepTips = useMemo(() => {
-    const tips: string[] = [];
-    if (servers.length > 0 && !activeNodes.length) {
-      tips.push("你已接入落地服务器，可以继续创建第一条直连节点。");
-    }
-    if (!resources.some((resource) => resource.resource_type === "server" && !resource.deleted_at)) {
-      tips.push("如果要搭建中转线路，请先添加一台中转服务器。");
-    }
-    if (activeNodes.length > 0 && !activeRoutes.length) {
-      tips.push("已有直连节点，客户直播主线可以继续规划中转线路。");
-    }
-    return tips.length ? tips : ["当前基础资源已就绪，可以在“客户线路”查看线路状态。"];
-  }, [activeNodes.length, activeRoutes.length, resources, servers.length]);
+  const normalLines = overview?.stats.normal_lines ?? 0;
+  const riskLines = overview?.stats.risk_lines ?? 0;
+  const abnormalLines = overview?.stats.abnormal_lines ?? 0;
+  const pendingItems = overview?.stats.pending_items ?? 0;
+  const attentionItems = overview?.attention_items ?? [];
+  const recentCreated = overview?.recent_created ?? [];
+  const tips = overview?.tips ?? [];
+  const healthOk = overview?.health.ok ?? false;
 
   return (
     <section className="dashboard-panel product-dashboard wide">
@@ -419,16 +361,18 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
             </span>
           </div>
           <div className="attention-list">
-            {attentionItems.map((item) => (
-              <button className={`attention-item ${item.tone}`} key={`${item.summary}-${item.time}`} type="button" onClick={() => onNavigate("tasks")}>
-                <ProductIcon name="alert" tone={item.tone === "danger" ? "red" : item.tone === "success" ? "green" : "orange"} />
+            {attentionItems.length ? attentionItems.map((item) => (
+              <button className={`attention-item ${item.tone}`} key={item.id} type="button" onClick={() => onNavigate("tasks")}>
+                <ProductIcon name="alert" tone={attentionIconTone(item.tone)} />
                 <div className="attention-copy">
                   <strong>{item.summary}</strong>
-                  <small>发现时间：{item.time}</small>
+                  <small>{item.detail} · 发现时间：{item.time_label}</small>
                 </div>
                 <ProductIcon name="arrow" tone="slate" />
               </button>
-            ))}
+            )) : (
+              <div className="empty compact-empty">总览数据暂时无法读取。</div>
+            )}
           </div>
           <button className="attention-view-all" type="button" onClick={() => onNavigate("tasks")}>
             查看全部告警 <span aria-hidden="true">›</span>
@@ -480,11 +424,11 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           {recentCreated.length ? (
             <div className="recent-create-list">
               {recentCreated.map((item) => (
-                <div className="recent-create-row" key={`${item.type}-${item.name}`}>
-                  <ProductIcon name={item.type === "直连节点" ? "builder" : "route"} tone="blue" />
+                <div className="recent-create-row" key={`${item.type}-${item.id}`}>
+                  <ProductIcon name={recentIconName(item.type)} tone="blue" />
                   <strong>{item.name}</strong>
-                  <span>{item.type}</span>
-                  <small>创建人：admin</small>
+                  <span>{item.type_label}</span>
+                  <small>创建人：{item.created_by}</small>
                   <small>{formatDate(item.created_at)}</small>
                 </div>
               ))}
@@ -500,31 +444,17 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
             <span className="product-badge info">帮助</span>
           </div>
           <ul className="product-tip-list">
-            <li>通过“线路搭建”快速创建直连或中转线路。</li>
-            <li>在“客户线路”中查看线路状态与质量。</li>
-            <li>遇到问题时，先查看“任务记录”获取检测结果。</li>
-            <li>如需帮助，可点击右上角“帮助”查看说明。</li>
-            {nextStepTips.map((tip) => (
+            {tips.length ? tips.map((tip) => (
               <li key={tip}>{tip}</li>
-            ))}
+            )) : (
+              <li>总览数据暂时无法读取，请稍后刷新或进入高级调试查看系统状态。</li>
+            )}
           </ul>
         </section>
       </div>
       <p className="message subtle-message">{message}</p>
     </section>
   );
-}
-
-function businessTaskTitle(taskType: string) {
-  const labels: Record<string, string> = {
-    landing_node_create: "创建直连节点",
-    transit_route_create: "创建中转线路",
-    cleanup_landing_node: "删除节点",
-    cleanup_landing_server: "清理落地服务器",
-    cleanup_transit_route: "清理中转线路",
-    cleanup_transit_resource: "清理中转服务器",
-  };
-  return labels[taskType] ?? "系统操作";
 }
 
 function DashboardStat({
