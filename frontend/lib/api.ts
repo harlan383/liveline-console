@@ -596,6 +596,78 @@ export type TransitHaproxyRouteCreateRealExecutionResult = {
 
 export type TransitHaproxyRouteRealExecutionReadinessResult = TransitHaproxyRouteCreateRealExecutionResult;
 
+export type HaproxyRuntimeDebugTransitResourceCandidate = {
+  id: string;
+  name: string;
+  resource_type: string;
+  entry_host: string | null;
+  entry_port: number | null;
+  entry_region: string | null;
+  exit_region: string | null;
+  status: string;
+  deleted_at: string | null;
+  worker_id: string | null;
+  worker_status: string | null;
+  worker_runtime_status: string | null;
+  worker_online: boolean;
+  worker_version: string | null;
+  worker_hostname: string | null;
+  worker_interface_name: string | null;
+  worker_last_heartbeat_at: string | null;
+};
+
+export type HaproxyRuntimeDebugLandingNodeCandidate = {
+  id: string;
+  node_name: string;
+  vps_id: string;
+  vps_ip: string | null;
+  xray_port: number | null;
+  target_host: string | null;
+  target_port: number | null;
+  status: string;
+  service_status: string | null;
+  share_link_present: boolean;
+  masked_share_link: string | null;
+  deleted_at: string | null;
+  created_at: string | null;
+};
+
+export type HaproxyRuntimeDebugDryRunCandidate = {
+  id: string;
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+  worker_id: string;
+  target_worker_id: string | null;
+  transit_resource_id: string | null;
+  landing_node_id: string | null;
+  planned_listen_port: number | null;
+  approved_planned_listen_port: number | null;
+  landing_target_host: string | null;
+  approved_landing_target_host: string | null;
+  landing_target_port: number | null;
+  approved_landing_target_port: number | null;
+  forwarding_method: "haproxy_tcp";
+  route_name: string | null;
+  route_display_name: string | null;
+  planned_service_name: string | null;
+  command_intent: "haproxy_route_create_dry_run" | string | null;
+  approval_stage: string | null;
+  dry_run: boolean | null;
+  approval_required: boolean | null;
+  real_execution: boolean | null;
+  user_approved_real_execution: boolean | null;
+  approved_firewall_confirmation: boolean | null;
+};
+
+export type HaproxyRuntimeDebugContextResult = {
+  transit_resources: HaproxyRuntimeDebugTransitResourceCandidate[];
+  landing_nodes: HaproxyRuntimeDebugLandingNodeCandidate[];
+  haproxy_dry_run_commands: HaproxyRuntimeDebugDryRunCandidate[];
+  generated_at: string;
+  safety_boundary: string[];
+};
+
 export type TransitRouteWorkerCreateExecuteRequest = {
   transit_resource_id: string;
   landing_node_id: string;
@@ -1350,6 +1422,10 @@ export async function requestTransitHaproxyRouteRealExecutionReadiness(
       body: JSON.stringify(payload),
     },
   );
+}
+
+export async function getHaproxyRuntimeDebugContext(): Promise<ApiResponse<HaproxyRuntimeDebugContextResult>> {
+  return apiFetch<HaproxyRuntimeDebugContextResult>("/api/transit-routes/haproxy-runtime-debug-context");
 }
 
 export async function createTransitRouteWorkerExecuteCommand(
