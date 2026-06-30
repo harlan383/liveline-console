@@ -54,6 +54,52 @@ export type TaskListResult = {
   tasks: TaskData[];
 };
 
+export type ProductOverviewHealth = {
+  ok: boolean;
+  status: "ok" | "warning" | "danger";
+  label: string;
+  detail: string;
+  last_refreshed_label: string;
+};
+
+export type ProductOverviewStats = {
+  normal_lines: number;
+  risk_lines: number;
+  abnormal_lines: number;
+  pending_items: number;
+};
+
+export type ProductOverviewAttentionItem = {
+  id: string;
+  summary: string;
+  detail: string;
+  tone: "success" | "warning" | "danger" | "info";
+  source_type: "health" | "task" | "vps" | "node" | "transit_resource" | "transit_route" | "system";
+  source_id: string | null;
+  created_at: string | null;
+  time_label: string;
+};
+
+export type ProductOverviewRecentCreatedItem = {
+  id: string;
+  name: string;
+  type: "landing_server" | "direct_node" | "transit_resource" | "transit_route";
+  type_label: "落地服务器" | "直连节点" | "中转服务器" | "中转线路" | "商家中转入口";
+  status: string;
+  created_at: string | null;
+  created_by: string;
+};
+
+export type ProductOverviewResult = {
+  generated_at: string;
+  health: ProductOverviewHealth;
+  stats: ProductOverviewStats;
+  attention_items: ProductOverviewAttentionItem[];
+  recent_created: ProductOverviewRecentCreatedItem[];
+  tips: string[];
+  safety_boundary: string[];
+};
+
 export type NodeData = {
   id: string;
   vps_id: string;
@@ -1218,6 +1264,10 @@ export async function apiFetch<T>(
 
   notifyAuthExpired(path, response.status);
   return response.json() as Promise<ApiResponse<T>>;
+}
+
+export async function getProductOverview(): Promise<ApiResponse<ProductOverviewResult>> {
+  return apiFetch<ProductOverviewResult>("/api/product/overview");
 }
 
 export async function requestReadonlyPreflightPlan(

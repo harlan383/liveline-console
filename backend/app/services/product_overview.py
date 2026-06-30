@@ -5,7 +5,7 @@ from redis import RedisError
 from rq import Worker as RqWorker
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.db.redis import get_redis_client, get_rq_redis_client
 from app.models.node import Node
@@ -179,25 +179,88 @@ def build_product_overview(db: Session) -> dict[str, Any]:
 
     servers = db.scalars(
         select(VpsServer)
+        .options(
+            load_only(
+                VpsServer.id,
+                VpsServer.name,
+                VpsServer.ip,
+                VpsServer.status,
+                VpsServer.last_ssh_status,
+                VpsServer.created_at,
+                VpsServer.updated_at,
+                raiseload=True,
+            )
+        )
         .where(VpsServer.status != "deleted")
         .order_by(VpsServer.created_at.desc())
     ).all()
     nodes = db.scalars(
         select(Node)
+        .options(
+            load_only(
+                Node.id,
+                Node.node_name,
+                Node.status,
+                Node.created_at,
+                Node.updated_at,
+                Node.deleted_at,
+                raiseload=True,
+            )
+        )
         .where(Node.deleted_at.is_(None))
         .order_by(Node.created_at.desc())
     ).all()
     resources = db.scalars(
         select(TransitResource)
+        .options(
+            load_only(
+                TransitResource.id,
+                TransitResource.name,
+                TransitResource.resource_type,
+                TransitResource.status,
+                TransitResource.created_at,
+                TransitResource.updated_at,
+                TransitResource.deleted_at,
+                raiseload=True,
+            )
+        )
         .where(TransitResource.deleted_at.is_(None))
         .order_by(TransitResource.created_at.desc())
     ).all()
     routes = db.scalars(
         select(TransitRoute)
+        .options(
+            load_only(
+                TransitRoute.id,
+                TransitRoute.name,
+                TransitRoute.status,
+                TransitRoute.created_at,
+                TransitRoute.updated_at,
+                TransitRoute.deleted_at,
+                raiseload=True,
+            )
+        )
         .where(TransitRoute.deleted_at.is_(None))
         .order_by(TransitRoute.created_at.desc())
     ).all()
-    tasks = db.scalars(select(Task).order_by(Task.created_at.desc()).limit(30)).all()
+    tasks = db.scalars(
+        select(Task)
+        .options(
+            load_only(
+                Task.id,
+                Task.task_type,
+                Task.status,
+                Task.error_code,
+                Task.error_message,
+                Task.finished_at,
+                Task.updated_at,
+                Task.created_at,
+                raiseload=True,
+            )
+        )
+        .order_by(Task.created_at.desc())
+        .limit(30)
+    ).all()
 
     landing_workers = latest_workers_by_server(db, role="landing", server_ids=[server.id for server in servers])
     transit_workers = latest_workers_by_server(db, role="transit", server_ids=[resource.id for resource in resources])
