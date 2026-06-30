@@ -55,11 +55,11 @@ const panels: Array<{
   },
   {
     id: "customerLines",
-    icon: "lines",
-    tone: "purple",
-    label: "我的线路",
-    title: "我的线路",
-    subtitle: "按客户、平台和用途查看当前线路。",
+    icon: "customerLines",
+    tone: "blue",
+    label: "客户线路",
+    title: "客户线路",
+    subtitle: "统一管理每个客户分配到的直连线路和中转线路。",
   },
   {
     id: "serverResources",
@@ -398,7 +398,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
     if (activeNodes.length > 0 && !activeRoutes.length) {
       tips.push("已有直连节点，客户直播主线可以继续规划中转线路。");
     }
-    return tips.length ? tips : ["当前基础资源已就绪，可以在“我的线路”查看客户线路状态。"];
+    return tips.length ? tips : ["当前基础资源已就绪，可以在“客户线路”查看线路状态。"];
   }, [activeNodes.length, activeRoutes.length, resources, servers.length]);
 
   return (
@@ -498,7 +498,7 @@ function DashboardPanel({ onNavigate }: { onNavigate: (panel: PanelId) => void }
           </div>
           <ul className="product-tip-list">
             <li>通过“线路搭建”快速创建直连或中转线路。</li>
-            <li>在“我的线路”中查看线路状态与质量。</li>
+            <li>在“客户线路”中查看线路状态与质量。</li>
             <li>遇到问题时，先查看“任务记录”获取检测结果。</li>
             <li>如需帮助，可点击右上角“帮助”查看说明。</li>
             {nextStepTips.map((tip) => (

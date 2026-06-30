@@ -35,6 +35,14 @@ export function ProductIcon({ className, name, tone }: { className?: string; nam
         <path d="M14 21h7" />
       </Svg>
     ),
+    customerLines: (
+      <Svg>
+        <rect x="4" y="4" width="6" height="6" rx="1.5" />
+        <rect x="14" y="4" width="6" height="6" rx="1.5" />
+        <rect x="4" y="14" width="6" height="6" rx="1.5" />
+        <rect x="14" y="14" width="6" height="6" rx="1.5" />
+      </Svg>
+    ),
     builder: (
       <Svg>
         <circle cx="6" cy="6" r="2.5" />
@@ -95,6 +103,18 @@ export function ProductIcon({ className, name, tone }: { className?: string; nam
         <path d="M12 18h.01" />
       </Svg>
     ),
+    search: (
+      <Svg>
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" />
+      </Svg>
+    ),
+    user: (
+      <Svg>
+        <circle cx="12" cy="8" r="4" />
+        <path d="M5 21a7 7 0 0 1 14 0" />
+      </Svg>
+    ),
     server: (
       <Svg>
         <path d="M6 3h12l2 5H4l2-5Z" />
@@ -107,6 +127,14 @@ export function ProductIcon({ className, name, tone }: { className?: string; nam
         <circle cx="6" cy="6" r="3" />
         <circle cx="18" cy="18" r="3" />
         <path d="M8.5 8.5l7 7" />
+      </Svg>
+    ),
+    platform: (
+      <Svg>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M3 12h18" />
+        <path d="M12 3a14 14 0 0 1 0 18" />
+        <path d="M12 3a14 14 0 0 0 0 18" />
       </Svg>
     ),
     alert: (
@@ -146,6 +174,17 @@ export function ProductIcon({ className, name, tone }: { className?: string; nam
       <Svg>
         <circle cx="12" cy="12" r="9" />
         <path d="M12 7v6l4 2" />
+      </Svg>
+    ),
+    activity: (
+      <Svg>
+        <path d="M3 12h4l2-6 4 12 2-6h6" />
+      </Svg>
+    ),
+    eye: (
+      <Svg>
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+        <circle cx="12" cy="12" r="3" />
       </Svg>
     ),
     arrow: (
