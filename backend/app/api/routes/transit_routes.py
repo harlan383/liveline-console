@@ -32,7 +32,6 @@ from app.schemas.transit_route import (
     HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_STAGE,
     HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
     HAPROXY_ROUTE_CREATE_REAL_EXECUTION_STAGE,
-    HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT,
     PROTECTED_CREATE_PORT_MESSAGES,
     PROTECTED_CREATE_PORTS,
     ReadonlyPreflightPlanCheck,
@@ -47,6 +46,7 @@ from app.schemas.transit_route import (
     TransitRouteRenameRequest,
     TransitRouteWorkerCreateExecuteRequest,
     TransitRouteWorkerCreatePlanRequest,
+    haproxy_real_execution_confirmation_text,
 )
 from app.services.auth_service import record_audit
 from app.services.redaction import mask_share_link
@@ -1563,6 +1563,7 @@ def haproxy_route_create_final_approval(
     dry_run_succeeded = bool(command and command.status == "succeeded")
     dry_run_worker_matches_target = bool(command and target_worker and command.worker_id == target_worker.id)
     final_text_ok = payload.final_approval_text.strip() == HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT
+    expected_real_execution_text = haproxy_real_execution_confirmation_text(payload.planned_listen_port)
     worker_version_supported = worker_supports_transit_forwarding_method(
         target_worker,
         FORWARDING_METHOD_HAPROXY_TCP,
@@ -1810,6 +1811,8 @@ def haproxy_route_create_final_approval(
             "forwarding_method": payload.forwarding_method,
             "route_name": payload.route_name,
             "route_display_name": payload.route_display_name,
+            "final_approval_text": HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT,
+            "expected_real_execution_text": expected_real_execution_text,
             "target_worker_id": target_worker.id if target_worker else None,
             "target_worker_version": target_worker.worker_version if target_worker else None,
             "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
@@ -1934,7 +1937,8 @@ def create_haproxy_route_create_real_execution(
     dry_run_succeeded = bool(command and command.status == "succeeded")
     dry_run_worker_matches_target = bool(command and target_worker and command.worker_id == target_worker.id)
     final_text_ok = payload.final_approval_text.strip() == HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_TEXT
-    real_execution_text_ok = payload.real_execution_text.strip() == HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT
+    expected_real_execution_text = haproxy_real_execution_confirmation_text(payload.planned_listen_port)
+    real_execution_text_ok = payload.real_execution_text.strip() == expected_real_execution_text
     worker_version_supported = worker_supports_transit_forwarding_method(
         target_worker,
         FORWARDING_METHOD_HAPROXY_TCP,
@@ -2021,7 +2025,7 @@ def create_haproxy_route_create_real_execution(
             label="真实执行确认文本匹配",
             passed=real_execution_text_ok,
             message="真实执行确认文本匹配。" if real_execution_text_ok else "真实执行确认文本不匹配。",
-            next_action=f"输入 {HAPROXY_ROUTE_CREATE_REAL_EXECUTION_TEXT}。" if not real_execution_text_ok else "继续检查。",
+            next_action=f"输入 {expected_real_execution_text}。" if not real_execution_text_ok else "继续检查。",
             evidence_summary="typed_confirmation",
         ),
         make_haproxy_readiness_check(
@@ -2186,6 +2190,7 @@ def create_haproxy_route_create_real_execution(
         "forwarding_method": payload.forwarding_method,
         "route_name": payload.route_name,
         "route_display_name": payload.route_display_name,
+        "expected_real_execution_text": expected_real_execution_text,
         "target_worker_id": target_worker.id if target_worker else None,
         "target_worker_version": target_worker.worker_version if target_worker else None,
         "minimum_supported_worker_version": minimum_worker_version_for_transit_forwarding_method(
