@@ -258,7 +258,7 @@ export function ServerResourcesPanel() {
 
       {activeModal === "landing" ? <AddLandingServerModal onClose={() => setActiveModal(null)} onCompleted={loadData} /> : null}
       {activeModal === "transit" ? <AddTransitServerModal onClose={() => setActiveModal(null)} onCompleted={loadData} /> : null}
-      {activeModal === "direct" ? <CreateDirectNodeModal servers={servers} onClose={() => setActiveModal(null)} /> : null}
+      {activeModal === "direct" ? <CreateDirectNodeModal servers={servers} onClose={() => setActiveModal(null)} onCompleted={loadData} /> : null}
       {activeModal === "transitLine" ? (
         <CreateTransitLineModal nodes={nodes.filter((node) => node.status === "active")} resources={resources.filter((resource) => !resource.deleted_at)} onClose={() => setActiveModal(null)} />
       ) : null}
