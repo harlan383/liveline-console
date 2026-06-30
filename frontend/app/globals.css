@@ -6524,6 +6524,112 @@ button.ghost-action {
   padding: 6px 10px;
 }
 
+.advanced-debug-v2-context {
+  border-color: #bfdbfe;
+}
+
+.advanced-debug-v2-context-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-context-grid label {
+  background: #f8fbff;
+  border: 1px solid #dce6f2;
+  border-radius: 10px;
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.advanced-debug-v2-context-grid span,
+.advanced-debug-v2-context-summary span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.advanced-debug-v2-context-grid select {
+  background: #ffffff;
+  border: 1px solid #d7e1ee;
+  border-radius: 8px;
+  color: #142033;
+  font-size: 13px;
+  height: 38px;
+  min-width: 0;
+  outline: none;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.advanced-debug-v2-context-grid select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.advanced-debug-v2-context-grid small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-context-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-context-summary div {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 9px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.advanced-debug-v2-context-summary strong {
+  color: #0f172a;
+  font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-context-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.advanced-debug-v2-context-actions span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.advanced-debug-v2-context-message,
+.advanced-debug-v2-context-warning {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.advanced-debug-v2-context-warning {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #9a3412;
+}
+
 .advanced-debug-v2-form-grid {
   display: grid;
   gap: 14px;

@@ -223,6 +223,140 @@ HAPROXY_ROUTE_REAL_EXECUTION_READINESS_BOUNDARY = [
     "no full client link export",
     "no cutover",
 ]
+HAPROXY_RUNTIME_DEBUG_CONTEXT_BOUNDARY = [
+    "advanced-debug context autofill only",
+    "read local control-plane records only",
+    "no Worker command created",
+    "no TransitRoute created",
+    "no SSH",
+    "no remote execution",
+    "no listener binding",
+    "no firewall, cloud firewall, or cloud security group mutation",
+    "no share_link export",
+    "no full client link export",
+    "no cutover",
+]
+
+
+def isoformat_or_none(value) -> str | None:
+    return value.isoformat() if value else None
+
+
+def optional_int(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def current_worker_by_server(workers: list[Worker]) -> dict[str, Worker]:
+    epoch = datetime.min.replace(tzinfo=UTC)
+    sorted_workers = sorted(
+        workers,
+        key=lambda worker: (
+            worker.last_heartbeat_at or epoch,
+            worker.registered_at or epoch,
+            worker.created_at or epoch,
+        ),
+        reverse=True,
+    )
+    by_server: dict[str, Worker] = {}
+    for worker in sorted_workers:
+        if worker.server_id and worker.server_id not in by_server:
+            by_server[worker.server_id] = worker
+    return by_server
+
+
+def serialize_haproxy_runtime_debug_transit_resource(
+    resource: TransitResource,
+    worker: Worker | None,
+) -> dict:
+    runtime_status = worker_runtime_status(worker) if worker else "missing"
+    return {
+        "id": resource.id,
+        "name": resource.name,
+        "resource_type": resource.resource_type,
+        "entry_host": resource.entry_host,
+        "entry_port": resource.entry_port,
+        "entry_region": resource.entry_region,
+        "exit_region": resource.exit_region,
+        "status": resource.status,
+        "deleted_at": isoformat_or_none(resource.deleted_at),
+        "worker_id": worker.id if worker else None,
+        "worker_status": worker.status if worker else None,
+        "worker_runtime_status": runtime_status,
+        "worker_online": bool(worker and worker.status == "online" and runtime_status == "online"),
+        "worker_version": worker.worker_version if worker else None,
+        "worker_hostname": worker.hostname if worker else None,
+        "worker_interface_name": worker.interface_name if worker else None,
+        "worker_last_heartbeat_at": isoformat_or_none(worker.last_heartbeat_at) if worker else None,
+    }
+
+
+def serialize_haproxy_runtime_debug_landing_node(node: Node) -> dict:
+    vps = node.vps
+    return {
+        "id": node.id,
+        "node_name": node.node_name,
+        "vps_id": node.vps_id,
+        "vps_ip": vps.ip if vps else None,
+        "xray_port": node.xray_port,
+        "target_host": vps.ip if vps else None,
+        "target_port": node.xray_port,
+        "status": node.status,
+        "service_status": node.service_status,
+        "share_link_present": bool(node.share_link),
+        "masked_share_link": "[REDACTED_SHARE_LINK]" if node.share_link else None,
+        "deleted_at": isoformat_or_none(node.deleted_at),
+        "created_at": isoformat_or_none(node.created_at),
+    }
+
+
+def haproxy_dry_run_candidate_from_command(command: WorkerCommand) -> dict | None:
+    payload = command.payload_json if isinstance(command.payload_json, dict) else {}
+    if command.command_type != TRANSIT_ROUTE_CREATE_COMMAND:
+        return None
+    if command.status not in {"created", "pending", "running", "succeeded", "failed"}:
+        return None
+    if payload.get("command_intent") != "haproxy_route_create_dry_run":
+        return None
+    if payload.get("forwarding_method") != FORWARDING_METHOD_HAPROXY_TCP:
+        return None
+    if payload.get("dry_run") is not True:
+        return None
+    if payload.get("real_execution") is not False:
+        return None
+
+    planned_listen_port = optional_int(payload.get("planned_listen_port"))
+    approved_planned_listen_port = optional_int(payload.get("approved_planned_listen_port"))
+    landing_target_port = optional_int(payload.get("landing_target_port"))
+    approved_landing_target_port = optional_int(payload.get("approved_landing_target_port"))
+    return {
+        "id": command.id,
+        "status": command.status,
+        "created_at": isoformat_or_none(command.created_at),
+        "updated_at": isoformat_or_none(command.updated_at),
+        "worker_id": command.worker_id,
+        "target_worker_id": payload.get("transit_worker_id") or command.worker_id,
+        "transit_resource_id": payload.get("transit_resource_id"),
+        "landing_node_id": payload.get("landing_node_id"),
+        "planned_listen_port": planned_listen_port,
+        "approved_planned_listen_port": approved_planned_listen_port,
+        "landing_target_host": payload.get("landing_target_host"),
+        "approved_landing_target_host": payload.get("approved_landing_target_host"),
+        "landing_target_port": landing_target_port,
+        "approved_landing_target_port": approved_landing_target_port,
+        "forwarding_method": FORWARDING_METHOD_HAPROXY_TCP,
+        "route_name": payload.get("route_name"),
+        "route_display_name": payload.get("route_display_name"),
+        "planned_service_name": payload.get("planned_service_name"),
+        "command_intent": payload.get("command_intent"),
+        "approval_stage": payload.get("approval_stage"),
+        "dry_run": payload.get("dry_run"),
+        "approval_required": payload.get("approval_required"),
+        "real_execution": payload.get("real_execution"),
+        "user_approved_real_execution": payload.get("user_approved_real_execution"),
+        "approved_firewall_confirmation": payload.get("approved_firewall_confirmation"),
+    }
 
 
 def redact_hint(value: str | None) -> str:
@@ -985,6 +1119,57 @@ def list_transit_routes(request: Request, db: Session = Depends(get_db)):
         .order_by(TransitRoute.created_at.desc())
     ).all()
     return success_response({"routes": [serialize_transit_route(route) for route in routes]}, "ok")
+
+
+@router.get("/haproxy-runtime-debug-context")
+def get_haproxy_runtime_debug_context(request: Request, db: Session = Depends(get_db)):
+    if not require_admin_session(db, request):
+        return auth_error()
+
+    workers = db.scalars(select(Worker)).all()
+    workers_by_server = current_worker_by_server(workers)
+    resources = db.scalars(
+        select(TransitResource)
+        .where(TransitResource.deleted_at.is_(None))
+        .order_by(TransitResource.created_at.desc())
+    ).all()
+    nodes = db.scalars(
+        select(Node)
+        .where(Node.deleted_at.is_(None))
+        .order_by(Node.created_at.desc())
+    ).all()
+    commands = db.scalars(
+        select(WorkerCommand)
+        .where(WorkerCommand.command_type == TRANSIT_ROUTE_CREATE_COMMAND)
+        .where(WorkerCommand.status.in_(("created", "pending", "running", "succeeded", "failed")))
+        .order_by(WorkerCommand.created_at.desc())
+        .limit(50)
+    ).all()
+
+    dry_run_candidates: list[dict] = []
+    for command in commands:
+        candidate = haproxy_dry_run_candidate_from_command(command)
+        if candidate:
+            dry_run_candidates.append(candidate)
+        if len(dry_run_candidates) >= 30:
+            break
+
+    return success_response(
+        {
+            "transit_resources": [
+                serialize_haproxy_runtime_debug_transit_resource(
+                    resource,
+                    workers_by_server.get(resource.id),
+                )
+                for resource in resources
+            ],
+            "landing_nodes": [serialize_haproxy_runtime_debug_landing_node(node) for node in nodes],
+            "haproxy_dry_run_commands": dry_run_candidates,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "safety_boundary": HAPROXY_RUNTIME_DEBUG_CONTEXT_BOUNDARY,
+        },
+        "HAProxy runtime debug context loaded; read-only.",
+    )
 
 
 @router.get("/{route_id}")

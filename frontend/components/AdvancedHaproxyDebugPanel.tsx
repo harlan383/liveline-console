@@ -6,8 +6,11 @@ import { ProductIcon } from "@/components/ProductIcons";
 import {
   apiFetch,
   createTransitHaproxyRouteRealExecution,
+  getHaproxyRuntimeDebugContext,
   requestTransitHaproxyRouteRealExecutionReadiness,
   type CsrfResult,
+  type HaproxyRuntimeDebugContextResult,
+  type HaproxyRuntimeDebugDryRunCandidate,
   type ReadonlyPreflightCheckItem,
   type TransitHaproxyRouteCreateRealExecutionRequest,
   type TransitHaproxyRouteCreateRealExecutionResult,
@@ -287,6 +290,12 @@ export function AdvancedHaproxyDebugPanel() {
   const [message, setMessage] = useState("");
   const [manualRealExecutionConfirm, setManualRealExecutionConfirm] = useState("");
   const [showTaskDetail, setShowTaskDetail] = useState(true);
+  const [debugContext, setDebugContext] = useState<HaproxyRuntimeDebugContextResult | null>(null);
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [selectedTransitResourceId, setSelectedTransitResourceId] = useState("");
+  const [selectedLandingNodeId, setSelectedLandingNodeId] = useState("");
+  const [selectedDryRunCommandId, setSelectedDryRunCommandId] = useState("");
+  const [contextMessage, setContextMessage] = useState("");
 
   const expectedRealExecutionText = useMemo(
     () => readinessResult?.expected_real_execution_text ?? expectedTextForPort(form.planned_listen_port),
@@ -302,6 +311,18 @@ export function AdvancedHaproxyDebugPanel() {
   const formErrors = useMemo(() => validateForm(form, confirmations), [form, confirmations]);
   const allConfirmationsReady = Object.values(confirmations).every(Boolean);
   const canRunReadiness = formErrors.length === 0 && Boolean(requestPayload);
+  const selectedDryRunCandidate = useMemo(
+    () => debugContext?.haproxy_dry_run_commands.find((candidate) => candidate.id === selectedDryRunCommandId) ?? null,
+    [debugContext?.haproxy_dry_run_commands, selectedDryRunCommandId],
+  );
+  const selectedTransitResource = useMemo(
+    () => debugContext?.transit_resources.find((resource) => resource.id === selectedTransitResourceId) ?? null,
+    [debugContext?.transit_resources, selectedTransitResourceId],
+  );
+  const selectedLandingNode = useMemo(
+    () => debugContext?.landing_nodes.find((node) => node.id === selectedLandingNodeId) ?? null,
+    [debugContext?.landing_nodes, selectedLandingNodeId],
+  );
   const canCreateRealExecution =
     Boolean(requestPayload) &&
     Boolean(readinessResult?.ready_for_real_execution) &&
@@ -329,6 +350,7 @@ export function AdvancedHaproxyDebugPanel() {
     setRealExecutionResult(null);
     setManualRealExecutionConfirm("");
     setMessage("");
+    setContextMessage("");
   }
 
   async function copyText(text: string, successMessage: string) {
@@ -361,6 +383,85 @@ export function AdvancedHaproxyDebugPanel() {
     } finally {
       setLoadingReadiness(false);
     }
+  }
+
+  async function loadDebugContext() {
+    setLoadingContext(true);
+    setContextMessage("正在读取主控本地上下文；不会创建 WorkerCommand 或执行远程命令。");
+    try {
+      const result = await getHaproxyRuntimeDebugContext();
+      if (!result.success) {
+        setContextMessage(result.message);
+        return;
+      }
+      setDebugContext(result.data);
+      const firstCandidate = result.data.haproxy_dry_run_commands[0];
+      if (firstCandidate) {
+        setSelectedDryRunCommandId(firstCandidate.id);
+        setSelectedTransitResourceId(firstCandidate.transit_resource_id ?? "");
+        setSelectedLandingNodeId(firstCandidate.landing_node_id ?? "");
+      } else {
+        setSelectedDryRunCommandId("");
+        setSelectedTransitResourceId(result.data.transit_resources[0]?.id ?? "");
+        setSelectedLandingNodeId(result.data.landing_nodes[0]?.id ?? "");
+      }
+      setContextMessage(
+        `已读取上下文：${result.data.transit_resources.length} 个中转资源，${result.data.landing_nodes.length} 个落地节点，${result.data.haproxy_dry_run_commands.length} 个 HAProxy dry-run 候选。`,
+      );
+    } catch (error) {
+      setContextMessage(error instanceof Error ? error.message : "读取上下文失败。");
+    } finally {
+      setLoadingContext(false);
+    }
+  }
+
+  function selectDryRunCandidate(candidateId: string) {
+    setSelectedDryRunCommandId(candidateId);
+    const candidate = debugContext?.haproxy_dry_run_commands.find((item) => item.id === candidateId);
+    if (!candidate) {
+      return;
+    }
+    setSelectedTransitResourceId(candidate.transit_resource_id ?? "");
+    setSelectedLandingNodeId(candidate.landing_node_id ?? "");
+  }
+
+  function applyDebugContextCandidate(candidate: HaproxyRuntimeDebugDryRunCandidate | null) {
+    if (!candidate) {
+      setContextMessage("请先选择一个 HAProxy dry-run 候选。");
+      return;
+    }
+    if (
+      !candidate.transit_resource_id ||
+      !candidate.landing_node_id ||
+      !candidate.planned_listen_port ||
+      !candidate.landing_target_host ||
+      !candidate.landing_target_port ||
+      !candidate.route_name
+    ) {
+      setContextMessage("选中的 dry-run 候选缺少必要字段，不能自动填充。");
+      return;
+    }
+    const plannedListenPort = String(candidate.planned_listen_port);
+    setForm({
+      dry_run_command_id: candidate.id,
+      transit_resource_id: candidate.transit_resource_id,
+      landing_node_id: candidate.landing_node_id,
+      planned_listen_port: plannedListenPort,
+      landing_target_host: candidate.landing_target_host,
+      landing_target_port: String(candidate.landing_target_port),
+      forwarding_method: "haproxy_tcp",
+      route_name: candidate.route_name,
+      route_display_name: candidate.route_display_name ?? "",
+      approval_stage: REAL_EXECUTION_STAGE,
+      final_approval_text: FINAL_APPROVAL_TEXT,
+      real_execution_text: expectedTextForPort(plannedListenPort),
+    });
+    setConfirmations(defaultConfirmations);
+    setReadinessResult(null);
+    setRealExecutionResult(null);
+    setManualRealExecutionConfirm("");
+    setContextMessage("已填充上下文字段；端口放行与安全确认仍需人工逐项确认。");
+    setMessage("已从 HAProxy dry-run 候选填充 payload。请人工确认端口放行后再运行 readiness。");
   }
 
   async function submitRealExecution() {
@@ -445,6 +546,109 @@ export function AdvancedHaproxyDebugPanel() {
                 <span key={item}>{item}</span>
               ))}
             </div>
+          </section>
+
+          <section className="advanced-debug-v2-card advanced-debug-v2-context">
+            <header className="advanced-debug-v2-card-title">
+              <div>
+                <h2>读取上下文</h2>
+                <p>从主控本地记录读取中转资源、落地节点和近期 HAProxy dry-run 候选；只填充 payload 字段，不自动勾选确认项。</p>
+              </div>
+              <button type="button" className="ghost small" onClick={loadDebugContext} disabled={loadingContext}>
+                {loadingContext ? "读取中..." : "刷新上下文"}
+              </button>
+            </header>
+
+            <div className="advanced-debug-v2-context-grid">
+              <label>
+                <span>中转资源</span>
+                <select value={selectedTransitResourceId} onChange={(event) => setSelectedTransitResourceId(event.target.value)}>
+                  <option value="">未选择</option>
+                  {debugContext?.transit_resources.map((resource) => (
+                    <option key={resource.id} value={resource.id}>
+                      {resource.name} / {resource.entry_host ?? "no-entry"} / {resource.worker_online ? "worker online" : resource.worker_runtime_status ?? "worker unknown"}
+                    </option>
+                  ))}
+                </select>
+                {selectedTransitResource ? (
+                  <small>
+                    Worker：{selectedTransitResource.worker_id ?? "-"} / {selectedTransitResource.worker_version ?? "-"}
+                  </small>
+                ) : null}
+              </label>
+
+              <label>
+                <span>落地节点</span>
+                <select value={selectedLandingNodeId} onChange={(event) => setSelectedLandingNodeId(event.target.value)}>
+                  <option value="">未选择</option>
+                  {debugContext?.landing_nodes.map((node) => (
+                    <option key={node.id} value={node.id}>
+                      {node.node_name} / {node.target_host ?? "no-host"}:{node.target_port ?? "-"} / {node.status}
+                    </option>
+                  ))}
+                </select>
+                {selectedLandingNode ? (
+                  <small>
+                    服务：{selectedLandingNode.service_status ?? "-"} / 客户端配置：{selectedLandingNode.share_link_present ? "已生成" : "未生成"}
+                  </small>
+                ) : null}
+              </label>
+
+              <label>
+                <span>HAProxy dry-run 候选</span>
+                <select value={selectedDryRunCommandId} onChange={(event) => selectDryRunCandidate(event.target.value)}>
+                  <option value="">未选择</option>
+                  {debugContext?.haproxy_dry_run_commands.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.status} / {candidate.route_name ?? "haproxy route"} / {candidate.planned_listen_port ?? "-"} → {candidate.landing_target_port ?? "-"}
+                    </option>
+                  ))}
+                </select>
+                {selectedDryRunCandidate ? (
+                  <small>
+                    dry_run_command_id：{selectedDryRunCandidate.id} / status：{selectedDryRunCandidate.status}
+                  </small>
+                ) : null}
+              </label>
+            </div>
+
+            {selectedDryRunCandidate ? (
+              <div className="advanced-debug-v2-context-summary">
+                <div>
+                  <span>监听端口</span>
+                  <strong>{selectedDryRunCandidate.planned_listen_port ?? "-"}</strong>
+                </div>
+                <div>
+                  <span>落地目标</span>
+                  <strong>
+                    {selectedDryRunCandidate.landing_target_host ?? "-"}:{selectedDryRunCandidate.landing_target_port ?? "-"}
+                  </strong>
+                </div>
+                <div>
+                  <span>route_name</span>
+                  <strong>{selectedDryRunCandidate.route_name ?? "-"}</strong>
+                </div>
+                <div>
+                  <span>显示名称</span>
+                  <strong>{selectedDryRunCandidate.route_display_name ?? "-"}</strong>
+                </div>
+              </div>
+            ) : null}
+
+            {selectedDryRunCandidate && selectedDryRunCandidate.status !== "succeeded" ? (
+              <div className="advanced-debug-v2-context-warning">
+                选中的 dry-run 当前不是 succeeded；填充后 readiness 会继续按后端规则校验并可能 blocked。
+              </div>
+            ) : null}
+
+            <div className="advanced-debug-v2-context-actions">
+              <button type="button" onClick={() => applyDebugContextCandidate(selectedDryRunCandidate)} disabled={!selectedDryRunCandidate}>
+                填充到 Readiness Payload
+              </button>
+              <span>不会自动勾选云安全组、云防火墙、服务器防火墙或 real execution 确认。</span>
+            </div>
+
+            {contextMessage ? <div className="advanced-debug-v2-context-message">{contextMessage}</div> : null}
           </section>
 
           <section className="advanced-debug-v2-card">
@@ -740,6 +944,7 @@ export function AdvancedHaproxyDebugPanel() {
             </section>
           ) : null}
 
+          <JsonBlock title="Context Autofill JSON" value={debugContext} />
           <JsonBlock title="Request Payload JSON" value={requestPayload ?? buildDraftPayload(form, confirmations)} />
           <JsonBlock title="Readiness Response JSON" value={readinessResult} />
           <JsonBlock title="Real Execution Response JSON" value={realExecutionResult} />
