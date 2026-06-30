@@ -6,3 +6,503 @@
 .server-management-panel .landing-status-strip {
   display: none;
 }
+
+/* Stage 3.4.12 sidebar brand gap and compact density pass */
+.product-console {
+  grid-template-columns: 212px minmax(0, 1fr);
+}
+
+.product-sidebar {
+  padding: 15px 10px;
+}
+
+.product-brand {
+  gap: 8px;
+  margin-bottom: 10px;
+  min-height: 42px;
+  padding: 2px 6px 8px;
+}
+
+.product-brand .brand {
+  font-size: 15px;
+}
+
+.brand-mark,
+.brand-mark svg {
+  height: 30px;
+  width: 30px;
+}
+
+.product-nav {
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.product-nav-item {
+  border-radius: 9px;
+  font-size: 13px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.product-nav-item .product-icon,
+.product-nav-item .nav-icon,
+.nav-icon {
+  height: 21px;
+  width: 21px;
+}
+
+.product-nav-item .product-icon svg,
+.product-nav-item .nav-icon svg,
+.nav-icon svg {
+  height: 20px;
+  width: 20px;
+}
+
+.sidebar-health-card {
+  border-radius: 10px;
+  gap: 7px;
+  min-height: 64px;
+  padding: 10px;
+}
+
+.sidebar-health-card strong {
+  font-size: 12.5px;
+}
+
+.sidebar-health-card small {
+  font-size: 11px;
+}
+
+.sidebar-health-card .product-icon {
+  height: 26px;
+  width: 26px;
+}
+
+.product-topbar {
+  min-height: 62px;
+  padding: 0 20px;
+}
+
+.product-topbar h1 {
+  font-size: 22px;
+}
+
+.product-topbar-actions {
+  gap: 8px;
+}
+
+.topbar-tool {
+  height: 34px;
+  min-height: 34px;
+  width: 34px;
+}
+
+.topbar-tool .product-icon {
+  height: 18px;
+  width: 18px;
+}
+
+.product-avatar {
+  font-size: 11px;
+  height: 30px;
+  width: 30px;
+}
+
+.admin-badge {
+  font-size: 12.5px;
+}
+
+.product-grid {
+  gap: 16px;
+  padding: 16px 20px 28px;
+}
+
+.product-dashboard,
+.line-builder-product,
+.my-lines-page,
+.server-resources-page,
+.task-record-page,
+.settings-product,
+.customer-lines-page {
+  gap: 16px;
+}
+
+.product-section-card,
+.builder-stage-card,
+.resource-management-card,
+.customer-lines-card,
+.settings-form-card,
+.modal-card {
+  border-radius: 13px;
+}
+
+.product-section-card,
+.builder-stage-card,
+.resource-management-card,
+.settings-form-card {
+  gap: 10px;
+  padding: 14px;
+}
+
+.product-section-head {
+  padding-bottom: 8px;
+}
+
+.product-section-head h3,
+.builder-stage-title h3,
+.line-modal-section h4 {
+  font-size: 15px;
+}
+
+.product-dashboard-layout {
+  gap: 16px;
+  grid-template-columns: minmax(500px, 1fr) minmax(400px, 1fr);
+}
+
+.product-stat-grid,
+.customer-line-stat-grid,
+.quick-action-grid,
+.builder-action-grid,
+.resource-management-grid,
+.settings-product-layout {
+  gap: 14px;
+}
+
+.product-stat-card {
+  border-radius: 13px;
+  gap: 10px 16px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  min-height: 108px;
+  padding: 16px 18px;
+}
+
+.product-stat-card .product-icon {
+  height: 52px;
+  width: 52px;
+}
+
+.product-stat-card .product-icon svg {
+  height: 28px;
+  width: 28px;
+}
+
+.product-stat-card span {
+  font-size: 14.5px;
+}
+
+.product-stat-card strong {
+  font-size: 27px;
+}
+
+.product-stat-card p,
+.product-stat-card .stat-footnote {
+  font-size: 11.5px;
+}
+
+.attention-list {
+  gap: 8px;
+}
+
+.product-dashboard .attention-item {
+  gap: 10px;
+  grid-template-columns: 32px minmax(0, 1fr) 16px;
+  min-height: 56px;
+  padding: 8px 10px;
+}
+
+.product-dashboard .attention-item > .product-icon:first-child {
+  height: 31px;
+  width: 31px;
+}
+
+.product-dashboard .attention-item > .product-icon:first-child svg {
+  height: 17px;
+  width: 17px;
+}
+
+.attention-copy {
+  gap: 2px;
+}
+
+.attention-copy strong {
+  font-size: 12.5px;
+  line-height: 1.34;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.attention-copy small {
+  font-size: 11.5px;
+  line-height: 1.28;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.product-dashboard .attention-item > .product-icon:last-child {
+  height: 16px;
+  width: 16px;
+}
+
+.attention-view-all {
+  font-size: 12px;
+  min-height: 24px;
+}
+
+.quick-action-grid button,
+.builder-action-card,
+.resource-management-card {
+  border-radius: 11px;
+}
+
+.quick-action-grid button {
+  min-height: 64px;
+  padding: 10px;
+}
+
+.builder-action-card {
+  padding: 16px;
+}
+
+.builder-action-card .product-icon {
+  height: 56px;
+  width: 56px;
+}
+
+.builder-action-card strong,
+.resource-card-top strong {
+  font-size: 17px;
+}
+
+.builder-action-card p,
+.resource-card-top small,
+.resource-facts span,
+.resource-facts strong {
+  font-size: 12.5px;
+}
+
+.resource-management-card {
+  padding: 14px;
+}
+
+.resource-card-actions {
+  gap: 8px;
+}
+
+.resource-card-actions button {
+  min-height: 32px;
+}
+
+.product-table-row,
+.my-lines-table .product-table-row,
+.task-product-table .product-table-row,
+.customer-lines-row {
+  font-size: 12.5px;
+  min-height: 59px;
+  padding: 0 16px;
+}
+
+.my-lines-table .product-table-head,
+.task-product-table .product-table-head,
+.customer-lines-head {
+  font-size: 12px;
+  min-height: 48px;
+}
+
+.customer-line-stat {
+  border-radius: 13px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  min-height: 106px;
+  padding: 16px 18px;
+}
+
+.customer-line-stat .product-icon {
+  align-items: center;
+  display: flex;
+  height: 52px;
+  justify-content: center;
+  line-height: 0;
+  width: 52px;
+}
+
+.customer-line-stat .product-icon svg {
+  display: block;
+  height: 27px;
+  margin: 0;
+  width: 27px;
+}
+
+.customer-line-stat span {
+  font-size: 16px;
+}
+
+.customer-line-stat strong {
+  font-size: 27px;
+  margin: 2px 0 4px;
+}
+
+.customer-line-stat small {
+  font-size: 11.5px;
+}
+
+.customer-lines-toolbar {
+  padding: 14px 18px 10px;
+}
+
+.customer-line-tabs {
+  gap: 18px;
+}
+
+.customer-line-tabs button {
+  font-size: 13px;
+  min-height: 32px;
+  padding-bottom: 7px;
+}
+
+.customer-line-filters {
+  gap: 8px;
+  grid-template-columns: minmax(200px, 1fr) 126px 126px;
+  min-width: min(100%, 500px);
+}
+
+.customer-search-field,
+.customer-search-field input,
+.customer-line-filters select {
+  min-height: 31px;
+}
+
+.line-type-pill,
+.line-health-pill,
+.manual-view-badge,
+.product-badge {
+  font-size: 11px;
+  min-height: 22px;
+  padding: 0 8px;
+}
+
+.customer-line-actions {
+  gap: 6px;
+}
+
+.customer-line-actions .secondary,
+.line-more-button,
+button,
+button.secondary {
+  min-height: 31px;
+}
+
+.customer-line-actions .secondary {
+  min-width: 74px;
+}
+
+.line-more-menu button {
+  font-size: 12px;
+  min-height: 28px;
+}
+
+.customer-line-pagination {
+  padding: 14px 18px 18px;
+}
+
+.customer-line-pagination button,
+.customer-line-pagination select,
+input,
+textarea,
+select {
+  font-size: 12.5px;
+  min-height: 31px;
+}
+
+button {
+  border-radius: 8px;
+  font-size: 12.5px;
+  padding: 6px 10px;
+}
+
+.customer-modal {
+  border-radius: 16px;
+  width: min(990px, calc(100vw - 40px));
+}
+
+.customer-modal-header {
+  padding: 16px 22px;
+}
+
+.customer-modal-header h3 {
+  font-size: 19px;
+}
+
+.line-detail-layout,
+.line-edit-layout,
+.client-info-layout,
+.monitor-detail-layout {
+  gap: 12px;
+  padding: 14px 22px 16px;
+}
+
+.line-modal-section {
+  border-radius: 11px;
+  padding: 12px;
+}
+
+.customer-modal-actions {
+  padding: 13px 22px 16px;
+}
+
+.line-info-grid,
+.client-summary-grid {
+  gap: 8px 14px;
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+
+.line-path-node {
+  min-width: 88px;
+  padding: 10px 7px;
+}
+
+.client-info-summary,
+.monitor-summary-grid {
+  gap: 10px;
+  padding: 12px 22px 0;
+}
+
+.monitor-card {
+  min-height: 68px;
+  padding: 11px;
+}
+
+.monitor-card .product-icon {
+  height: 40px;
+  width: 40px;
+}
+
+.monitor-card strong {
+  font-size: 20px;
+}
+
+@media (max-width: 1280px) {
+  .product-dashboard-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .customer-lines-row {
+    min-width: 960px;
+  }
+}
+
+@media (max-width: 980px) {
+  .product-console {
+    grid-template-columns: 1fr;
+  }
+
+  .product-dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+}
