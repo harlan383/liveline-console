@@ -654,7 +654,8 @@ type DirectNodeConfirmationKey =
   | "realListener"
   | "noCloudFirewallChange"
   | "noCutover"
-  | "rollbackOnly";
+  | "rollbackOnly"
+  | "noExistingXrayConflict";
 
 const directNodeConfirmationItems: Array<{ key: DirectNodeConfirmationKey; label: string; detail: string }> = [
   {
@@ -692,6 +693,11 @@ const directNodeConfirmationItems: Array<{ key: DirectNodeConfirmationKey; label
     label: "我确认失败时只回滚本次新增内容",
     detail: "不会清理历史节点或既有配置。",
   },
+  {
+    key: "noExistingXrayConflict",
+    label: "我确认创建计划 / 最新预检未发现已有 Xray、3x-ui 或 LiveLine 管理配置冲突",
+    detail: "若计划或预检提示存在冲突，不能继续正式创建。",
+  },
 ];
 
 const initialDirectNodeConfirmations: Record<DirectNodeConfirmationKey, boolean> = {
@@ -702,6 +708,7 @@ const initialDirectNodeConfirmations: Record<DirectNodeConfirmationKey, boolean>
   noCloudFirewallChange: false,
   noCutover: false,
   rollbackOnly: false,
+  noExistingXrayConflict: false,
 };
 
 function validateDirectNodePort(value: string) {
@@ -875,7 +882,10 @@ export function CreateDirectNodeModal({
     !!selectedServer &&
     !!planResult &&
     planReady &&
+    planResult.server_id === selectedServer.id &&
+    planResult.listen_port === parsedPort &&
     !portError &&
+    !realityConfigMissing &&
     confirmationsComplete &&
     exactConfirm === DIRECT_NODE_CONFIRM_TEXT &&
     submitting === null &&
@@ -970,6 +980,26 @@ export function CreateDirectNodeModal({
       setMessage("请先生成 ready 状态的创建计划。");
       return;
     }
+    if (!confirmationsComplete) {
+      setMessage("请先完成全部端口放行与安全确认。");
+      return;
+    }
+    if (realityConfigMissing) {
+      setMessage("请填写 Reality SNI、dest 和 fingerprint。");
+      return;
+    }
+    if (portError) {
+      setMessage(portError);
+      return;
+    }
+    if (planResult.blocked_reasons.length > 0) {
+      setMessage("创建计划仍存在阻断项，不能正式创建。");
+      return;
+    }
+    if (planResult.server_id !== selectedServer.id) {
+      setMessage("当前选择的服务器与创建计划不一致，请重新生成计划。");
+      return;
+    }
     if (planResult.listen_port !== parsedPort) {
       setMessage("端口已变更，请重新生成创建计划。");
       return;
@@ -997,7 +1027,7 @@ export function CreateDirectNodeModal({
           confirm_firewall_open: true,
           confirm_generate_share_link: true,
           confirm_write_share_link_after_success: true,
-          confirm_no_existing_xray: false,
+          confirm_no_existing_xray: true,
           confirm_rollback_new_artifacts_only: true,
         },
         csrfToken,

@@ -20,8 +20,9 @@ The product modal now guides the administrator through:
 3. Confirm the customer TCP port has been allowed in all required firewall layers.
 4. Generate a protected creation plan.
 5. Review warnings, blocked reasons, preflight summary, and safety boundary.
-6. Type the exact confirmation text `CONFIRM_CREATE_DIRECT_NODE`.
-7. Create the protected `landing_node_create` Worker command.
+6. Confirm the latest plan / preflight did not report existing Xray, 3x-ui, or LiveLine-managed configuration conflicts.
+7. Type the exact confirmation text `CONFIRM_CREATE_DIRECT_NODE`.
+8. Create the protected `landing_node_create` Worker command.
 
 Only landing servers with an online Worker can be selected. Servers without an online Worker are not eligible for plan/create submission.
 
@@ -49,6 +50,9 @@ The create endpoint creates a protected Worker command:
 - The Worker later polls and executes the command.
 - Successful Worker execution can create a real Xray/VLESS Reality listener on the selected landing VPS.
 - This can add a real customer TCP listener port.
+- The UI sends `confirm_no_existing_xray: true` only after the administrator confirms the latest plan / preflight did not report existing Xray, 3x-ui, or LiveLine-managed configuration conflicts.
+
+If the plan is not ready, returns blocked reasons, targets a different server, or no longer matches the selected port, the UI blocks real command creation and requires a fresh plan.
 
 The UI does not expose full Worker command payloads, `share_link`, `vless://` links, tokens, private keys, install commands, or Reality secrets.
 
@@ -87,6 +91,7 @@ This stage does not:
 - Perform cutover.
 - Create transit routes.
 - Create HAProxy routes.
+- Continue when the plan or preflight reports existing Xray, 3x-ui, or LiveLine-managed configuration conflicts.
 - Show or store `share_link`.
 - Show or store `vless://` links.
 - Show or store tokens, private keys, or install commands.
