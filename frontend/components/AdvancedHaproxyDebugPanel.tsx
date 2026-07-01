@@ -74,6 +74,31 @@ type HaproxyResourceRebuildPlan = {
   recommended_next_stage: string;
 };
 
+type ResourceRegistrationField = {
+  key: string;
+  value: string;
+  source: "candidate" | "integrity_check" | "manual_required" | "unknown";
+  required: boolean;
+  note: string;
+};
+
+type ResourceRegistrationSection = {
+  id: string;
+  title: string;
+  severity: "info" | "warning" | "danger";
+  description: string;
+  fields: ResourceRegistrationField[];
+  steps: string[];
+};
+
+type ResourceRegistrationPlan = {
+  status: "ready" | "blocked" | "no_candidate";
+  summary: string;
+  required_sections: ResourceRegistrationSection[];
+  missing_manual_inputs: string[];
+  recommended_next_stage: string;
+};
+
 const defaultForm: DebugForm = {
   dry_run_command_id: "",
   transit_resource_id: "",
@@ -401,6 +426,344 @@ function formatHaproxyResourceRebuildPlanText(plan: HaproxyResourceRebuildPlan) 
   return lines.join("\n");
 }
 
+function findIntegrityCheck(
+  candidate: HaproxyRuntimeDebugDryRunCandidate,
+  checkId: string,
+) {
+  return candidate.integrity_checks.find((check) => check.id === checkId) ?? null;
+}
+
+function fieldFromCheck(
+  candidate: HaproxyRuntimeDebugDryRunCandidate,
+  checkId: string,
+  fallback = "-",
+) {
+  const check = findIntegrityCheck(candidate, checkId);
+  return valueOrDash(check?.evidence_summary ?? check?.message ?? fallback);
+}
+
+function buildResourceRegistrationPlan(
+  candidate: HaproxyRuntimeDebugDryRunCandidate | null,
+  rebuildPlan: HaproxyResourceRebuildPlan,
+): ResourceRegistrationPlan {
+  if (!candidate) {
+    return {
+      status: "no_candidate",
+      summary: "请先读取上下文并选择一个 HAProxy dry-run candidate。",
+      required_sections: [],
+      missing_manual_inputs: [],
+      recommended_next_stage: "Stage 3.4.26-advanced-debug-protected-resource-registration-ui",
+    };
+  }
+
+  const blockedIds = new Set(rebuildPlan.blocking_checks.map((check) => check.id));
+  const actionIds = new Set(rebuildPlan.required_actions.map((action) => action.id));
+  const hasAnyBlocked = (ids: string[]) => ids.some((id) => blockedIds.has(id));
+  const requiredSections: ResourceRegistrationSection[] = [];
+
+  const needsTransitResource = actionIds.has("transit-resource-record") || hasAnyBlocked([
+    "transit_resource_record_exists",
+    "transit_resource_not_deleted",
+    "transit_resource_status_supported",
+  ]);
+  const needsTransitWorker = actionIds.has("transit-worker-status");
+  const needsLandingNode = actionIds.has("landing-node-record") || hasAnyBlocked([
+    "landing_node_record_exists",
+    "landing_node_not_deleted",
+    "landing_node_active",
+    "landing_node_has_vps_ip",
+    "landing_node_xray_port_present",
+  ]);
+
+  if (needsTransitResource) {
+    requiredSections.push({
+      id: "transit-resource-registration-draft",
+      title: "正式中转资源登记草案",
+      severity: "danger",
+      description: "用于准备新的有效中转资源记录；历史 deleted resource id 只能作为审计线索。",
+      fields: [
+        {
+          key: "transit_resource_id_from_candidate",
+          value: valueOrDash(candidate.transit_resource_id),
+          source: "candidate",
+          required: true,
+          note: "仅作为历史引用，不可直接复用 deleted 记录。",
+        },
+        {
+          key: "transit_resource_status_problem",
+          value: fieldFromCheck(candidate, "transit_resource_not_deleted", fieldFromCheck(candidate, "transit_resource_status_supported")),
+          source: "integrity_check",
+          required: true,
+          note: "当前资源不可用，需重新登记或恢复有效资源。",
+        },
+        {
+          key: "transit_resource_name_hint",
+          value: fieldFromCheck(candidate, "transit_resource_record_exists", valueOrDash(candidate.route_display_name ?? candidate.route_name)),
+          source: "integrity_check",
+          required: false,
+          note: "仅作命名参考，需人工确认。",
+        },
+        {
+          key: "entry_host",
+          value: "manual_required",
+          source: "manual_required",
+          required: true,
+          note: "必须人工确认中转服务器公网入口 IP / host。",
+        },
+        {
+          key: "entry_port",
+          value: "manual_required",
+          source: "manual_required",
+          required: true,
+          note: "中转资源入口端口需人工确认，不从旧 route 监听端口自动套用。",
+        },
+        {
+          key: "ssh_port",
+          value: "manual_required",
+          source: "manual_required",
+          required: true,
+          note: "仅作为后续受保护登记所需信息；本阶段不会连接 SSH。",
+        },
+        {
+          key: "resource_type",
+          value: "server",
+          source: "manual_required",
+          required: true,
+          note: "仅表示普通自建中转服务器资源。",
+        },
+        {
+          key: "expected_status",
+          value: "active 或 worker_online",
+          source: "manual_required",
+          required: true,
+          note: "必须由受保护登记流程确认。",
+        },
+        {
+          key: "worker_role",
+          value: "transit",
+          source: "manual_required",
+          required: true,
+          note: "中转 Worker 必须以 transit role 注册。",
+        },
+        {
+          key: "worker_binding_required",
+          value: "true",
+          source: "manual_required",
+          required: true,
+          note: "需要确保 liveline-worker 已登记、在线，并绑定该中转资源。",
+        },
+      ],
+      steps: [
+        "不要复用已 deleted 的旧 transit_resource_id。",
+        "确认中转服务器公网 IP / host、SSH 端口、区域、用途。",
+        "确认或重新绑定 transit Worker。",
+        "Worker online 且 interface_name 上报后，再重新生成 HAProxy dry-run。",
+      ],
+    });
+  }
+
+  if (needsLandingNode) {
+    requiredSections.push({
+      id: "landing-node-registration-draft",
+      title: "正式落地节点登记草案",
+      severity: "danger",
+      description: "用于准备当前 active 落地节点记录；candidate 字段只是历史目标参数。",
+      fields: [
+        {
+          key: "landing_node_id_from_candidate",
+          value: valueOrDash(candidate.landing_node_id),
+          source: "candidate",
+          required: true,
+          note: "仅作为历史引用，不可直接复用 deleted / missing 记录。",
+        },
+        {
+          key: "landing_target_host_from_candidate",
+          value: valueOrDash(candidate.landing_target_host),
+          source: "candidate",
+          required: true,
+          note: "历史落地目标 IP，需要人工确认是否仍是当前 active 落地 VPS。",
+        },
+        {
+          key: "landing_target_port_from_candidate",
+          value: valueOrDash(candidate.landing_target_port),
+          source: "candidate",
+          required: true,
+          note: "历史 Xray 端口，需要人工确认是否仍监听。",
+        },
+        {
+          key: "node_name_hint",
+          value: valueOrDash(candidate.route_display_name ?? candidate.route_name),
+          source: "candidate",
+          required: false,
+          note: "仅作节点命名参考。",
+        },
+        {
+          key: "vps_ip",
+          value: valueOrDash(candidate.landing_target_host),
+          source: "candidate",
+          required: true,
+          note: "需要人工确认这是当前正式落地 VPS IP。",
+        },
+        {
+          key: "xray_port",
+          value: valueOrDash(candidate.landing_target_port),
+          source: "candidate",
+          required: true,
+          note: "需要人工确认这是当前 active Reality/Xray 端口。",
+        },
+        {
+          key: "expected_status",
+          value: "active",
+          source: "manual_required",
+          required: true,
+          note: "落地节点必须是 active。",
+        },
+        {
+          key: "share_link_handling",
+          value: "do_not_export_or_modify_full_share_link",
+          source: "manual_required",
+          required: true,
+          note: "本阶段不读取、不输出、不修改完整 share_link。",
+        },
+      ],
+      steps: [
+        "确认落地 VPS IP 是否仍为 candidate landing_target_host。",
+        "确认落地 Xray / Reality 端口是否仍为 candidate landing_target_port。",
+        "如果系统里没有 active 落地节点记录，下一阶段只允许通过受保护登记入口补登记。",
+        "不读取、不输出完整 share_link。",
+        "补登记后重新生成 HAProxy dry-run。",
+      ],
+    });
+  }
+
+  if (needsTransitWorker) {
+    requiredSections.push({
+      id: "transit-worker-preparation",
+      title: "Transit Worker 准备清单",
+      severity: "warning",
+      description: "用于确认中转服务器上的 Worker 可以作为 HAProxy 创建目标。",
+      fields: [
+        {
+          key: "target_worker_id_from_candidate",
+          value: valueOrDash(candidate.target_worker_id),
+          source: "candidate",
+          required: true,
+          note: "仅作为历史 Worker 引用，必须确认当前 Worker 仍在线并绑定有效资源。",
+        },
+        {
+          key: "required_role",
+          value: "transit",
+          source: "manual_required",
+          required: true,
+          note: "Worker role 必须是 transit。",
+        },
+        {
+          key: "required_status",
+          value: "online",
+          source: "manual_required",
+          required: true,
+          note: "Worker 必须在线且 heartbeat 未过期。",
+        },
+        {
+          key: "interface_name_required",
+          value: "true",
+          source: "manual_required",
+          required: true,
+          note: "Worker 必须上报 interface_name。",
+        },
+        {
+          key: "heartbeat_required",
+          value: "true",
+          source: "manual_required",
+          required: true,
+          note: "必须等待主控收到 Worker heartbeat。",
+        },
+      ],
+      steps: [
+        "确认中转服务器上 liveline-worker 已安装。",
+        "确认 worker role=transit。",
+        "确认 worker online。",
+        "确认 heartbeat 正常。",
+        "确认 interface_name 已上报。",
+      ],
+    });
+  }
+
+  const missingManualInputs = [
+    "中转服务器公网 IP / host",
+    "中转服务器 SSH 端口",
+    "中转服务器区域 / 名称",
+    "transit Worker 是否在线并绑定",
+    "落地 VPS IP 是否仍有效",
+    "落地 Xray / Reality 端口是否仍有效",
+    "落地节点是否 active",
+  ];
+  const recommendedNextStage =
+    candidate.integrity_ready
+      ? "不需要下一阶段资源登记"
+      : requiredSections.some((section) => ["transit-resource-registration-draft", "landing-node-registration-draft"].includes(section.id))
+        ? "Stage 3.4.26-advanced-debug-protected-resource-registration-ui"
+        : "Stage 3.4.26-advanced-debug-haproxy-dry-run-regenerate";
+
+  return {
+    status: candidate.integrity_ready ? "ready" : "blocked",
+    summary: candidate.integrity_ready
+      ? "当前 candidate 上下文完整，暂不需要登记新资源。可以继续按 readiness 流程人工确认端口和安全边界。"
+      : "当前 candidate 引用的正式资源上下文不完整。下面是登记正式资源前的准备清单。本阶段只生成方案，不创建资源。",
+    required_sections: requiredSections,
+    missing_manual_inputs: candidate.integrity_ready ? [] : missingManualInputs,
+    recommended_next_stage: recommendedNextStage,
+  };
+}
+
+function formatResourceRegistrationPlanText(
+  candidate: HaproxyRuntimeDebugDryRunCandidate | null,
+  plan: ResourceRegistrationPlan,
+) {
+  const candidateSummary = candidate
+    ? [
+        `- dry_run_command_id: ${valueOrDash(candidate.id)}`,
+        `- status: ${valueOrDash(candidate.status)}`,
+        `- integrity: ${candidate.integrity_ready ? "ready" : "blocked"}`,
+        `- route_name: ${valueOrDash(candidate.route_name)}`,
+        `- planned_listen_port: ${valueOrDash(candidate.planned_listen_port)}`,
+        `- landing_target_host: ${valueOrDash(candidate.landing_target_host)}`,
+        `- landing_target_port: ${valueOrDash(candidate.landing_target_port)}`,
+      ]
+    : ["- no candidate selected"];
+  const lines = [
+    "Resource Registration Plan",
+    "",
+    "Candidate Summary",
+    ...candidateSummary,
+    "",
+    "Plan Summary",
+    `- status: ${plan.status}`,
+    `- summary: ${plan.summary}`,
+    `- recommended_next_stage: ${plan.recommended_next_stage}`,
+    "",
+    "Required Sections",
+    ...(plan.required_sections.length
+      ? plan.required_sections.flatMap((section) => [
+          `- ${section.title}`,
+          `  description: ${section.description}`,
+          ...section.fields.flatMap((field) => [
+            `  field: ${field.key}`,
+            `    value: ${field.value}`,
+            `    source: ${field.source}`,
+            `    required: ${field.required ? "yes" : "no"}`,
+            `    note: ${field.note}`,
+          ]),
+          ...section.steps.map((step) => `  * ${step}`),
+        ])
+      : ["- none"]),
+    "",
+    "Missing Manual Inputs",
+    ...(plan.missing_manual_inputs.length ? plan.missing_manual_inputs.map((item) => `- ${item}`) : ["- none"]),
+  ];
+  return lines.join("\n");
+}
+
 function resultStatus(result: TransitHaproxyRouteRealExecutionReadinessResult | null) {
   if (!result) {
     return { label: "未运行", tone: "neutral" };
@@ -542,6 +905,10 @@ export function AdvancedHaproxyDebugPanel() {
   const rebuildPlan = useMemo(
     () => buildHaproxyResourceRebuildPlan(selectedDryRunCandidate),
     [selectedDryRunCandidate],
+  );
+  const registrationPlan = useMemo(
+    () => buildResourceRegistrationPlan(selectedDryRunCandidate, rebuildPlan),
+    [selectedDryRunCandidate, rebuildPlan],
   );
   const selectedCandidateIntegrityReady = selectedDryRunCandidate?.integrity_ready === true;
   const canRunReadiness = formErrors.length === 0 && Boolean(requestPayload) && selectedCandidateIntegrityReady;
@@ -1016,6 +1383,96 @@ export function AdvancedHaproxyDebugPanel() {
                 <footer className="advanced-debug-v2-rebuild-next">
                   <span>建议下一阶段</span>
                   <strong>{rebuildPlan.recommended_next_stage}</strong>
+                </footer>
+              </section>
+            ) : null}
+
+            {selectedDryRunCandidate ? (
+              <section
+                className={`advanced-debug-v2-registration-plan advanced-debug-v2-registration-${
+                  registrationPlan.status === "ready" ? "ready" : "blocked"
+                }`}
+              >
+                <header className="advanced-debug-v2-card-title">
+                  <div>
+                    <h2>正式资源登记方案</h2>
+                    <p>{registrationPlan.summary}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="ghost small advanced-debug-v2-registration-copy"
+                    onClick={() =>
+                      copyText(
+                        formatResourceRegistrationPlanText(selectedDryRunCandidate, registrationPlan),
+                        "登记方案已复制。",
+                      )
+                    }
+                  >
+                    复制登记方案
+                  </button>
+                </header>
+
+                {registrationPlan.status === "blocked" ? (
+                  <div className="advanced-debug-v2-context-warning">
+                    这是只读登记前准备清单；不会创建中转资源、落地节点、WorkerCommand 或 TransitRoute。
+                  </div>
+                ) : (
+                  <div className="advanced-debug-v2-context-message">
+                    当前 candidate 上下文完整，暂不需要登记新资源。
+                  </div>
+                )}
+
+                {registrationPlan.required_sections.length ? (
+                  <div className="advanced-debug-v2-registration-sections">
+                    {registrationPlan.required_sections.map((section) => (
+                      <article key={section.id} className={`advanced-debug-v2-registration-section ${section.severity}`}>
+                        <header>
+                          <strong>{section.title}</strong>
+                          <p>{section.description}</p>
+                        </header>
+                        <div className="advanced-debug-v2-registration-grid">
+                          {section.fields.map((field) => (
+                            <div key={`${section.id}-${field.key}`} className={`advanced-debug-v2-registration-field ${field.source}`}>
+                              <span>{field.key}</span>
+                              <strong>{field.value}</strong>
+                              <small>
+                                source: {field.source} / required: {field.required ? "yes" : "no"}
+                              </small>
+                              <em>{field.note}</em>
+                            </div>
+                          ))}
+                        </div>
+                        <ul>
+                          {section.steps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ul>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="advanced-debug-v2-registration-empty">无需生成资源登记草案。</p>
+                )}
+
+                <div className="advanced-debug-v2-registration-manual">
+                  <h3>缺失人工输入</h3>
+                  {registrationPlan.missing_manual_inputs.length ? (
+                    <ul>
+                      {registrationPlan.missing_manual_inputs.map((input) => (
+                        <li key={input}>
+                          {input}
+                          <span>candidate hint, must verify manually</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>没有待补充的人工输入。</p>
+                  )}
+                </div>
+
+                <footer className="advanced-debug-v2-registration-next">
+                  <span>建议下一阶段</span>
+                  <strong>{registrationPlan.recommended_next_stage}</strong>
                 </footer>
               </section>
             ) : null}
