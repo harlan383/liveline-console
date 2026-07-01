@@ -2673,6 +2673,7 @@ fallback link remains `gost` 8443, and remote execution remains No-Go.
 | Stage 3.3.34 C stability archive | C-minimal cutover stable archive documented; maintenance observation recommended |
 | Stage 3.3.35 C maintenance observation plan | Maintenance observation plan documented; gost 8443 fallback retained |
 | Stage 3.4.0 UI customer-first line builder | Reorganize the frontend around customer-facing line building, customer lines, server resources, business task records, and advanced debug separation; UI/documentation only, no backend, database, Worker, remote execution, listener, firewall, cutover, or share-link mutation |
+| Stage 3.4.28 Advanced debug protected resource registration approval | Add an advanced-debug approval dry-run after the protected resource registration dry-run; no resource, WorkerCommand, TransitRoute, HAProxy route, SSH, firewall, cutover, ordinary product UI, or share-link mutation |
 | Stage 3.4.1 Auth login gate | Development complete |
 | Stage 3.4.2 Auth login local acceptance record | Local browser acceptance passed |
 | Stage 3.4.3 Auth protected API sweep | Protected API sweep passed |

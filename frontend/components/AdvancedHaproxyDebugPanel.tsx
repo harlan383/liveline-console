@@ -7,12 +7,15 @@ import {
   apiFetch,
   createTransitHaproxyRouteRealExecution,
   getHaproxyRuntimeDebugContext,
+  requestProtectedResourceRegistrationApprovalDryRun,
   requestProtectedResourceRegistrationDryRun,
   requestTransitHaproxyRouteRealExecutionReadiness,
   type CsrfResult,
   type HaproxyRuntimeDebugContextResult,
   type HaproxyRuntimeDebugDryRunCandidate,
   type HaproxyRuntimeDebugIntegrityCheck,
+  type ProtectedResourceRegistrationApprovalDryRunRequest,
+  type ProtectedResourceRegistrationApprovalDryRunResult,
   type ProtectedResourceRegistrationDryRunResult,
   type ReadonlyPreflightCheckItem,
   type TransitHaproxyRouteCreateRealExecutionRequest,
@@ -25,6 +28,10 @@ const REAL_EXECUTION_STAGE = "Stage 3.3.139-new-transit-haproxy-route-create-rea
 const MANUAL_REAL_EXECUTION_CONFIRM = "CONFIRM_CREATE_HAPROXY_REAL_EXECUTION_COMMAND";
 const PROTECTED_RESOURCE_REGISTRATION_STAGE = "Stage 3.4.26-advanced-debug-protected-resource-registration-ui";
 const PROTECTED_RESOURCE_REGISTRATION_NEXT_STAGE = "Stage 3.4.27-advanced-debug-protected-resource-registration-dry-run";
+const PROTECTED_RESOURCE_REGISTRATION_APPROVAL_STAGE = "3.4.28";
+const PROTECTED_RESOURCE_REGISTRATION_APPROVAL_MODE = "approval_dry_run";
+const PROTECTED_RESOURCE_REGISTRATION_APPROVAL_NEXT_STAGE =
+  "Stage 3.4.29-protected-resource-registration-command-create";
 
 type DebugForm = {
   dry_run_command_id: string;
@@ -175,6 +182,9 @@ type ProtectedResourceRegistrationPayloadPreview = {
   safety_boundary: string[];
 };
 
+type ProtectedResourceRegistrationApprovalConfirmations =
+  ProtectedResourceRegistrationApprovalDryRunRequest["confirmations"];
+
 const defaultForm: DebugForm = {
   dry_run_command_id: "",
   transit_resource_id: "",
@@ -228,6 +238,20 @@ const protectedRegistrationSafetyBoundary = [
   "不读取、不输出、不修改完整 share_link",
   "不 cutover",
 ];
+
+const defaultProtectedRegistrationApprovalConfirmations: ProtectedResourceRegistrationApprovalConfirmations = {
+  registration_dry_run_passed: false,
+  approval_text_matches_expected: false,
+  no_real_resource_creation: false,
+  no_worker_command_creation: false,
+  no_transit_route_creation: false,
+  no_haproxy_route_creation: false,
+  no_ssh_or_remote_execution: false,
+  no_firewall_change: false,
+  no_cutover: false,
+  ordinary_product_ui_unchanged: false,
+  sensitive_fields_redacted: false,
+};
 
 const taskRows = [
   { time: "2026-06-30 11:24:18", name: "HAProxy runtime readiness", object: "中转线路 / 真实创建", status: "只读", result: "等待运行" },
@@ -1040,6 +1064,93 @@ function formatProtectedResourceRegistrationExplanation(
   return lines.join("\n");
 }
 
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function extractProtectedRegistrationDryRunResult(value: unknown): ProtectedResourceRegistrationDryRunResult | null {
+  const root = toRecord(value);
+  if (!root) {
+    return null;
+  }
+  const data = toRecord(root.data) ?? root;
+  if (data.dry_run !== true || typeof data.expected_approval_text !== "string") {
+    return null;
+  }
+  return data as unknown as ProtectedResourceRegistrationDryRunResult;
+}
+
+function parseProtectedRegistrationDryRunSource(
+  sourceText: string,
+  currentResult: ProtectedResourceRegistrationDryRunResult | null,
+) {
+  if (!sourceText.trim()) {
+    return { result: currentResult, error: "" };
+  }
+  try {
+    const parsed = JSON.parse(sourceText);
+    const result = extractProtectedRegistrationDryRunResult(parsed);
+    if (!result) {
+      return { result: null, error: "粘贴内容不是 Stage 3.4.27 registration dry-run 结果。" };
+    }
+    return { result, error: "" };
+  } catch (error) {
+    return { result: null, error: error instanceof Error ? error.message : "JSON 解析失败。" };
+  }
+}
+
+function buildProtectedRegistrationApprovalPayload(
+  sourceResult: ProtectedResourceRegistrationDryRunResult | null,
+  approvalText: string,
+  confirmations: ProtectedResourceRegistrationApprovalConfirmations,
+): ProtectedResourceRegistrationApprovalDryRunRequest {
+  const expectedApprovalText = sourceResult?.expected_approval_text ?? "";
+  const approvalTextMatchesExpected = Boolean(expectedApprovalText && approvalText.trim() === expectedApprovalText);
+  return {
+    stage: PROTECTED_RESOURCE_REGISTRATION_APPROVAL_STAGE,
+    mode: PROTECTED_RESOURCE_REGISTRATION_APPROVAL_MODE,
+    source_registration_dry_run: {
+      dry_run: sourceResult?.dry_run === true,
+      ready_for_next_stage: sourceResult?.ready_for_next_stage === true,
+      expected_approval_text: expectedApprovalText,
+      normalized_preview: sourceResult?.normalized_preview ?? {},
+    },
+    approval_text: approvalText.trim(),
+    confirmations: {
+      ...confirmations,
+      approval_text_matches_expected: approvalTextMatchesExpected,
+    },
+  };
+}
+
+function formatProtectedRegistrationApprovalExplanation(
+  sourceResult: ProtectedResourceRegistrationDryRunResult | null,
+  approvalTextMatchesExpected: boolean,
+) {
+  const lines = [
+    "Protected Resource Registration Approval Dry-run",
+    "",
+    `stage: ${PROTECTED_RESOURCE_REGISTRATION_APPROVAL_STAGE}`,
+    `mode: ${PROTECTED_RESOURCE_REGISTRATION_APPROVAL_MODE}`,
+    `source_dry_run: ${sourceResult?.dry_run === true ? "true" : "false"}`,
+    `source_ready_for_next_stage: ${sourceResult?.ready_for_next_stage === true ? "true" : "false"}`,
+    `approval_text_matches_expected: ${approvalTextMatchesExpected ? "true" : "false"}`,
+    `recommended_next_stage: ${PROTECTED_RESOURCE_REGISTRATION_APPROVAL_NEXT_STAGE}`,
+    "",
+    "Safety Boundary",
+    "- approval dry-run only",
+    "- no resource creation",
+    "- no WorkerCommand creation",
+    "- no TransitRoute creation",
+    "- no HAProxy route creation",
+    "- no SSH or remote execution",
+    "- no firewall change",
+    "- no cutover",
+    "- ordinary product UI unchanged",
+  ];
+  return lines.join("\n");
+}
+
 function resultStatus(result: TransitHaproxyRouteRealExecutionReadinessResult | null) {
   if (!result) {
     return { label: "未运行", tone: "neutral" };
@@ -1166,6 +1277,13 @@ export function AdvancedHaproxyDebugPanel() {
   const [protectedRegistrationDryRunResult, setProtectedRegistrationDryRunResult] =
     useState<ProtectedResourceRegistrationDryRunResult | null>(null);
   const [loadingProtectedRegistrationDryRun, setLoadingProtectedRegistrationDryRun] = useState(false);
+  const [protectedRegistrationApprovalSourceText, setProtectedRegistrationApprovalSourceText] = useState("");
+  const [protectedRegistrationApprovalText, setProtectedRegistrationApprovalText] = useState("");
+  const [protectedRegistrationApprovalConfirmations, setProtectedRegistrationApprovalConfirmations] =
+    useState<ProtectedResourceRegistrationApprovalConfirmations>(defaultProtectedRegistrationApprovalConfirmations);
+  const [protectedRegistrationApprovalResult, setProtectedRegistrationApprovalResult] =
+    useState<ProtectedResourceRegistrationApprovalDryRunResult | null>(null);
+  const [loadingProtectedRegistrationApprovalDryRun, setLoadingProtectedRegistrationApprovalDryRun] = useState(false);
 
   const expectedRealExecutionText = useMemo(
     () => readinessResult?.expected_real_execution_text ?? expectedTextForPort(form.planned_listen_port),
@@ -1195,6 +1313,10 @@ export function AdvancedHaproxyDebugPanel() {
   useEffect(() => {
     setProtectedRegistrationDraft(buildProtectedResourceRegistrationDraft(selectedDryRunCandidate));
     setProtectedRegistrationDryRunResult(null);
+    setProtectedRegistrationApprovalSourceText("");
+    setProtectedRegistrationApprovalText("");
+    setProtectedRegistrationApprovalConfirmations(defaultProtectedRegistrationApprovalConfirmations);
+    setProtectedRegistrationApprovalResult(null);
   }, [selectedDryRunCandidate?.id]);
   const selectedCandidateIntegrityReady = selectedDryRunCandidate?.integrity_ready === true;
   const protectedRegistrationErrors = useMemo(
@@ -1212,6 +1334,42 @@ export function AdvancedHaproxyDebugPanel() {
     protectedRegistrationReady &&
     Boolean(protectedRegistrationPayloadPreview) &&
     !loadingProtectedRegistrationDryRun;
+  const protectedRegistrationApprovalSource = useMemo(
+    () => parseProtectedRegistrationDryRunSource(protectedRegistrationApprovalSourceText, protectedRegistrationDryRunResult),
+    [protectedRegistrationApprovalSourceText, protectedRegistrationDryRunResult],
+  );
+  const protectedRegistrationApprovalExpectedText =
+    protectedRegistrationApprovalSource.result?.expected_approval_text ?? "";
+  const protectedRegistrationApprovalTextMatches = Boolean(
+    protectedRegistrationApprovalExpectedText &&
+      protectedRegistrationApprovalText.trim() === protectedRegistrationApprovalExpectedText,
+  );
+  const protectedRegistrationApprovalPayload = useMemo(
+    () =>
+      buildProtectedRegistrationApprovalPayload(
+        protectedRegistrationApprovalSource.result,
+        protectedRegistrationApprovalText,
+        protectedRegistrationApprovalConfirmations,
+      ),
+    [
+      protectedRegistrationApprovalConfirmations,
+      protectedRegistrationApprovalSource.result,
+      protectedRegistrationApprovalText,
+    ],
+  );
+  const protectedRegistrationApprovalConfirmationCount = Object.entries({
+    ...protectedRegistrationApprovalConfirmations,
+    approval_text_matches_expected: protectedRegistrationApprovalTextMatches,
+  }).filter(([, value]) => value).length;
+  const protectedRegistrationApprovalReady =
+    Boolean(protectedRegistrationApprovalSource.result) &&
+    !protectedRegistrationApprovalSource.error &&
+    protectedRegistrationApprovalSource.result?.ready_for_next_stage === true &&
+    protectedRegistrationApprovalTextMatches &&
+    Object.entries(protectedRegistrationApprovalConfirmations)
+      .filter(([key]) => key !== "approval_text_matches_expected")
+      .every(([, value]) => value) &&
+    !loadingProtectedRegistrationApprovalDryRun;
   const canRunReadiness = formErrors.length === 0 && Boolean(requestPayload) && selectedCandidateIntegrityReady;
   const selectedTransitResource = useMemo(
     () => debugContext?.transit_resources.find((resource) => resource.id === selectedTransitResourceId) ?? null,
@@ -1254,6 +1412,18 @@ export function AdvancedHaproxyDebugPanel() {
   ) {
     setProtectedRegistrationDraft((current) => ({ ...current, [key]: value }));
     setProtectedRegistrationDryRunResult(null);
+    setProtectedRegistrationApprovalResult(null);
+  }
+
+  function updateProtectedRegistrationApprovalConfirmation<K extends keyof ProtectedResourceRegistrationApprovalConfirmations>(
+    key: K,
+    value: boolean,
+  ) {
+    if (key === "approval_text_matches_expected") {
+      return;
+    }
+    setProtectedRegistrationApprovalConfirmations((current) => ({ ...current, [key]: value }));
+    setProtectedRegistrationApprovalResult(null);
   }
 
   function clearForm() {
@@ -1269,7 +1439,19 @@ export function AdvancedHaproxyDebugPanel() {
   function clearProtectedRegistrationDraft() {
     setProtectedRegistrationDraft(buildProtectedResourceRegistrationDraft(selectedDryRunCandidate));
     setProtectedRegistrationDryRunResult(null);
+    setProtectedRegistrationApprovalSourceText("");
+    setProtectedRegistrationApprovalText("");
+    setProtectedRegistrationApprovalConfirmations(defaultProtectedRegistrationApprovalConfirmations);
+    setProtectedRegistrationApprovalResult(null);
     setMessage("登记草案已清空为当前 candidate 的默认 hint。");
+  }
+
+  function clearProtectedRegistrationApprovalDraft() {
+    setProtectedRegistrationApprovalSourceText("");
+    setProtectedRegistrationApprovalText("");
+    setProtectedRegistrationApprovalConfirmations(defaultProtectedRegistrationApprovalConfirmations);
+    setProtectedRegistrationApprovalResult(null);
+    setMessage("审批草案已清空。");
   }
 
   async function copyText(text: string, successMessage: string) {
@@ -1331,6 +1513,7 @@ export function AdvancedHaproxyDebugPanel() {
         return;
       }
       setProtectedRegistrationDryRunResult(result.data);
+      setProtectedRegistrationApprovalResult(null);
       setMessage(
         result.data.ready_for_next_stage
           ? "registration dry-run 已通过。下一阶段仍需单独 approval，不会在本阶段创建资源。"
@@ -1340,6 +1523,43 @@ export function AdvancedHaproxyDebugPanel() {
       setMessage(error instanceof Error ? error.message : "运行 registration dry-run 失败。");
     } finally {
       setLoadingProtectedRegistrationDryRun(false);
+    }
+  }
+
+  async function runProtectedRegistrationApprovalDryRun() {
+    if (!protectedRegistrationApprovalSource.result) {
+      setMessage(protectedRegistrationApprovalSource.error || "请先运行或粘贴 Stage 3.4.27 registration dry-run 结果。");
+      return;
+    }
+    if (!protectedRegistrationApprovalReady) {
+      setMessage(
+        protectedRegistrationApprovalSource.error ||
+          "审批草案未 ready：需要来源 dry-run ready、approval text 完全匹配，并勾选所有安全确认项。",
+      );
+      return;
+    }
+    setLoadingProtectedRegistrationApprovalDryRun(true);
+    setMessage("正在运行 approval dry-run；这是只读审批校验，不会创建资源或 WorkerCommand。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await requestProtectedResourceRegistrationApprovalDryRun(
+        protectedRegistrationApprovalPayload,
+        csrfToken,
+      );
+      if (!result.success) {
+        setMessage(result.message);
+        return;
+      }
+      setProtectedRegistrationApprovalResult(result.data);
+      setMessage(
+        result.data.approved_for_next_stage
+          ? "approval dry-run 已通过。下一阶段才能单独设计 command create，本阶段仍未创建任何资源。"
+          : "approval dry-run 存在阻塞项。请检查审批文本和安全确认项。",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "运行 approval dry-run 失败。");
+    } finally {
+      setLoadingProtectedRegistrationApprovalDryRun(false);
     }
   }
 
@@ -2170,6 +2390,283 @@ export function AdvancedHaproxyDebugPanel() {
                   ) : (
                     <div className="advanced-debug-v2-registration-dry-run-empty">
                       尚未运行 registration dry-run。按钮启用前必须先让登记草案通过本地校验。
+                    </div>
+                  )}
+                </section>
+
+                <section
+                  className={`advanced-debug-v2-registration-approval-dry-run ${
+                    protectedRegistrationApprovalResult?.approved_for_next_stage
+                      ? "advanced-debug-v2-registration-approval-dry-run-ready"
+                      : protectedRegistrationApprovalResult
+                        ? "advanced-debug-v2-registration-approval-dry-run-blocked"
+                        : ""
+                  }`}
+                >
+                  <header>
+                    <div>
+                      <strong>受保护资源登记审批 · Stage 3.4.28</strong>
+                      <p>
+                        approval dry-run only：不会创建资源、不会创建 WorkerCommand、不会创建 TransitRoute、不会创建 HAProxy route、不会 SSH、不会修改防火墙、不会 cutover。
+                      </p>
+                    </div>
+                    <div className="advanced-debug-v2-registration-dry-run-actions">
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => {
+                          setProtectedRegistrationApprovalResult(null);
+                          setMessage("审批 Payload 预览已生成；这只是前端预览，不会创建资源。");
+                        }}
+                      >
+                        生成审批 Payload
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => copyText(formatJson(protectedRegistrationApprovalPayload), "审批 Payload 已复制。")}
+                      >
+                        复制审批 Payload
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={runProtectedRegistrationApprovalDryRun}
+                        disabled={!protectedRegistrationApprovalReady}
+                      >
+                        {loadingProtectedRegistrationApprovalDryRun ? "校验中..." : "运行 Approval Dry-run"}
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() =>
+                          copyText(
+                            formatProtectedRegistrationApprovalExplanation(
+                              protectedRegistrationApprovalSource.result,
+                              protectedRegistrationApprovalTextMatches,
+                            ),
+                            "审批说明已复制。",
+                          )
+                        }
+                      >
+                        复制审批说明
+                      </button>
+                      <button type="button" className="ghost small" onClick={clearProtectedRegistrationApprovalDraft}>
+                        清空审批草案
+                      </button>
+                    </div>
+                  </header>
+
+                  <div className="advanced-debug-v2-registration-approval-source">
+                    <Field label="Stage 3.4.27 registration dry-run result JSON（可选粘贴）">
+                      <textarea
+                        value={protectedRegistrationApprovalSourceText}
+                        placeholder="留空时自动使用本页刚运行的 registration dry-run 结果；也可以粘贴已复制的 dry-run result JSON。"
+                        onChange={(event) => {
+                          setProtectedRegistrationApprovalSourceText(event.target.value);
+                          setProtectedRegistrationApprovalResult(null);
+                        }}
+                      />
+                    </Field>
+                    <div className="advanced-debug-v2-registration-approval-summary">
+                      <div>
+                        <span>source_dry_run</span>
+                        <strong>{String(protectedRegistrationApprovalSource.result?.dry_run === true)}</strong>
+                      </div>
+                      <div>
+                        <span>source_ready_for_next_stage</span>
+                        <strong>{String(protectedRegistrationApprovalSource.result?.ready_for_next_stage === true)}</strong>
+                      </div>
+                      <div>
+                        <span>expected_approval_text</span>
+                        <strong>{valueOrDash(protectedRegistrationApprovalExpectedText)}</strong>
+                      </div>
+                      <div>
+                        <span>local_exact_match</span>
+                        <strong>{protectedRegistrationApprovalTextMatches ? "matched" : "not matched"}</strong>
+                      </div>
+                    </div>
+                    {protectedRegistrationApprovalSource.error ? (
+                      <div className="advanced-debug-v2-protected-registration-blocked-list">
+                        <strong>source parse error</strong>
+                        <p>{protectedRegistrationApprovalSource.error}</p>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <section className="advanced-debug-v2-protected-registration-section">
+                    <header>
+                      <strong>Approval Text</strong>
+                      <p>必须与 expected_approval_text 完全一致；匹配结果会自动写入 approval payload。</p>
+                    </header>
+                    <Field label="approval_text">
+                      <input
+                        value={protectedRegistrationApprovalText}
+                        placeholder="逐字符输入 expected_approval_text"
+                        onChange={(event) => {
+                          setProtectedRegistrationApprovalText(event.target.value);
+                          setProtectedRegistrationApprovalResult(null);
+                        }}
+                      />
+                    </Field>
+                    <div
+                      className={`advanced-debug-v2-registration-approval-match ${
+                        protectedRegistrationApprovalTextMatches ? "matched" : "blocked"
+                      }`}
+                    >
+                      <span>{protectedRegistrationApprovalTextMatches ? "完全匹配" : "尚未完全匹配"}</span>
+                      <strong>approval_text_matches_expected</strong>
+                    </div>
+                  </section>
+
+                  <section className="advanced-debug-v2-protected-registration-section advanced-debug-v2-protected-registration-confirm">
+                    <header>
+                      <strong>审批安全确认</strong>
+                      <p>这些确认只用于 approval dry-run 校验，不会触发任何资源登记、命令创建或远程动作。</p>
+                    </header>
+                    <div className="advanced-debug-v2-confirmation-grid">
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.registration_dry_run_passed}
+                        label="我确认 Stage 3.4.27 registration dry-run 已通过"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("registration_dry_run_passed", checked)
+                        }
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalTextMatches}
+                        label="approval text 与 expected 完全匹配（自动判断）"
+                        onChange={() => undefined}
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.no_real_resource_creation}
+                        label="我确认本阶段不创建实际资源"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("no_real_resource_creation", checked)
+                        }
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.no_worker_command_creation}
+                        label="我确认本阶段不创建 WorkerCommand"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("no_worker_command_creation", checked)
+                        }
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.no_transit_route_creation}
+                        label="我确认本阶段不创建 TransitRoute"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("no_transit_route_creation", checked)
+                        }
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.no_haproxy_route_creation}
+                        label="我确认本阶段不创建 HAProxy route"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("no_haproxy_route_creation", checked)
+                        }
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.no_ssh_or_remote_execution}
+                        label="我确认本阶段不 SSH、不远程执行"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("no_ssh_or_remote_execution", checked)
+                        }
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.no_firewall_change}
+                        label="我确认本阶段不修改防火墙 / 云安全组 / 云防火墙"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("no_firewall_change", checked)
+                        }
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.no_cutover}
+                        label="我确认本阶段不 cutover"
+                        onChange={(checked) => updateProtectedRegistrationApprovalConfirmation("no_cutover", checked)}
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.ordinary_product_ui_unchanged}
+                        label="我确认普通产品 UI 不改"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("ordinary_product_ui_unchanged", checked)
+                        }
+                      />
+                      <CheckboxRow
+                        checked={protectedRegistrationApprovalConfirmations.sensitive_fields_redacted}
+                        label="我确认没有完整客户端配置、凭证、命令或密钥"
+                        onChange={(checked) =>
+                          updateProtectedRegistrationApprovalConfirmation("sensitive_fields_redacted", checked)
+                        }
+                      />
+                    </div>
+                  </section>
+
+                  <section className="advanced-debug-v2-protected-registration-section advanced-debug-v2-protected-registration-preview">
+                    <header>
+                      <strong>Approval Payload 预览</strong>
+                      <p>当前确认进度：{protectedRegistrationApprovalConfirmationCount} / 11；复制内容会在浏览器侧脱敏显示。</p>
+                    </header>
+                    <pre>{formatJson(protectedRegistrationApprovalPayload)}</pre>
+                  </section>
+
+                  {protectedRegistrationApprovalResult ? (
+                    <>
+                      <div className="advanced-debug-v2-registration-dry-run-summary">
+                        <div>
+                          <span>dry_run</span>
+                          <strong>{String(protectedRegistrationApprovalResult.dry_run)}</strong>
+                        </div>
+                        <div>
+                          <span>approved_for_next_stage</span>
+                          <strong>{String(protectedRegistrationApprovalResult.approved_for_next_stage)}</strong>
+                        </div>
+                        <div>
+                          <span>ready_for_command_create_next_stage</span>
+                          <strong>{String(protectedRegistrationApprovalResult.ready_for_command_create_next_stage)}</strong>
+                        </div>
+                        <div>
+                          <span>recommended_next_stage</span>
+                          <strong>{protectedRegistrationApprovalResult.recommended_next_stage}</strong>
+                        </div>
+                      </div>
+
+                      {protectedRegistrationApprovalResult.blocked_reasons.length ? (
+                        <div className="advanced-debug-v2-protected-registration-blocked-list">
+                          <strong>blocked_reasons</strong>
+                          <ul>
+                            {protectedRegistrationApprovalResult.blocked_reasons.map((reason) => (
+                              <li key={reason}>{reason}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div className="advanced-debug-v2-context-message">
+                          Approval dry-run 已通过。下一阶段仍需单独设计 command create；本阶段未创建任何资源。
+                        </div>
+                      )}
+
+                      <div className="advanced-debug-v2-registration-dry-run-checks">
+                        {protectedRegistrationApprovalResult.checks.map((check) => (
+                          <article key={check.id} className={check.severity}>
+                            <div>
+                              <strong>{check.label}</strong>
+                              <span>{check.id}</span>
+                            </div>
+                            <p>{check.message}</p>
+                            <small>{check.next_action}</small>
+                            {check.evidence_summary ? <em>{check.evidence_summary}</em> : null}
+                          </article>
+                        ))}
+                      </div>
+
+                      <div className="advanced-debug-v2-registration-dry-run-preview">
+                        <strong>normalized_approval_preview</strong>
+                        <pre>{formatJson(protectedRegistrationApprovalResult.normalized_approval_preview)}</pre>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="advanced-debug-v2-registration-dry-run-empty">
+                      尚未运行 approval dry-run。按钮启用前需要来源 dry-run ready、审批文本完全匹配，并勾选所有安全确认。
                     </div>
                   )}
                 </section>

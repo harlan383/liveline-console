@@ -81,6 +81,11 @@ TRANSIT_ROUTE_CREATE_FORWARDING_METHODS = {
 PROTECTED_RESOURCE_REGISTRATION_UI_STAGE = "Stage 3.4.26-advanced-debug-protected-resource-registration-ui"
 PROTECTED_RESOURCE_REGISTRATION_DRY_RUN_STAGE = "Stage 3.4.27-advanced-debug-protected-resource-registration-dry-run"
 PROTECTED_RESOURCE_REGISTRATION_APPROVAL_STAGE = "Stage 3.4.28-advanced-debug-protected-resource-registration-approval"
+PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE = "3.4.28"
+PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE = "approval_dry_run"
+PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_NEXT_STAGE = (
+    "Stage 3.4.29-protected-resource-registration-command-create"
+)
 PROTECTED_RESOURCE_REGISTRATION_REQUIRED_BOUNDARY = [
     "preview_only",
     "不提交后端",
@@ -145,6 +150,39 @@ class ProtectedResourceRegistrationDryRunRequest(BaseModel):
     landing_node_registration: ProtectedRegistrationLandingNode = Field(default_factory=ProtectedRegistrationLandingNode)
     confirmations: ProtectedRegistrationConfirmations = Field(default_factory=ProtectedRegistrationConfirmations)
     safety_boundary: list[str] = Field(default_factory=list, max_length=80)
+
+
+class ProtectedRegistrationApprovalSourceDryRun(BaseModel):
+    dry_run: bool = False
+    ready_for_next_stage: bool = False
+    expected_approval_text: str = Field(default="", max_length=200)
+    normalized_preview: dict[str, object] = Field(default_factory=dict)
+
+
+class ProtectedRegistrationApprovalConfirmations(BaseModel):
+    registration_dry_run_passed: bool = False
+    approval_text_matches_expected: bool = False
+    no_real_resource_creation: bool = False
+    no_worker_command_creation: bool = False
+    no_transit_route_creation: bool = False
+    no_haproxy_route_creation: bool = False
+    no_ssh_or_remote_execution: bool = False
+    no_firewall_change: bool = False
+    no_cutover: bool = False
+    ordinary_product_ui_unchanged: bool = False
+    sensitive_fields_redacted: bool = False
+
+
+class ProtectedResourceRegistrationApprovalDryRunRequest(BaseModel):
+    stage: str = Field(default="", max_length=40)
+    mode: str = Field(default="", max_length=40)
+    source_registration_dry_run: ProtectedRegistrationApprovalSourceDryRun = Field(
+        default_factory=ProtectedRegistrationApprovalSourceDryRun,
+    )
+    approval_text: str = Field(default="", max_length=200)
+    confirmations: ProtectedRegistrationApprovalConfirmations = Field(
+        default_factory=ProtectedRegistrationApprovalConfirmations,
+    )
 
 
 ProtectedRegistrationSeverity = Literal["info", "warning", "danger"]
@@ -1486,6 +1524,193 @@ def build_protected_resource_registration_dry_run(
     }
 
 
+def build_protected_resource_registration_approval_dry_run(
+    payload: ProtectedResourceRegistrationApprovalDryRunRequest,
+) -> dict:
+    source = payload.source_registration_dry_run
+    confirmations = payload.confirmations
+    confirmation_values = confirmations.model_dump()
+    expected_approval_text = protected_registration_text(source.expected_approval_text)
+    approval_text = protected_registration_text(payload.approval_text)
+    approval_text_matches = bool(expected_approval_text and approval_text == expected_approval_text)
+    all_confirmations = all(bool(value) for value in confirmation_values.values())
+    payload_has_sensitive_value = protected_registration_contains_sensitive_value(payload.model_dump())
+    normalized_preview = source.normalized_preview if isinstance(source.normalized_preview, dict) else {}
+    normalized_approval_preview = {
+        "stage": PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE,
+        "mode": PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE,
+        "source_registration_dry_run": {
+            "dry_run": source.dry_run,
+            "ready_for_next_stage": source.ready_for_next_stage,
+            "expected_approval_text_present": bool(expected_approval_text),
+            "normalized_preview_present": bool(normalized_preview),
+            "normalized_preview_key_count": len(normalized_preview),
+        },
+        "approval_text_present": bool(approval_text),
+        "approval_text_matches_expected": approval_text_matches,
+        "confirmations": confirmation_values,
+    }
+    safety_boundary = {
+        "no_real_resource_creation": confirmations.no_real_resource_creation,
+        "no_worker_command_creation": confirmations.no_worker_command_creation,
+        "no_transit_route_creation": confirmations.no_transit_route_creation,
+        "no_haproxy_route_creation": confirmations.no_haproxy_route_creation,
+        "no_ssh_or_remote_execution": confirmations.no_ssh_or_remote_execution,
+        "no_firewall_change": confirmations.no_firewall_change,
+        "no_cutover": confirmations.no_cutover,
+        "ordinary_product_ui_unchanged": confirmations.ordinary_product_ui_unchanged,
+    }
+    checks: list[dict] = [
+        make_protected_registration_check(
+            check_id="stage_is_expected",
+            label="Stage 正确",
+            passed=payload.stage == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE,
+            message="Approval payload stage 为 3.4.28。" if payload.stage == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE else "Approval payload stage 不匹配。",
+            next_action="使用 Stage 3.4.28 生成的 approval payload。" if payload.stage != PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE else "继续检查。",
+            evidence_summary=payload.stage,
+        ),
+        make_protected_registration_check(
+            check_id="mode_is_approval_dry_run",
+            label="Mode 为 approval_dry_run",
+            passed=payload.mode == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE,
+            message="Approval payload 保持 approval_dry_run。" if payload.mode == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE else "Approval payload mode 不匹配。",
+            next_action="将 mode 设置为 approval_dry_run。",
+            evidence_summary=payload.mode,
+        ),
+        make_protected_registration_check(
+            check_id="source_registration_dry_run_is_dry_run",
+            label="来源 registration dry-run",
+            passed=source.dry_run is True,
+            message="来源结果标记 dry_run=true。" if source.dry_run is True else "来源结果不是 dry_run。",
+            next_action="粘贴或读取 Stage 3.4.27 registration dry-run 结果。",
+            evidence_summary=str(source.dry_run),
+        ),
+        make_protected_registration_check(
+            check_id="source_registration_dry_run_ready",
+            label="来源 ready_for_next_stage",
+            passed=source.ready_for_next_stage is True,
+            message="来源 registration dry-run 已 ready。" if source.ready_for_next_stage is True else "来源 registration dry-run 未 ready。",
+            next_action="先让 Stage 3.4.27 registration dry-run 通过。",
+            evidence_summary=str(source.ready_for_next_stage),
+        ),
+        make_protected_registration_check(
+            check_id="expected_approval_text_present",
+            label="审批文本存在",
+            passed=bool(expected_approval_text),
+            message="来源提供 expected_approval_text。" if expected_approval_text else "来源缺少 expected_approval_text。",
+            next_action="重新复制 Stage 3.4.27 registration dry-run 结果。",
+        ),
+        make_protected_registration_check(
+            check_id="approval_text_matches_expected",
+            label="审批文本完全匹配",
+            passed=approval_text_matches and confirmations.approval_text_matches_expected,
+            message="人工输入的 approval text 与 expected 完全一致。" if approval_text_matches and confirmations.approval_text_matches_expected else "人工输入的 approval text 未完全匹配。",
+            next_action="逐字符复制 expected_approval_text 后重新运行 approval dry-run。",
+            evidence_summary="matched" if approval_text_matches else "mismatch",
+        ),
+        make_protected_registration_check(
+            check_id="all_approval_confirmations_present",
+            label="审批确认完整",
+            passed=all_confirmations,
+            message="所有 approval 安全确认项已勾选。" if all_confirmations else "仍有 approval 安全确认项未勾选。",
+            next_action="补齐所有安全确认项。",
+            evidence_summary=f"{sum(1 for value in confirmation_values.values() if value)}/{len(confirmation_values)}",
+        ),
+        make_protected_registration_check(
+            check_id="registration_dry_run_passed_confirmed",
+            label="确认 registration dry-run 已通过",
+            passed=confirmations.registration_dry_run_passed,
+            message="已确认 Stage 3.4.27 dry-run 通过。" if confirmations.registration_dry_run_passed else "尚未确认 Stage 3.4.27 dry-run 通过。",
+            next_action="勾选 registration dry-run passed 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_real_resource_creation_confirmed",
+            label="确认不创建真实资源",
+            passed=confirmations.no_real_resource_creation,
+            message="已确认本阶段不创建真实资源。" if confirmations.no_real_resource_creation else "尚未确认不创建真实资源。",
+            next_action="勾选 no real resource creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_worker_command_creation_confirmed",
+            label="确认不创建 WorkerCommand",
+            passed=confirmations.no_worker_command_creation,
+            message="已确认本阶段不创建 WorkerCommand。" if confirmations.no_worker_command_creation else "尚未确认不创建 WorkerCommand。",
+            next_action="勾选 no WorkerCommand creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_transit_route_creation_confirmed",
+            label="确认不创建 TransitRoute",
+            passed=confirmations.no_transit_route_creation,
+            message="已确认本阶段不创建 TransitRoute。" if confirmations.no_transit_route_creation else "尚未确认不创建 TransitRoute。",
+            next_action="勾选 no TransitRoute creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_haproxy_route_creation_confirmed",
+            label="确认不创建 HAProxy route",
+            passed=confirmations.no_haproxy_route_creation,
+            message="已确认本阶段不创建 HAProxy route。" if confirmations.no_haproxy_route_creation else "尚未确认不创建 HAProxy route。",
+            next_action="勾选 no HAProxy route creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_ssh_or_remote_execution_confirmed",
+            label="确认不 SSH / 不远程执行",
+            passed=confirmations.no_ssh_or_remote_execution,
+            message="已确认本阶段不 SSH、不远程执行。" if confirmations.no_ssh_or_remote_execution else "尚未确认不 SSH、不远程执行。",
+            next_action="勾选 no SSH or remote execution 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_firewall_change_confirmed",
+            label="确认不改防火墙",
+            passed=confirmations.no_firewall_change,
+            message="已确认本阶段不修改防火墙。" if confirmations.no_firewall_change else "尚未确认不修改防火墙。",
+            next_action="勾选 no firewall change 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_cutover_confirmed",
+            label="确认不 cutover",
+            passed=confirmations.no_cutover,
+            message="已确认本阶段不 cutover。" if confirmations.no_cutover else "尚未确认不 cutover。",
+            next_action="勾选 no cutover 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="ordinary_product_ui_unchanged_confirmed",
+            label="确认普通产品 UI 不变",
+            passed=confirmations.ordinary_product_ui_unchanged,
+            message="已确认普通产品 UI 不改。" if confirmations.ordinary_product_ui_unchanged else "尚未确认普通产品 UI 不改。",
+            next_action="勾选 ordinary product UI unchanged 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="sensitive_fields_redacted_confirmed",
+            label="确认敏感字段已脱敏",
+            passed=confirmations.sensitive_fields_redacted,
+            message="已确认输入与响应不包含完整敏感值。" if confirmations.sensitive_fields_redacted else "尚未确认敏感字段脱敏。",
+            next_action="确认没有完整客户端配置、凭证、命令或密钥后勾选。",
+        ),
+        make_protected_registration_check(
+            check_id="response_sensitive_content_absent",
+            label="响应不包含敏感值",
+            passed=not payload_has_sensitive_value,
+            message="Approval dry-run 响应未回显完整客户端链接或凭证类敏感值。" if not payload_has_sensitive_value else "Approval payload 包含疑似敏感值，已阻止进入下一阶段。",
+            next_action="移除 payload 中的完整客户端链接、密钥、命令或凭证后重新 dry-run。",
+            evidence_summary="clean" if not payload_has_sensitive_value else "redacted",
+        ),
+    ]
+    danger_failures = [check for check in checks if check["severity"] == "danger" and not check["passed"]]
+    approved = not danger_failures
+    return {
+        "dry_run": True,
+        "stage": PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE,
+        "mode": PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE,
+        "approved_for_next_stage": approved,
+        "ready_for_command_create_next_stage": approved,
+        "checks": checks,
+        "blocked_reasons": [check["message"] for check in danger_failures],
+        "normalized_approval_preview": normalized_approval_preview,
+        "safety_boundary": safety_boundary,
+        "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_NEXT_STAGE,
+    }
+
+
 def has_matching_successful_transit_readonly_preflight(
     db: Session,
     *,
@@ -1964,6 +2189,22 @@ def protected_resource_registration_dry_run(
 
     result = build_protected_resource_registration_dry_run(db, payload)
     return success_response(result, "protected resource registration dry-run completed")
+
+
+@router.post("/protected-resource-registration-approval-dry-run")
+def protected_resource_registration_approval_dry_run(
+    payload: ProtectedResourceRegistrationApprovalDryRunRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    result = build_protected_resource_registration_approval_dry_run(payload)
+    return success_response(result, "protected resource registration approval dry-run completed")
 
 
 @router.get("/{route_id}")

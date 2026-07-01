@@ -748,6 +748,53 @@ export type ProtectedResourceRegistrationDryRunResult = {
   expected_approval_text: string;
 };
 
+export type ProtectedResourceRegistrationApprovalDryRunRequest = {
+  stage: "3.4.28" | string;
+  mode: "approval_dry_run" | string;
+  source_registration_dry_run: {
+    dry_run: boolean;
+    ready_for_next_stage: boolean;
+    expected_approval_text: string;
+    normalized_preview: Record<string, unknown>;
+  };
+  approval_text: string;
+  confirmations: {
+    registration_dry_run_passed: boolean;
+    approval_text_matches_expected: boolean;
+    no_real_resource_creation: boolean;
+    no_worker_command_creation: boolean;
+    no_transit_route_creation: boolean;
+    no_haproxy_route_creation: boolean;
+    no_ssh_or_remote_execution: boolean;
+    no_firewall_change: boolean;
+    no_cutover: boolean;
+    ordinary_product_ui_unchanged: boolean;
+    sensitive_fields_redacted: boolean;
+  };
+};
+
+export type ProtectedResourceRegistrationApprovalDryRunResult = {
+  dry_run: true;
+  stage: string;
+  mode: "approval_dry_run" | string;
+  approved_for_next_stage: boolean;
+  ready_for_command_create_next_stage: boolean;
+  checks: ProtectedResourceRegistrationDryRunCheck[];
+  blocked_reasons: string[];
+  normalized_approval_preview: Record<string, unknown>;
+  safety_boundary: {
+    no_real_resource_creation: boolean;
+    no_worker_command_creation: boolean;
+    no_transit_route_creation: boolean;
+    no_haproxy_route_creation: boolean;
+    no_ssh_or_remote_execution: boolean;
+    no_firewall_change: boolean;
+    no_cutover: boolean;
+    ordinary_product_ui_unchanged: boolean;
+  };
+  recommended_next_stage: string;
+};
+
 export type TransitRouteWorkerCreateExecuteRequest = {
   transit_resource_id: string;
   landing_node_id: string;
@@ -1517,6 +1564,20 @@ export async function requestProtectedResourceRegistrationDryRun(
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(payload),
   });
+}
+
+export async function requestProtectedResourceRegistrationApprovalDryRun(
+  payload: ProtectedResourceRegistrationApprovalDryRunRequest,
+  csrfToken: string,
+): Promise<ApiResponse<ProtectedResourceRegistrationApprovalDryRunResult>> {
+  return apiFetch<ProtectedResourceRegistrationApprovalDryRunResult>(
+    "/api/transit-routes/protected-resource-registration-approval-dry-run",
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function createTransitRouteWorkerExecuteCommand(
