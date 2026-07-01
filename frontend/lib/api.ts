@@ -844,6 +844,62 @@ export type ProtectedResourceRegistrationCommandCreateResult = {
   recommended_next_stage: string;
 };
 
+export type ProtectedResourceRegistrationExecutionVerifyRequest = {
+  stage: "3.4.30" | string;
+  mode: "execution_verify" | string;
+  command_id: string;
+  execution_approval_text: string;
+  confirmations: {
+    command_was_created_by_stage_3_4_29: boolean;
+    command_is_pending: boolean;
+    approval_dry_run_passed: boolean;
+    execute_local_db_registration_only: boolean;
+    allow_create_transit_resource_record: boolean;
+    allow_create_landing_node_record: boolean;
+    no_worker_command_creation: boolean;
+    no_transit_route_creation: boolean;
+    no_haproxy_route_creation: boolean;
+    no_haproxy_config_generation: boolean;
+    no_listening_port_change: boolean;
+    no_ssh_or_remote_execution: boolean;
+    no_firewall_change: boolean;
+    no_cutover: boolean;
+    ordinary_product_ui_unchanged: boolean;
+    sensitive_fields_redacted: boolean;
+  };
+};
+
+export type ProtectedResourceRegistrationExecutionVerifyResult = {
+  executed: boolean;
+  stage: string;
+  mode: "execution_verify" | string;
+  command_id: string | null;
+  command_status: string | null;
+  idempotency_key: string;
+  idempotent_reuse: boolean;
+  created: {
+    transit_resource_id: string | null;
+    landing_node_id: string | null;
+  };
+  verification: {
+    transit_resource_exists: boolean;
+    landing_node_exists: boolean;
+    worker_command_created: boolean;
+    transit_route_created: boolean;
+    haproxy_route_created: boolean;
+    listening_port_changed: boolean;
+    remote_execution_triggered: boolean;
+    firewall_changed: boolean;
+    cutover_done: boolean;
+  };
+  checks: ProtectedResourceRegistrationDryRunCheck[];
+  blocked_reasons: string[];
+  normalized_execution_preview: Record<string, unknown>;
+  safety_boundary: Record<string, boolean>;
+  ready_for_haproxy_dry_run_next_stage: boolean;
+  recommended_next_stage: string;
+};
+
 export type TransitRouteWorkerCreateExecuteRequest = {
   transit_resource_id: string;
   landing_node_id: string;
@@ -1635,6 +1691,20 @@ export async function createProtectedResourceRegistrationCommand(
 ): Promise<ApiResponse<ProtectedResourceRegistrationCommandCreateResult>> {
   return apiFetch<ProtectedResourceRegistrationCommandCreateResult>(
     "/api/transit-routes/protected-resource-registration-command-create",
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function runProtectedResourceRegistrationExecutionVerify(
+  payload: ProtectedResourceRegistrationExecutionVerifyRequest,
+  csrfToken: string,
+): Promise<ApiResponse<ProtectedResourceRegistrationExecutionVerifyResult>> {
+  return apiFetch<ProtectedResourceRegistrationExecutionVerifyResult>(
+    "/api/transit-routes/protected-resource-registration-execution-verify",
     {
       method: "POST",
       headers: { "X-CSRF-Token": csrfToken },

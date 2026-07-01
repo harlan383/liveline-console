@@ -16,6 +16,7 @@ from app.models.node import Node
 from app.models.task import Task
 from app.models.transit_resource import TransitResource
 from app.models.transit_route import TransitRoute
+from app.models.vps_server import VpsServer
 from app.models.worker import Worker
 from app.models.worker_command import WorkerCommand
 from app.schemas.common import error_response, success_response
@@ -97,6 +98,10 @@ PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS = "pending_protected_registration
 PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE = (
     "Stage 3.4.30-protected-resource-registration-execution-verify"
 )
+PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE = "3.4.30"
+PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_MODE = "execution_verify"
+PROTECTED_RESOURCE_REGISTRATION_EXECUTED_STATUS = "executed_verified"
+PROTECTED_RESOURCE_REGISTRATION_HAPROXY_DRY_RUN_NEXT_STAGE = "Stage 3.4.31-regenerate-haproxy-dry-run"
 PROTECTED_RESOURCE_REGISTRATION_REQUIRED_BOUNDARY = [
     "preview_only",
     "不提交后端",
@@ -231,6 +236,35 @@ class ProtectedResourceRegistrationCommandCreateRequest(BaseModel):
     )
     confirmations: ProtectedRegistrationCommandConfirmations = Field(
         default_factory=ProtectedRegistrationCommandConfirmations,
+    )
+
+
+class ProtectedRegistrationExecutionConfirmations(BaseModel):
+    command_was_created_by_stage_3_4_29: bool = False
+    command_is_pending: bool = False
+    approval_dry_run_passed: bool = False
+    execute_local_db_registration_only: bool = False
+    allow_create_transit_resource_record: bool = False
+    allow_create_landing_node_record: bool = False
+    no_worker_command_creation: bool = False
+    no_transit_route_creation: bool = False
+    no_haproxy_route_creation: bool = False
+    no_haproxy_config_generation: bool = False
+    no_listening_port_change: bool = False
+    no_ssh_or_remote_execution: bool = False
+    no_firewall_change: bool = False
+    no_cutover: bool = False
+    ordinary_product_ui_unchanged: bool = False
+    sensitive_fields_redacted: bool = False
+
+
+class ProtectedResourceRegistrationExecutionVerifyRequest(BaseModel):
+    stage: str = Field(default="", max_length=40)
+    mode: str = Field(default="", max_length=40)
+    command_id: str = Field(default="", max_length=80)
+    execution_approval_text: str = Field(default="", max_length=180)
+    confirmations: ProtectedRegistrationExecutionConfirmations = Field(
+        default_factory=ProtectedRegistrationExecutionConfirmations,
     )
 
 
@@ -1124,6 +1158,75 @@ def protected_registration_sanitize_text(value: str | None) -> str:
     return cleaned
 
 
+def protected_registration_preview_record(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def protected_registration_record_text(record: dict, key: str) -> str:
+    value = record.get(key)
+    if value is None:
+        return ""
+    return protected_registration_sanitize_text(str(value))
+
+
+def protected_registration_safe_source_preview(normalized_preview: dict[str, object] | None) -> dict:
+    preview = protected_registration_preview_record(normalized_preview)
+    if protected_registration_contains_sensitive_value(preview):
+        return {}
+    source = protected_registration_preview_record(preview.get("source"))
+    transit = protected_registration_preview_record(preview.get("transit_resource_registration"))
+    landing = protected_registration_preview_record(preview.get("landing_node_registration"))
+    safe_preview = {
+        "source": {
+            "dry_run_command_id": protected_registration_record_text(source, "dry_run_command_id"),
+            "route_name": protected_registration_record_text(source, "route_name"),
+            "planned_listen_port": _payload_int(source, "planned_listen_port"),
+            "landing_target_host": protected_registration_record_text(source, "landing_target_host"),
+            "landing_target_port": _payload_int(source, "landing_target_port"),
+            "candidate_integrity_ready": source.get("candidate_integrity_ready") is True,
+        },
+        "transit_resource_registration": {
+            "name": protected_registration_record_text(transit, "name"),
+            "resource_type": protected_registration_record_text(transit, "resource_type"),
+            "entry_host": protected_registration_record_text(transit, "entry_host"),
+            "entry_port": _payload_int(transit, "entry_port"),
+            "entry_region": protected_registration_record_text(transit, "entry_region"),
+            "exit_region": protected_registration_record_text(transit, "exit_region"),
+            "expected_status": protected_registration_record_text(transit, "expected_status"),
+            "worker_role": protected_registration_record_text(transit, "worker_role"),
+            "worker_binding_required": transit.get("worker_binding_required") is True,
+        },
+        "landing_node_registration": {
+            "node_name": protected_registration_record_text(landing, "node_name"),
+            "vps_ip": protected_registration_record_text(landing, "vps_ip"),
+            "xray_port": _payload_int(landing, "xray_port"),
+            "expected_status": protected_registration_record_text(landing, "expected_status"),
+        },
+    }
+    if protected_registration_contains_sensitive_value(safe_preview):
+        return {}
+    return safe_preview
+
+
+def protected_registration_preview_complete(registration_source: dict | None) -> bool:
+    source = protected_registration_preview_record((registration_source or {}).get("source"))
+    transit = protected_registration_preview_record((registration_source or {}).get("transit_resource_registration"))
+    landing = protected_registration_preview_record((registration_source or {}).get("landing_node_registration"))
+    return all(
+        [
+            bool(protected_registration_record_text(source, "dry_run_command_id")),
+            bool(protected_registration_record_text(source, "route_name")),
+            protected_registration_port_valid(_payload_int(source, "planned_listen_port")),
+            bool(protected_registration_record_text(transit, "name")),
+            bool(protected_registration_record_text(transit, "entry_host")),
+            protected_registration_port_valid(_payload_int(transit, "entry_port")),
+            bool(protected_registration_record_text(landing, "node_name")),
+            bool(protected_registration_record_text(landing, "vps_ip")),
+            protected_registration_port_valid(_payload_int(landing, "xray_port")),
+        ]
+    )
+
+
 def make_protected_registration_check(
     *,
     check_id: str,
@@ -1585,6 +1688,7 @@ def build_protected_resource_registration_approval_dry_run(
     all_confirmations = all(bool(value) for value in confirmation_values.values())
     payload_has_sensitive_value = protected_registration_contains_sensitive_value(payload.model_dump())
     normalized_preview = source.normalized_preview if isinstance(source.normalized_preview, dict) else {}
+    registration_source_preview = protected_registration_safe_source_preview(normalized_preview)
     normalized_approval_preview = {
         "stage": PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE,
         "mode": PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE,
@@ -1595,6 +1699,8 @@ def build_protected_resource_registration_approval_dry_run(
             "normalized_preview_present": bool(normalized_preview),
             "normalized_preview_key_count": len(normalized_preview),
         },
+        "registration_source_preview": registration_source_preview,
+        "registration_source_ready": protected_registration_preview_complete(registration_source_preview),
         "approval_text_present": bool(approval_text),
         "approval_text_matches_expected": approval_text_matches,
         "confirmations": confirmation_values,
@@ -1801,6 +1907,9 @@ def build_protected_registration_command_preview(
 ) -> dict:
     source = payload.source_approval_dry_run
     approval_preview = source.normalized_approval_preview if isinstance(source.normalized_approval_preview, dict) else {}
+    registration_source_preview = protected_registration_safe_source_preview(
+        protected_registration_preview_record(approval_preview.get("registration_source_preview"))
+    )
     safety_boundary = source.safety_boundary if isinstance(source.safety_boundary, dict) else {}
     return {
         "stage": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE,
@@ -1816,6 +1925,8 @@ def build_protected_registration_command_preview(
             "ready_for_command_create_next_stage": source.ready_for_command_create_next_stage,
             "normalized_approval_preview_present": bool(approval_preview),
             "normalized_approval_preview_key_count": len(approval_preview),
+            "registration_source_preview_present": bool(registration_source_preview),
+            "registration_source_ready": protected_registration_preview_complete(registration_source_preview),
             "safety_boundary_key_count": len(safety_boundary),
         },
         "safety_boundary": {
@@ -1848,6 +1959,9 @@ def build_protected_resource_registration_command_create(
     normalized_command_preview = build_protected_registration_command_preview(
         payload,
         idempotency_key=idempotency_key,
+    )
+    registration_source_preview = protected_registration_safe_source_preview(
+        protected_registration_preview_record(source.normalized_approval_preview.get("registration_source_preview"))
     )
     checks: list[dict] = [
         make_protected_registration_check(
@@ -2069,6 +2183,7 @@ def build_protected_resource_registration_command_create(
             "command_status": PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS,
             "idempotency_key": idempotency_key,
             "normalized_command_preview": normalized_command_preview,
+            "registration_source_preview": registration_source_preview,
             "safety_boundary": normalized_command_preview["safety_boundary"],
             "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE,
         },
@@ -2092,6 +2207,516 @@ def build_protected_resource_registration_command_create(
         "normalized_command_preview": normalized_command_preview,
         "safety_boundary": normalized_command_preview["safety_boundary"],
         "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE,
+    }
+
+
+def protected_registration_execution_expected_text(command_id: str) -> str:
+    return f"EXECUTE_PROTECTED_RESOURCE_REGISTRATION:{command_id}"
+
+
+def protected_registration_execution_fingerprint(command_id: str, idempotency_key: str, registration_source: dict) -> str:
+    material = {
+        "command_id": command_id,
+        "idempotency_key": idempotency_key,
+        "registration_source": registration_source,
+    }
+    encoded = json.dumps(material, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def protected_registration_execution_safety_boundary(
+    confirmations: ProtectedRegistrationExecutionConfirmations,
+) -> dict:
+    return {
+        "local_db_registration_only": confirmations.execute_local_db_registration_only,
+        "no_worker_command_creation": confirmations.no_worker_command_creation,
+        "no_transit_route_creation": confirmations.no_transit_route_creation,
+        "no_haproxy_route_creation": confirmations.no_haproxy_route_creation,
+        "no_haproxy_config_generation": confirmations.no_haproxy_config_generation,
+        "no_listening_port_change": confirmations.no_listening_port_change,
+        "no_ssh_or_remote_execution": confirmations.no_ssh_or_remote_execution,
+        "no_firewall_change": confirmations.no_firewall_change,
+        "no_cutover": confirmations.no_cutover,
+        "ordinary_product_ui_unchanged": confirmations.ordinary_product_ui_unchanged,
+    }
+
+
+def protected_registration_execution_empty_response(
+    *,
+    payload: ProtectedResourceRegistrationExecutionVerifyRequest,
+    command_status: str | None = None,
+    checks: list[dict] | None = None,
+    blocked_reasons: list[str] | None = None,
+    idempotency_key: str = "",
+    idempotent_reuse: bool = False,
+    created: dict | None = None,
+    verification: dict | None = None,
+    normalized_execution_preview: dict | None = None,
+) -> dict:
+    return {
+        "executed": False,
+        "stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE,
+        "mode": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_MODE,
+        "command_id": payload.command_id or None,
+        "command_status": command_status,
+        "idempotency_key": idempotency_key,
+        "idempotent_reuse": idempotent_reuse,
+        "created": created
+        or {
+            "transit_resource_id": None,
+            "landing_node_id": None,
+        },
+        "verification": verification
+        or {
+            "transit_resource_exists": False,
+            "landing_node_exists": False,
+            "worker_command_created": False,
+            "transit_route_created": False,
+            "haproxy_route_created": False,
+            "listening_port_changed": False,
+            "remote_execution_triggered": False,
+            "firewall_changed": False,
+            "cutover_done": False,
+        },
+        "checks": checks or [],
+        "blocked_reasons": blocked_reasons or [],
+        "normalized_execution_preview": normalized_execution_preview or {},
+        "safety_boundary": protected_registration_execution_safety_boundary(payload.confirmations),
+        "ready_for_haproxy_dry_run_next_stage": False,
+        "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_HAPROXY_DRY_RUN_NEXT_STAGE,
+    }
+
+
+def protected_registration_command_execution_data(command: Task) -> dict:
+    result_data = command.result_data if isinstance(command.result_data, dict) else {}
+    execution = result_data.get("execution")
+    return execution if isinstance(execution, dict) else {}
+
+
+def protected_registration_command_result_data(command: Task | None) -> dict:
+    if not command or not isinstance(command.result_data, dict):
+        return {}
+    return command.result_data
+
+
+def protected_registration_command_source_approved(result_data: dict) -> bool:
+    preview = protected_registration_preview_record(result_data.get("normalized_command_preview"))
+    source = protected_registration_preview_record(preview.get("source_approval_dry_run"))
+    return (
+        source.get("dry_run") is True
+        and source.get("stage") == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE
+        and source.get("mode") == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE
+        and source.get("approved_for_next_stage") is True
+        and source.get("ready_for_command_create_next_stage") is True
+    )
+
+
+def protected_registration_command_registration_source(result_data: dict) -> dict:
+    registration_source = protected_registration_preview_record(result_data.get("registration_source_preview"))
+    if registration_source:
+        return protected_registration_safe_source_preview(registration_source)
+    preview = protected_registration_preview_record(result_data.get("normalized_command_preview"))
+    source = protected_registration_preview_record(preview.get("registration_source_preview"))
+    return protected_registration_safe_source_preview(source)
+
+
+def protected_registration_select_first(db: Session, statement):
+    return db.scalars(statement.limit(20)).all()
+
+
+def protected_registration_find_transit_resource(
+    db: Session,
+    *,
+    name: str,
+    entry_host: str,
+    entry_port: int,
+) -> tuple[TransitResource | None, str | None]:
+    resources = protected_registration_select_first(
+        db,
+        select(TransitResource)
+        .where(TransitResource.deleted_at.is_(None))
+        .where(TransitResource.entry_host == entry_host)
+        .where(TransitResource.entry_port == entry_port),
+    )
+    exact = next((resource for resource in resources if resource.name == name), None)
+    if exact:
+        return exact, None
+    if resources:
+        return None, "发现相同 entry_host / entry_port 的其它中转资源，不能自动复用。"
+    name_matches = protected_registration_select_first(
+        db,
+        select(TransitResource)
+        .where(TransitResource.deleted_at.is_(None))
+        .where(TransitResource.name == name),
+    )
+    if name_matches:
+        return None, "发现同名中转资源但入口信息不同，不能自动复用。"
+    return None, None
+
+
+def protected_registration_find_vps_by_ip(db: Session, ip: str) -> VpsServer | None:
+    matches = protected_registration_select_first(db, select(VpsServer).where(VpsServer.ip == ip))
+    return matches[0] if matches else None
+
+
+def protected_registration_find_landing_node(
+    db: Session,
+    *,
+    vps_id: str,
+    node_name: str,
+    xray_port: int,
+) -> tuple[Node | None, str | None]:
+    nodes = protected_registration_select_first(
+        db,
+        select(Node)
+        .where(Node.vps_id == vps_id)
+        .where(Node.deleted_at.is_(None))
+        .where(Node.xray_port == xray_port),
+    )
+    exact = next((node for node in nodes if node.node_name == node_name), None)
+    if exact:
+        return exact, None
+    if nodes:
+        return None, "发现相同 VPS / Xray 端口的其它节点，不能自动复用。"
+    name_matches = protected_registration_select_first(
+        db,
+        select(Node)
+        .where(Node.vps_id == vps_id)
+        .where(Node.deleted_at.is_(None))
+        .where(Node.node_name == node_name),
+    )
+    if name_matches:
+        return None, "发现同名落地节点但端口不同，不能自动复用。"
+    return None, None
+
+
+def build_protected_resource_registration_execution_verify(
+    db: Session,
+    payload: ProtectedResourceRegistrationExecutionVerifyRequest,
+) -> dict:
+    command = db.get(Task, payload.command_id) if payload.command_id else None
+    result_data = protected_registration_command_result_data(command)
+    registration_source = protected_registration_command_registration_source(result_data)
+    command_execution = protected_registration_command_execution_data(command) if command else {}
+    confirmation_values = payload.confirmations.model_dump()
+    expected_text = protected_registration_execution_expected_text(payload.command_id)
+    text_matches = payload.execution_approval_text == expected_text
+    idempotency_key = protected_registration_text(str(result_data.get("idempotency_key") or ""))
+    source = protected_registration_preview_record(registration_source.get("source"))
+    transit = protected_registration_preview_record(registration_source.get("transit_resource_registration"))
+    landing = protected_registration_preview_record(registration_source.get("landing_node_registration"))
+    transit_name = protected_registration_record_text(transit, "name")
+    transit_entry_host = protected_registration_record_text(transit, "entry_host")
+    transit_entry_port = _payload_int(transit, "entry_port")
+    transit_status = protected_registration_record_text(transit, "expected_status") or "active"
+    landing_name = protected_registration_record_text(landing, "node_name")
+    landing_vps_ip = protected_registration_record_text(landing, "vps_ip")
+    landing_xray_port = _payload_int(landing, "xray_port")
+    landing_status = protected_registration_record_text(landing, "expected_status") or "active"
+    registration_complete = protected_registration_preview_complete(registration_source)
+    payload_has_sensitive_value = protected_registration_contains_sensitive_value(payload.model_dump())
+    command_has_sensitive_value = protected_registration_contains_sensitive_value(registration_source)
+    normalized_execution_preview = {
+        "stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE,
+        "mode": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_MODE,
+        "command_id_present": bool(payload.command_id),
+        "command_type": command.task_type if command else None,
+        "command_status_before": command.status if command else "missing",
+        "idempotency_key_present": bool(idempotency_key),
+        "source": {
+            "dry_run_command_id": protected_registration_record_text(source, "dry_run_command_id"),
+            "route_name": protected_registration_record_text(source, "route_name"),
+            "planned_listen_port": _payload_int(source, "planned_listen_port"),
+            "landing_target_port": _payload_int(source, "landing_target_port"),
+        },
+        "transit_resource_registration": {
+            "name": transit_name,
+            "resource_type": protected_registration_record_text(transit, "resource_type"),
+            "entry_host": transit_entry_host,
+            "entry_port": transit_entry_port,
+            "expected_status": transit_status,
+        },
+        "landing_node_registration": {
+            "node_name": landing_name,
+            "vps_ip": landing_vps_ip,
+            "xray_port": landing_xray_port,
+            "expected_status": landing_status,
+        },
+    }
+    checks: list[dict] = [
+        make_protected_registration_check(
+            check_id="stage_is_expected",
+            label="Stage 正确",
+            passed=payload.stage == PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE,
+            message="Execution payload stage 为 3.4.30。" if payload.stage == PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE else "Execution payload stage 不匹配。",
+            next_action="使用 Stage 3.4.30 生成的 execution verify payload。" if payload.stage != PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE else "继续检查。",
+            evidence_summary=payload.stage,
+        ),
+        make_protected_registration_check(
+            check_id="mode_is_execution_verify",
+            label="Mode 为 execution_verify",
+            passed=payload.mode == PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_MODE,
+            message="Execution payload mode 正确。" if payload.mode == PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_MODE else "Execution payload mode 不匹配。",
+            next_action="将 mode 设置为 execution_verify。",
+            evidence_summary=payload.mode,
+        ),
+        make_protected_registration_check(
+            check_id="command_exists",
+            label="command_id 存在",
+            passed=command is not None,
+            message="已找到 pending command 记录。" if command else "未找到 command_id 对应的本地 task 记录。",
+            next_action="确认使用 Stage 3.4.29 返回的 command_id。",
+            evidence_summary=payload.command_id,
+        ),
+        make_protected_registration_check(
+            check_id="command_type_is_protected_registration",
+            label="command 类型正确",
+            passed=bool(command and command.task_type == PROTECTED_RESOURCE_REGISTRATION_COMMAND_TASK_TYPE),
+            message="command type 为 protected_resource_registration_command。" if command and command.task_type == PROTECTED_RESOURCE_REGISTRATION_COMMAND_TASK_TYPE else "command type 不匹配。",
+            next_action="只能执行 Stage 3.4.29 创建的 protected registration command。",
+            evidence_summary=command.task_type if command else "missing",
+        ),
+        make_protected_registration_check(
+            check_id="command_stage_is_stage_3_4_29",
+            label="command 来源阶段正确",
+            passed=result_data.get("stage") == PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE,
+            message="command 由 Stage 3.4.29 创建。" if result_data.get("stage") == PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE else "command 不是 Stage 3.4.29 command-create 结果。",
+            next_action="重新使用 Stage 3.4.29 command-create endpoint 创建 pending command。",
+            evidence_summary=str(result_data.get("stage") or ""),
+        ),
+        make_protected_registration_check(
+            check_id="command_pending_or_already_verified",
+            label="command 状态可执行或可复用",
+            passed=bool(
+                command
+                and command.status in {PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS, PROTECTED_RESOURCE_REGISTRATION_EXECUTED_STATUS}
+            ),
+            message="command 仍处于 pending 或已验证可幂等复用。" if command and command.status in {PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS, PROTECTED_RESOURCE_REGISTRATION_EXECUTED_STATUS} else "command 状态不允许执行。",
+            next_action="仅允许 pending command 或已执行成功 command 幂等复用。",
+            evidence_summary=command.status if command else "missing",
+        ),
+        make_protected_registration_check(
+            check_id="approval_text_matches_expected",
+            label="最终执行审批文本匹配",
+            passed=text_matches,
+            message="execution approval text 完全匹配。" if text_matches else "execution approval text 不匹配。",
+            next_action=f"逐字符输入 {expected_text}",
+            evidence_summary="matched" if text_matches else "mismatch",
+        ),
+        make_protected_registration_check(
+            check_id="source_approval_dry_run_passed",
+            label="来源 approval dry-run 已通过",
+            passed=protected_registration_command_source_approved(result_data),
+            message="command 记录显示 Stage 3.4.28 approval dry-run 已通过。" if protected_registration_command_source_approved(result_data) else "command 记录未证明 approval dry-run 已通过。",
+            next_action="重新运行 approval dry-run 和 command-create。",
+        ),
+        make_protected_registration_check(
+            check_id="registration_source_preview_present",
+            label="登记源摘要存在",
+            passed=registration_complete,
+            message="command 包含可用于本地登记的非敏感资源摘要。" if registration_complete else "command 缺少可安全登记的资源摘要。",
+            next_action="重新运行 Stage 3.4.27/3.4.28/3.4.29，确保 command 包含 registration_source_preview。",
+            evidence_summary="ready" if registration_complete else "missing",
+        ),
+        make_protected_registration_check(
+            check_id="all_execution_confirmations_present",
+            label="执行确认完整",
+            passed=all(bool(value) for value in confirmation_values.values()),
+            message="所有 execution 安全确认项已勾选。" if all(bool(value) for value in confirmation_values.values()) else "仍有 execution 安全确认项未勾选。",
+            next_action="补齐所有安全确认项。",
+            evidence_summary=f"{sum(1 for value in confirmation_values.values() if value)}/{len(confirmation_values)}",
+        ),
+        make_protected_registration_check(
+            check_id="response_sensitive_content_absent",
+            label="响应不包含敏感值",
+            passed=not payload_has_sensitive_value and not command_has_sensitive_value,
+            message="Execution verify 响应未回显完整客户端链接或凭证类敏感值。" if not payload_has_sensitive_value and not command_has_sensitive_value else "Execution payload 或 command 摘要包含疑似敏感值，已阻止执行。",
+            next_action="移除完整客户端链接、密钥、命令或凭证后重新走审批链路。",
+            evidence_summary="clean" if not payload_has_sensitive_value and not command_has_sensitive_value else "redacted",
+        ),
+    ]
+    for key, value in confirmation_values.items():
+        checks.append(
+            make_protected_registration_check(
+                check_id=f"{key}_confirmed",
+                label=f"确认 {key}",
+                passed=bool(value),
+                message=f"已确认 {key}。" if value else f"尚未确认 {key}。",
+                next_action=f"勾选 {key} 确认项。",
+            )
+        )
+    danger_failures = [check for check in checks if check["severity"] == "danger" and not check["passed"]]
+    if danger_failures or not command:
+        return protected_registration_execution_empty_response(
+            payload=payload,
+            command_status=command.status if command else None,
+            checks=checks,
+            blocked_reasons=[check["message"] for check in danger_failures],
+            idempotency_key=idempotency_key,
+            normalized_execution_preview=normalized_execution_preview,
+        )
+
+    if command.status == PROTECTED_RESOURCE_REGISTRATION_EXECUTED_STATUS and command_execution:
+        created = command_execution.get("created") if isinstance(command_execution.get("created"), dict) else {}
+        verification = command_execution.get("verification") if isinstance(command_execution.get("verification"), dict) else {}
+        return {
+            "executed": True,
+            "stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE,
+            "mode": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_MODE,
+            "command_id": command.id,
+            "command_status": command.status,
+            "idempotency_key": idempotency_key,
+            "idempotent_reuse": True,
+            "created": {
+                "transit_resource_id": created.get("transit_resource_id"),
+                "landing_node_id": created.get("landing_node_id"),
+            },
+            "verification": verification,
+            "checks": checks,
+            "blocked_reasons": [],
+            "normalized_execution_preview": normalized_execution_preview,
+            "safety_boundary": protected_registration_execution_safety_boundary(payload.confirmations),
+            "ready_for_haproxy_dry_run_next_stage": True,
+            "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_HAPROXY_DRY_RUN_NEXT_STAGE,
+        }
+
+    transit_resource, transit_conflict = protected_registration_find_transit_resource(
+        db,
+        name=transit_name,
+        entry_host=transit_entry_host,
+        entry_port=transit_entry_port or 0,
+    )
+    landing_vps = protected_registration_find_vps_by_ip(db, landing_vps_ip)
+    landing_node = None
+    landing_conflict = None
+    if landing_vps and landing_xray_port:
+        landing_node, landing_conflict = protected_registration_find_landing_node(
+            db,
+            vps_id=landing_vps.id,
+            node_name=landing_name,
+            xray_port=landing_xray_port,
+        )
+    conflict_checks = [
+        make_protected_registration_check(
+            check_id="transit_resource_conflict_absent",
+            label="中转资源无冲突",
+            passed=transit_conflict is None,
+            message="未发现中转资源冲突。" if transit_conflict is None else transit_conflict,
+            next_action="人工核对现有 transit_resources 后再执行。",
+        ),
+        make_protected_registration_check(
+            check_id="landing_vps_exists",
+            label="落地 VPS 已存在",
+            passed=landing_vps is not None,
+            message="已找到匹配 landing VPS，可创建或复用 node。" if landing_vps else "未找到匹配 vps_servers.ip，无法安全创建 node。",
+            next_action="先通过受保护流程登记落地服务器，或选择已有 VPS。",
+            evidence_summary=landing_vps_ip,
+        ),
+        make_protected_registration_check(
+            check_id="landing_node_conflict_absent",
+            label="落地节点无冲突",
+            passed=landing_conflict is None,
+            message="未发现落地节点冲突。" if landing_conflict is None else landing_conflict,
+            next_action="人工核对现有 nodes 后再执行。",
+        ),
+    ]
+    checks.extend(conflict_checks)
+    conflict_failures = [check for check in conflict_checks if not check["passed"]]
+    if conflict_failures:
+        return protected_registration_execution_empty_response(
+            payload=payload,
+            command_status=command.status,
+            checks=checks,
+            blocked_reasons=[check["message"] for check in conflict_failures],
+            idempotency_key=idempotency_key,
+            normalized_execution_preview=normalized_execution_preview,
+        )
+
+    if not transit_resource:
+        transit_resource = TransitResource(
+            id=str(uuid.uuid4()),
+            name=transit_name,
+            resource_type="server",
+            entry_host=transit_entry_host,
+            entry_port=transit_entry_port,
+            entry_region=protected_registration_record_text(transit, "entry_region") or None,
+            exit_region=protected_registration_record_text(transit, "exit_region") or None,
+            protocol_hint="haproxy_tcp",
+            has_ssh=False,
+            status=transit_status if transit_status in {"active", "worker_online", "worker_offline", "pending_worker"} else "active",
+            notes=f"Stage 3.4.30 protected local registration; command_id={command.id}",
+        )
+        db.add(transit_resource)
+    if not landing_node:
+        landing_node = Node(
+            id=str(uuid.uuid4()),
+            vps_id=landing_vps.id,
+            node_name=landing_name,
+            country=protected_registration_record_text(transit, "exit_region") or None,
+            protocol="vless",
+            transport="tcp",
+            security="reality",
+            flow="xtls-rprx-vision",
+            xray_port=landing_xray_port,
+            share_link=None,
+            service_status="not_checked",
+            connectivity_status=None,
+            source="protected_resource_registration",
+            status=landing_status if landing_status else "active",
+        )
+        db.add(landing_node)
+    created = {
+        "transit_resource_id": transit_resource.id,
+        "landing_node_id": landing_node.id,
+    }
+    verification = {
+        "transit_resource_exists": bool(transit_resource.id),
+        "landing_node_exists": bool(landing_node.id),
+        "worker_command_created": False,
+        "transit_route_created": False,
+        "haproxy_route_created": False,
+        "listening_port_changed": False,
+        "remote_execution_triggered": False,
+        "firewall_changed": False,
+        "cutover_done": False,
+    }
+    fingerprint = protected_registration_execution_fingerprint(command.id, idempotency_key, registration_source)
+    now = datetime.now(UTC)
+    command.status = PROTECTED_RESOURCE_REGISTRATION_EXECUTED_STATUS
+    command.current_step = "ready_for_stage_3_4_31_haproxy_dry_run"
+    command.progress = 100
+    command.finished_at = now
+    command.result_data = {
+        **result_data,
+        "command_status": PROTECTED_RESOURCE_REGISTRATION_EXECUTED_STATUS,
+        "execution": {
+            "stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE,
+            "mode": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_MODE,
+            "executed_at": now.isoformat(),
+            "created": created,
+            "verification": verification,
+            "fingerprint": fingerprint,
+            "idempotency_key": idempotency_key,
+            "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_HAPROXY_DRY_RUN_NEXT_STAGE,
+        },
+    }
+    db.commit()
+    return {
+        "executed": True,
+        "stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_STAGE,
+        "mode": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_MODE,
+        "command_id": command.id,
+        "command_status": command.status,
+        "idempotency_key": idempotency_key,
+        "idempotent_reuse": False,
+        "created": created,
+        "verification": verification,
+        "checks": checks,
+        "blocked_reasons": [],
+        "normalized_execution_preview": normalized_execution_preview,
+        "safety_boundary": protected_registration_execution_safety_boundary(payload.confirmations),
+        "ready_for_haproxy_dry_run_next_stage": True,
+        "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_HAPROXY_DRY_RUN_NEXT_STAGE,
     }
 
 
@@ -2605,6 +3230,22 @@ def protected_resource_registration_command_create(
 
     result = build_protected_resource_registration_command_create(db, payload)
     return success_response(result, "protected resource registration command-create completed")
+
+
+@router.post("/protected-resource-registration-execution-verify")
+def protected_resource_registration_execution_verify(
+    payload: ProtectedResourceRegistrationExecutionVerifyRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    result = build_protected_resource_registration_execution_verify(db, payload)
+    return success_response(result, "protected resource registration execution verify completed")
 
 
 @router.get("/{route_id}")
