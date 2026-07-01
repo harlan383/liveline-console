@@ -795,6 +795,55 @@ export type ProtectedResourceRegistrationApprovalDryRunResult = {
   recommended_next_stage: string;
 };
 
+export type ProtectedResourceRegistrationCommandCreateRequest = {
+  stage: "3.4.29" | string;
+  mode: "command_create" | string;
+  source_approval_dry_run: {
+    dry_run: boolean;
+    stage: string;
+    mode: string;
+    approved_for_next_stage: boolean;
+    ready_for_command_create_next_stage: boolean;
+    normalized_approval_preview: Record<string, unknown>;
+    safety_boundary: Record<string, unknown>;
+  };
+  confirmations: {
+    approval_dry_run_passed: boolean;
+    create_local_pending_command_only: boolean;
+    no_real_resource_creation: boolean;
+    no_transit_resource_creation: boolean;
+    no_landing_node_creation: boolean;
+    no_worker_remote_execution: boolean;
+    no_transit_route_creation: boolean;
+    no_haproxy_route_creation: boolean;
+    no_listening_port_change: boolean;
+    no_ssh_or_remote_execution: boolean;
+    no_firewall_change: boolean;
+    no_cutover: boolean;
+    ordinary_product_ui_unchanged: boolean;
+    sensitive_fields_redacted: boolean;
+  };
+};
+
+export type ProtectedResourceRegistrationCommandCreateResult = {
+  created: boolean;
+  stage: string;
+  mode: "command_create" | string;
+  dry_run: false;
+  command_id: string | null;
+  task_id: string | null;
+  registration_command_id: string | null;
+  command_status: string | null;
+  ready_for_execution_next_stage: boolean;
+  idempotency_key: string;
+  idempotent_reuse: boolean;
+  checks: ProtectedResourceRegistrationDryRunCheck[];
+  blocked_reasons: string[];
+  normalized_command_preview: Record<string, unknown>;
+  safety_boundary: Record<string, boolean>;
+  recommended_next_stage: string;
+};
+
 export type TransitRouteWorkerCreateExecuteRequest = {
   transit_resource_id: string;
   landing_node_id: string;
@@ -1572,6 +1621,20 @@ export async function requestProtectedResourceRegistrationApprovalDryRun(
 ): Promise<ApiResponse<ProtectedResourceRegistrationApprovalDryRunResult>> {
   return apiFetch<ProtectedResourceRegistrationApprovalDryRunResult>(
     "/api/transit-routes/protected-resource-registration-approval-dry-run",
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function createProtectedResourceRegistrationCommand(
+  payload: ProtectedResourceRegistrationCommandCreateRequest,
+  csrfToken: string,
+): Promise<ApiResponse<ProtectedResourceRegistrationCommandCreateResult>> {
+  return apiFetch<ProtectedResourceRegistrationCommandCreateResult>(
+    "/api/transit-routes/protected-resource-registration-command-create",
     {
       method: "POST",
       headers: { "X-CSRF-Token": csrfToken },
