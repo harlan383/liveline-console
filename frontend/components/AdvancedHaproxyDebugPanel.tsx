@@ -7,11 +7,13 @@ import {
   apiFetch,
   createTransitHaproxyRouteRealExecution,
   getHaproxyRuntimeDebugContext,
+  requestProtectedResourceRegistrationDryRun,
   requestTransitHaproxyRouteRealExecutionReadiness,
   type CsrfResult,
   type HaproxyRuntimeDebugContextResult,
   type HaproxyRuntimeDebugDryRunCandidate,
   type HaproxyRuntimeDebugIntegrityCheck,
+  type ProtectedResourceRegistrationDryRunResult,
   type ReadonlyPreflightCheckItem,
   type TransitHaproxyRouteCreateRealExecutionRequest,
   type TransitHaproxyRouteCreateRealExecutionResult,
@@ -1161,6 +1163,9 @@ export function AdvancedHaproxyDebugPanel() {
   const [protectedRegistrationDraft, setProtectedRegistrationDraft] = useState<ProtectedResourceRegistrationDraft>(() =>
     buildProtectedResourceRegistrationDraft(null),
   );
+  const [protectedRegistrationDryRunResult, setProtectedRegistrationDryRunResult] =
+    useState<ProtectedResourceRegistrationDryRunResult | null>(null);
+  const [loadingProtectedRegistrationDryRun, setLoadingProtectedRegistrationDryRun] = useState(false);
 
   const expectedRealExecutionText = useMemo(
     () => readinessResult?.expected_real_execution_text ?? expectedTextForPort(form.planned_listen_port),
@@ -1189,6 +1194,7 @@ export function AdvancedHaproxyDebugPanel() {
   );
   useEffect(() => {
     setProtectedRegistrationDraft(buildProtectedResourceRegistrationDraft(selectedDryRunCandidate));
+    setProtectedRegistrationDryRunResult(null);
   }, [selectedDryRunCandidate?.id]);
   const selectedCandidateIntegrityReady = selectedDryRunCandidate?.integrity_ready === true;
   const protectedRegistrationErrors = useMemo(
@@ -1201,6 +1207,11 @@ export function AdvancedHaproxyDebugPanel() {
   );
   const protectedRegistrationReady = Boolean(selectedDryRunCandidate) && protectedRegistrationErrors.length === 0;
   const protectedRegistrationConfirmationCount = protectedRegistrationManualConfirmationCount(protectedRegistrationDraft);
+  const canRunProtectedRegistrationDryRun =
+    Boolean(selectedDryRunCandidate) &&
+    protectedRegistrationReady &&
+    Boolean(protectedRegistrationPayloadPreview) &&
+    !loadingProtectedRegistrationDryRun;
   const canRunReadiness = formErrors.length === 0 && Boolean(requestPayload) && selectedCandidateIntegrityReady;
   const selectedTransitResource = useMemo(
     () => debugContext?.transit_resources.find((resource) => resource.id === selectedTransitResourceId) ?? null,
@@ -1242,6 +1253,7 @@ export function AdvancedHaproxyDebugPanel() {
     value: ProtectedResourceRegistrationDraft[K],
   ) {
     setProtectedRegistrationDraft((current) => ({ ...current, [key]: value }));
+    setProtectedRegistrationDryRunResult(null);
   }
 
   function clearForm() {
@@ -1256,6 +1268,7 @@ export function AdvancedHaproxyDebugPanel() {
 
   function clearProtectedRegistrationDraft() {
     setProtectedRegistrationDraft(buildProtectedResourceRegistrationDraft(selectedDryRunCandidate));
+    setProtectedRegistrationDryRunResult(null);
     setMessage("登记草案已清空为当前 candidate 的默认 hint。");
   }
 
@@ -1296,6 +1309,37 @@ export function AdvancedHaproxyDebugPanel() {
       setMessage(error instanceof Error ? error.message : "运行 readiness 失败。");
     } finally {
       setLoadingReadiness(false);
+    }
+  }
+
+  async function runProtectedRegistrationDryRun() {
+    if (!selectedDryRunCandidate) {
+      setMessage("请先选择一个 HAProxy dry-run candidate。");
+      return;
+    }
+    if (!protectedRegistrationReady) {
+      setMessage(protectedRegistrationErrors[0] ?? "登记草案未通过本地校验。");
+      return;
+    }
+    setLoadingProtectedRegistrationDryRun(true);
+    setMessage("正在运行 registration dry-run；这是只读校验，不会创建资源。");
+    try {
+      const csrfToken = await ensureCsrfToken();
+      const result = await requestProtectedResourceRegistrationDryRun(protectedRegistrationPayloadPreview, csrfToken);
+      if (!result.success) {
+        setMessage(result.message);
+        return;
+      }
+      setProtectedRegistrationDryRunResult(result.data);
+      setMessage(
+        result.data.ready_for_next_stage
+          ? "registration dry-run 已通过。下一阶段仍需单独 approval，不会在本阶段创建资源。"
+          : "registration dry-run 存在阻塞项。请先修正 payload 或人工确认信息。",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "运行 registration dry-run 失败。");
+    } finally {
+      setLoadingProtectedRegistrationDryRun(false);
     }
   }
 
@@ -2013,6 +2057,121 @@ export function AdvancedHaproxyDebugPanel() {
                     </div>
                   )}
                   <pre>{formatJson(protectedRegistrationPayloadPreview)}</pre>
+                </section>
+
+                <section
+                  className={`advanced-debug-v2-registration-dry-run ${
+                    protectedRegistrationDryRunResult?.ready_for_next_stage
+                      ? "advanced-debug-v2-registration-dry-run-ready"
+                      : protectedRegistrationDryRunResult
+                        ? "advanced-debug-v2-registration-dry-run-blocked"
+                        : ""
+                  }`}
+                >
+                  <header>
+                    <div>
+                      <strong>Registration Dry-run（只读）</strong>
+                      <p>提交到后端做只读校验；不会创建资源、不会创建 WorkerCommand、不会远程执行。</p>
+                    </div>
+                    <div className="advanced-debug-v2-registration-dry-run-actions">
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={runProtectedRegistrationDryRun}
+                        disabled={!canRunProtectedRegistrationDryRun}
+                      >
+                        {loadingProtectedRegistrationDryRun ? "校验中..." : "运行 registration dry-run（只读）"}
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        disabled={!protectedRegistrationDryRunResult}
+                        onClick={() =>
+                          protectedRegistrationDryRunResult
+                            ? copyText(formatJson(protectedRegistrationDryRunResult), "registration dry-run 结果已复制。")
+                            : undefined
+                        }
+                      >
+                        复制 dry-run 结果
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        disabled={!protectedRegistrationDryRunResult}
+                        onClick={() => {
+                          setProtectedRegistrationDryRunResult(null);
+                          setMessage("registration dry-run 结果已清空。");
+                        }}
+                      >
+                        清空 dry-run 结果
+                      </button>
+                    </div>
+                  </header>
+
+                  {protectedRegistrationDryRunResult ? (
+                    <>
+                      <div className="advanced-debug-v2-registration-dry-run-summary">
+                        <div>
+                          <span>dry_run</span>
+                          <strong>{String(protectedRegistrationDryRunResult.dry_run)}</strong>
+                        </div>
+                        <div>
+                          <span>ready_for_next_stage</span>
+                          <strong>{String(protectedRegistrationDryRunResult.ready_for_next_stage)}</strong>
+                        </div>
+                        <div>
+                          <span>recommended_next_stage</span>
+                          <strong>{protectedRegistrationDryRunResult.recommended_next_stage}</strong>
+                        </div>
+                        <div>
+                          <span>expected_approval_text</span>
+                          <strong>{protectedRegistrationDryRunResult.expected_approval_text}</strong>
+                        </div>
+                      </div>
+
+                      {protectedRegistrationDryRunResult.ready_for_next_stage ? (
+                        <div className="advanced-debug-v2-context-message">
+                          registration dry-run 已通过。下一阶段仍需单独 approval，不会在本阶段创建资源。
+                        </div>
+                      ) : (
+                        <div className="advanced-debug-v2-protected-registration-blocked-list">
+                          <strong>blocked_reasons</strong>
+                          {protectedRegistrationDryRunResult.blocked_reasons.length ? (
+                            <ul>
+                              {protectedRegistrationDryRunResult.blocked_reasons.map((reason) => (
+                                <li key={reason}>{reason}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p>无 danger 阻塞项；请查看 warning 检查项。</p>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="advanced-debug-v2-registration-dry-run-checks">
+                        {protectedRegistrationDryRunResult.checks.map((check) => (
+                          <article key={check.id} className={check.severity}>
+                            <div>
+                              <strong>{check.label}</strong>
+                              <span>{check.id}</span>
+                            </div>
+                            <p>{check.message}</p>
+                            <small>{check.next_action}</small>
+                            {check.evidence_summary ? <em>{check.evidence_summary}</em> : null}
+                          </article>
+                        ))}
+                      </div>
+
+                      <div className="advanced-debug-v2-registration-dry-run-preview">
+                        <strong>normalized_preview</strong>
+                        <pre>{formatJson(protectedRegistrationDryRunResult.normalized_preview)}</pre>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="advanced-debug-v2-registration-dry-run-empty">
+                      尚未运行 registration dry-run。按钮启用前必须先让登记草案通过本地校验。
+                    </div>
+                  )}
                 </section>
 
                 <div className="advanced-debug-v2-protected-registration-actions">

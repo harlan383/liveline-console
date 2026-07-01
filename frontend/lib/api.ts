@@ -683,6 +683,71 @@ export type HaproxyRuntimeDebugContextResult = {
   safety_boundary: string[];
 };
 
+export type ProtectedResourceRegistrationDryRunRequest = {
+  stage: string;
+  mode: "preview_only" | string;
+  source: {
+    dry_run_command_id: string;
+    route_name: string;
+    planned_listen_port: number | null;
+    landing_target_host: string;
+    landing_target_port: number | null;
+    candidate_integrity_ready: boolean;
+  };
+  transit_resource_registration: {
+    name: string;
+    resource_type: "server" | string;
+    entry_host: string;
+    entry_port: number | null;
+    entry_region: string;
+    exit_region: string;
+    expected_status: "active" | "worker_online" | string;
+    worker_role: "transit" | string;
+    worker_binding_required: boolean;
+  };
+  landing_node_registration: {
+    node_name: string;
+    vps_ip: string;
+    xray_port: number | null;
+    expected_status: "active" | string;
+    share_link_handling: "do_not_export_or_modify_full_share_link" | string;
+  };
+  confirmations: {
+    manual_confirm_transit_host: boolean;
+    manual_confirm_worker_binding: boolean;
+    manual_confirm_landing_host: boolean;
+    manual_confirm_landing_port: boolean;
+    manual_confirm_no_share_link_export: boolean;
+    manual_confirm_no_remote_execution: boolean;
+    manual_confirm_no_firewall_change: boolean;
+    manual_confirm_no_cutover: boolean;
+  };
+  safety_boundary: string[];
+};
+
+export type ProtectedResourceRegistrationDryRunCheck = {
+  id: string;
+  label: string;
+  passed: boolean;
+  severity: "info" | "warning" | "danger";
+  message: string;
+  next_action: string;
+  evidence_summary?: string | null;
+};
+
+export type ProtectedResourceRegistrationNormalizedPreview = Omit<ProtectedResourceRegistrationDryRunRequest, "stage" | "mode">;
+
+export type ProtectedResourceRegistrationDryRunResult = {
+  dry_run: true;
+  ready_for_next_stage: boolean;
+  stage: string;
+  recommended_next_stage: string;
+  checks: ProtectedResourceRegistrationDryRunCheck[];
+  blocked_reasons: string[];
+  normalized_preview: ProtectedResourceRegistrationNormalizedPreview;
+  expected_approval_text: string;
+};
+
 export type TransitRouteWorkerCreateExecuteRequest = {
   transit_resource_id: string;
   landing_node_id: string;
@@ -1441,6 +1506,17 @@ export async function requestTransitHaproxyRouteRealExecutionReadiness(
 
 export async function getHaproxyRuntimeDebugContext(): Promise<ApiResponse<HaproxyRuntimeDebugContextResult>> {
   return apiFetch<HaproxyRuntimeDebugContextResult>("/api/transit-routes/haproxy-runtime-debug-context");
+}
+
+export async function requestProtectedResourceRegistrationDryRun(
+  payload: ProtectedResourceRegistrationDryRunRequest,
+  csrfToken: string,
+): Promise<ApiResponse<ProtectedResourceRegistrationDryRunResult>> {
+  return apiFetch<ProtectedResourceRegistrationDryRunResult>("/api/transit-routes/protected-resource-registration-dry-run", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function createTransitRouteWorkerExecuteCommand(

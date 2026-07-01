@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -76,6 +78,78 @@ TRANSIT_ROUTE_CREATE_FORWARDING_METHODS = {
     FORWARDING_METHOD_SOCAT,
     FORWARDING_METHOD_HAPROXY_TCP,
 }
+PROTECTED_RESOURCE_REGISTRATION_UI_STAGE = "Stage 3.4.26-advanced-debug-protected-resource-registration-ui"
+PROTECTED_RESOURCE_REGISTRATION_DRY_RUN_STAGE = "Stage 3.4.27-advanced-debug-protected-resource-registration-dry-run"
+PROTECTED_RESOURCE_REGISTRATION_APPROVAL_STAGE = "Stage 3.4.28-advanced-debug-protected-resource-registration-approval"
+PROTECTED_RESOURCE_REGISTRATION_REQUIRED_BOUNDARY = [
+    "preview_only",
+    "不提交后端",
+    "不创建 transit_resource",
+    "不创建 landing_node",
+    "不创建 WorkerCommand",
+    "不创建 TransitRoute",
+    "不 SSH / 不远程执行",
+    "不修改防火墙 / 云安全组 / 云防火墙",
+    "不读取、不输出、不修改完整 share_link",
+    "不 cutover",
+]
+
+
+class ProtectedRegistrationSource(BaseModel):
+    dry_run_command_id: str = Field(default="", max_length=80)
+    route_name: str = Field(default="", max_length=160)
+    planned_listen_port: int | None = None
+    landing_target_host: str = Field(default="", max_length=255)
+    landing_target_port: int | None = None
+    candidate_integrity_ready: bool = False
+
+
+class ProtectedRegistrationTransitResource(BaseModel):
+    name: str = Field(default="", max_length=120)
+    resource_type: str = Field(default="")
+    entry_host: str = Field(default="", max_length=255)
+    entry_port: int | None = None
+    entry_region: str = Field(default="", max_length=120)
+    exit_region: str = Field(default="", max_length=120)
+    expected_status: str = Field(default="")
+    worker_role: str = Field(default="")
+    worker_binding_required: bool = False
+
+
+class ProtectedRegistrationLandingNode(BaseModel):
+    node_name: str = Field(default="", max_length=120)
+    vps_ip: str = Field(default="", max_length=45)
+    xray_port: int | None = None
+    expected_status: str = Field(default="")
+    share_link_handling: str = Field(default="", max_length=120)
+
+
+class ProtectedRegistrationConfirmations(BaseModel):
+    manual_confirm_transit_host: bool = False
+    manual_confirm_worker_binding: bool = False
+    manual_confirm_landing_host: bool = False
+    manual_confirm_landing_port: bool = False
+    manual_confirm_no_share_link_export: bool = False
+    manual_confirm_no_remote_execution: bool = False
+    manual_confirm_no_firewall_change: bool = False
+    manual_confirm_no_cutover: bool = False
+
+
+class ProtectedResourceRegistrationDryRunRequest(BaseModel):
+    stage: str = Field(default="", max_length=120)
+    mode: str = Field(default="", max_length=40)
+    source: ProtectedRegistrationSource = Field(default_factory=ProtectedRegistrationSource)
+    transit_resource_registration: ProtectedRegistrationTransitResource = Field(
+        default_factory=ProtectedRegistrationTransitResource,
+    )
+    landing_node_registration: ProtectedRegistrationLandingNode = Field(default_factory=ProtectedRegistrationLandingNode)
+    confirmations: ProtectedRegistrationConfirmations = Field(default_factory=ProtectedRegistrationConfirmations)
+    safety_boundary: list[str] = Field(default_factory=list, max_length=80)
+
+
+ProtectedRegistrationSeverity = Literal["info", "warning", "danger"]
+
+
 TRANSIT_READONLY_PREFLIGHT_BOUNDARY = [
     "remote readonly preflight only",
     "no arbitrary shell accepted",
@@ -924,6 +998,494 @@ def _payload_text(payload: dict | None, key: str) -> str | None:
     return str(value).strip()
 
 
+def protected_registration_port_valid(value: int | None) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535
+
+
+def protected_registration_text(value: str | None) -> str:
+    return (value or "").strip()
+
+
+def protected_registration_sensitive_terms() -> tuple[str, ...]:
+    return (
+        "vless" + "://",
+        "begin " + "openssh",
+        "begin " + "rsa",
+        "private" + "_key",
+        "private key",
+        "install" + "_command",
+        "to" + "ken",
+        "pass" + "word",
+    )
+
+
+def protected_registration_contains_sensitive_value(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(protected_registration_contains_sensitive_value(item) for item in value.values())
+    if isinstance(value, list):
+        return any(protected_registration_contains_sensitive_value(item) for item in value)
+    if not isinstance(value, str):
+        return False
+    lowered = value.lower()
+    return any(term in lowered for term in protected_registration_sensitive_terms())
+
+
+def protected_registration_sanitize_text(value: str | None) -> str:
+    cleaned = protected_registration_text(value)
+    if protected_registration_contains_sensitive_value(cleaned):
+        return "[redacted sensitive value]"
+    return cleaned
+
+
+def make_protected_registration_check(
+    *,
+    check_id: str,
+    label: str,
+    passed: bool,
+    message: str,
+    next_action: str,
+    severity: ProtectedRegistrationSeverity | None = None,
+    evidence_summary: str | None = None,
+) -> dict:
+    return {
+        "id": check_id,
+        "label": label,
+        "passed": passed,
+        "severity": severity or ("info" if passed else "danger"),
+        "message": message,
+        "next_action": next_action,
+        "evidence_summary": evidence_summary,
+    }
+
+
+def protected_registration_active_transit_resource_duplicates(
+    db: Session,
+    *,
+    field_name: str,
+    value: str,
+) -> list[TransitResource]:
+    if not value:
+        return []
+    field = TransitResource.name if field_name == "name" else TransitResource.entry_host
+    return db.scalars(
+        select(TransitResource)
+        .where(TransitResource.deleted_at.is_(None))
+        .where(TransitResource.status.in_(("active", "worker_online")))
+        .where(field == value)
+    ).all()
+
+
+def protected_registration_active_landing_node_duplicates(
+    db: Session,
+    *,
+    vps_ip: str,
+    xray_port: int | None,
+) -> list[Node]:
+    if not vps_ip or not protected_registration_port_valid(xray_port):
+        return []
+    nodes = db.scalars(
+        select(Node)
+        .where(Node.deleted_at.is_(None))
+        .where(Node.status == "active")
+        .where(Node.xray_port == xray_port)
+    ).all()
+    return [node for node in nodes if node.vps and node.vps.ip == vps_ip]
+
+
+def build_protected_resource_registration_dry_run(
+    db: Session,
+    payload: ProtectedResourceRegistrationDryRunRequest,
+) -> dict:
+    source = payload.source
+    transit = payload.transit_resource_registration
+    landing = payload.landing_node_registration
+    confirmations = payload.confirmations
+    source_command = db.get(WorkerCommand, source.dry_run_command_id) if source.dry_run_command_id else None
+    source_payload = source_command.payload_json if source_command and isinstance(source_command.payload_json, dict) else {}
+    command_landing_host = protected_registration_text(_payload_text(source_payload, "landing_target_host"))
+    command_route_name = protected_registration_text(_payload_text(source_payload, "route_name"))
+    command_planned_listen_port = _payload_int(source_payload, "planned_listen_port")
+    command_landing_port = _payload_int(source_payload, "landing_target_port")
+    normalized_preview = {
+        "source": {
+            "dry_run_command_id": protected_registration_sanitize_text(source.dry_run_command_id),
+            "route_name": protected_registration_sanitize_text(source.route_name),
+            "planned_listen_port": source.planned_listen_port,
+            "landing_target_host": protected_registration_sanitize_text(source.landing_target_host),
+            "landing_target_port": source.landing_target_port,
+            "candidate_integrity_ready": source.candidate_integrity_ready,
+        },
+        "transit_resource_registration": {
+            "name": protected_registration_sanitize_text(transit.name),
+            "resource_type": protected_registration_sanitize_text(transit.resource_type),
+            "entry_host": protected_registration_sanitize_text(transit.entry_host),
+            "entry_port": transit.entry_port,
+            "entry_region": protected_registration_sanitize_text(transit.entry_region),
+            "exit_region": protected_registration_sanitize_text(transit.exit_region),
+            "expected_status": protected_registration_sanitize_text(transit.expected_status),
+            "worker_role": protected_registration_sanitize_text(transit.worker_role),
+            "worker_binding_required": transit.worker_binding_required,
+        },
+        "landing_node_registration": {
+            "node_name": protected_registration_sanitize_text(landing.node_name),
+            "vps_ip": protected_registration_sanitize_text(landing.vps_ip),
+            "xray_port": landing.xray_port,
+            "expected_status": protected_registration_sanitize_text(landing.expected_status),
+            "share_link_handling": protected_registration_sanitize_text(landing.share_link_handling),
+        },
+        "confirmations": confirmations.model_dump(),
+        "safety_boundary": [protected_registration_sanitize_text(item) for item in payload.safety_boundary],
+    }
+    required_boundary_set = set(PROTECTED_RESOURCE_REGISTRATION_REQUIRED_BOUNDARY)
+    safety_boundary_set = set(payload.safety_boundary)
+    confirmation_values = confirmations.model_dump()
+    transit_name = protected_registration_text(transit.name)
+    transit_entry_host = protected_registration_text(transit.entry_host)
+    landing_vps_ip = protected_registration_text(landing.vps_ip)
+    checks: list[dict] = [
+        make_protected_registration_check(
+            check_id="stage_is_expected",
+            label="Stage 来源正确",
+            passed=payload.stage == PROTECTED_RESOURCE_REGISTRATION_UI_STAGE,
+            message="Payload 来自 Stage 3.4.26 准备 UI。" if payload.stage == PROTECTED_RESOURCE_REGISTRATION_UI_STAGE else "Payload stage 不匹配。",
+            next_action="使用 Stage 3.4.26 生成的登记 payload。" if payload.stage != PROTECTED_RESOURCE_REGISTRATION_UI_STAGE else "继续检查。",
+            evidence_summary=payload.stage,
+        ),
+        make_protected_registration_check(
+            check_id="mode_is_preview_only",
+            label="Mode 为 preview_only",
+            passed=payload.mode == "preview_only",
+            message="Payload 保持 preview_only。" if payload.mode == "preview_only" else "Payload mode 不是 preview_only。",
+            next_action="将 mode 设置为 preview_only 后重新 dry-run。" if payload.mode != "preview_only" else "继续检查。",
+            evidence_summary=payload.mode,
+        ),
+        make_protected_registration_check(
+            check_id="safety_boundary_present",
+            label="安全边界完整",
+            passed=required_boundary_set.issubset(safety_boundary_set),
+            message="安全边界包含所有必需项。" if required_boundary_set.issubset(safety_boundary_set) else "安全边界缺少必需项。",
+            next_action="重新复制 Stage 3.4.26 登记 payload，确保 safety_boundary 完整。",
+            evidence_summary=f"{len(required_boundary_set.intersection(safety_boundary_set))}/{len(required_boundary_set)}",
+        ),
+        make_protected_registration_check(
+            check_id="no_share_link_export_confirmed",
+            label="确认不处理完整客户端配置",
+            passed=confirmations.manual_confirm_no_share_link_export,
+            message="已确认不读取、不输出、不修改完整客户端配置。" if confirmations.manual_confirm_no_share_link_export else "尚未确认不处理完整客户端配置。",
+            next_action="勾选不读取、不输出、不修改完整客户端配置确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_remote_execution_confirmed",
+            label="确认不远程执行",
+            passed=confirmations.manual_confirm_no_remote_execution,
+            message="已确认不 SSH、不远程执行。" if confirmations.manual_confirm_no_remote_execution else "尚未确认不 SSH、不远程执行。",
+            next_action="勾选不 SSH、不远程执行确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_firewall_change_confirmed",
+            label="确认不修改防火墙",
+            passed=confirmations.manual_confirm_no_firewall_change,
+            message="已确认不修改防火墙 / 云安全组 / 云防火墙。" if confirmations.manual_confirm_no_firewall_change else "尚未确认不修改防火墙。",
+            next_action="勾选不修改防火墙确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_cutover_confirmed",
+            label="确认不 cutover",
+            passed=confirmations.manual_confirm_no_cutover,
+            message="已确认不 cutover。" if confirmations.manual_confirm_no_cutover else "尚未确认不 cutover。",
+            next_action="勾选不 cutover 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="all_manual_confirmations_present",
+            label="人工确认完整",
+            passed=all(bool(value) for value in confirmation_values.values()),
+            message="所有人工确认项已勾选。" if all(bool(value) for value in confirmation_values.values()) else "仍有人工确认项未勾选。",
+            next_action="补齐所有人工确认项后重新 dry-run。",
+            evidence_summary=f"{sum(1 for value in confirmation_values.values() if value)}/{len(confirmation_values)}",
+        ),
+    ]
+    checks.extend(
+        [
+            make_protected_registration_check(
+                check_id="source_dry_run_command_exists",
+                label="来源 dry-run command 存在",
+                passed=source_command is not None,
+                message="来源 dry-run command 存在。" if source_command else "来源 dry-run command 不存在。",
+                next_action="选择存在的 HAProxy TCP dry-run command。",
+                evidence_summary=source.dry_run_command_id or "missing",
+            ),
+            make_protected_registration_check(
+                check_id="source_dry_run_status_succeeded",
+                label="来源 dry-run 已成功",
+                passed=bool(source_command and source_command.status == "succeeded"),
+                message="来源 dry-run command 已 succeeded。" if source_command and source_command.status == "succeeded" else "来源 dry-run command 未成功。",
+                next_action="等待 dry-run succeeded 或重新生成 dry-run。",
+                evidence_summary=source_command.status if source_command else None,
+            ),
+            make_protected_registration_check(
+                check_id="source_dry_run_is_haproxy_tcp",
+                label="来源是 HAProxy TCP",
+                passed=source_payload.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP,
+                message="来源 forwarding_method 为 haproxy_tcp。" if source_payload.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP else "来源 forwarding_method 不是 haproxy_tcp。",
+                next_action="选择 HAProxy TCP dry-run command。",
+                evidence_summary=str(source_payload.get("forwarding_method") or "missing"),
+            ),
+            make_protected_registration_check(
+                check_id="source_dry_run_is_dry_run",
+                label="来源是 dry-run",
+                passed=source_payload.get("dry_run") is True,
+                message="来源 command 标记为 dry_run。" if source_payload.get("dry_run") is True else "来源 command 未标记为 dry_run。",
+                next_action="选择 dry_run=true 的 command。",
+                evidence_summary=str(source_payload.get("dry_run")),
+            ),
+            make_protected_registration_check(
+                check_id="source_dry_run_is_not_real_execution",
+                label="来源不是真实执行",
+                passed=source_payload.get("real_execution") is False and source_payload.get("approved_real_execution") is not True,
+                message="来源 command 未执行真实创建。" if source_payload.get("real_execution") is False and source_payload.get("approved_real_execution") is not True else "来源 command 是 real execution 或已审批真实执行。",
+                next_action="选择 real_execution=false 的 dry-run command。",
+                evidence_summary=f"real_execution={source_payload.get('real_execution')}",
+            ),
+            make_protected_registration_check(
+                check_id="source_route_name_matches",
+                label="route_name 匹配",
+                passed=bool(command_route_name and command_route_name == protected_registration_text(source.route_name)),
+                message="route_name 与来源 payload 一致。" if command_route_name and command_route_name == protected_registration_text(source.route_name) else "route_name 与来源 payload 不一致。",
+                next_action="使用 dry-run candidate 中的 route_name。",
+                evidence_summary=f"request={source.route_name or '-'} / source={command_route_name or '-'}",
+            ),
+            make_protected_registration_check(
+                check_id="source_planned_listen_port_matches",
+                label="监听端口匹配",
+                passed=bool(command_planned_listen_port and command_planned_listen_port == source.planned_listen_port),
+                message="planned_listen_port 与来源 payload 一致。" if command_planned_listen_port and command_planned_listen_port == source.planned_listen_port else "planned_listen_port 与来源 payload 不一致。",
+                next_action="使用 dry-run candidate 中的 planned_listen_port。",
+                evidence_summary=f"request={source.planned_listen_port or '-'} / source={command_planned_listen_port or '-'}",
+            ),
+            make_protected_registration_check(
+                check_id="source_landing_host_matches",
+                label="落地 host 匹配",
+                passed=bool(command_landing_host and command_landing_host == protected_registration_text(source.landing_target_host)),
+                message="landing_target_host 与来源 payload 一致。" if command_landing_host and command_landing_host == protected_registration_text(source.landing_target_host) else "landing_target_host 与来源 payload 不一致。",
+                next_action="使用 dry-run candidate 中的 landing_target_host。",
+                evidence_summary=f"request={source.landing_target_host or '-'} / source={command_landing_host or '-'}",
+            ),
+            make_protected_registration_check(
+                check_id="source_landing_port_matches",
+                label="落地 port 匹配",
+                passed=bool(command_landing_port and command_landing_port == source.landing_target_port),
+                message="landing_target_port 与来源 payload 一致。" if command_landing_port and command_landing_port == source.landing_target_port else "landing_target_port 与来源 payload 不一致。",
+                next_action="使用 dry-run candidate 中的 landing_target_port。",
+                evidence_summary=f"request={source.landing_target_port or '-'} / source={command_landing_port or '-'}",
+            ),
+            make_protected_registration_check(
+                check_id="candidate_already_integrity_ready",
+                label="candidate 已完整",
+                passed=True,
+                severity="warning" if source.candidate_integrity_ready else "info",
+                message=(
+                    "当前 candidate 已经 integrity_ready，通常不需要登记新资源；本 dry-run 仍保持只读。"
+                    if source.candidate_integrity_ready
+                    else "candidate integrity 未 ready 也允许进行登记 dry-run。"
+                ),
+                next_action="如无需补资源，停止在当前阶段；如确需登记，进入下一阶段审批。" if source.candidate_integrity_ready else "继续 dry-run 检查。",
+                evidence_summary=str(source.candidate_integrity_ready),
+            ),
+        ],
+    )
+    duplicate_name = protected_registration_active_transit_resource_duplicates(db, field_name="name", value=transit_name)
+    duplicate_entry_host = protected_registration_active_transit_resource_duplicates(
+        db,
+        field_name="entry_host",
+        value=transit_entry_host,
+    )
+    checks.extend(
+        [
+            make_protected_registration_check(
+                check_id="transit_resource_name_present",
+                label="中转资源名称已填写",
+                passed=bool(transit_name),
+                message="中转资源名称已填写。" if transit_name else "中转资源名称为空。",
+                next_action="填写中转资源名称。",
+            ),
+            make_protected_registration_check(
+                check_id="transit_entry_host_present",
+                label="中转入口 host 已填写",
+                passed=bool(transit_entry_host),
+                message="中转入口 host 已填写。" if transit_entry_host else "中转入口 host 为空。",
+                next_action="填写中转入口 host。",
+            ),
+            make_protected_registration_check(
+                check_id="transit_entry_port_valid",
+                label="中转入口端口有效",
+                passed=protected_registration_port_valid(transit.entry_port),
+                message="中转入口端口有效。" if protected_registration_port_valid(transit.entry_port) else "中转入口端口无效。",
+                next_action="填写 1-65535 的中转入口端口。",
+                evidence_summary=str(transit.entry_port),
+            ),
+            make_protected_registration_check(
+                check_id="transit_entry_region_present",
+                label="入口地区已填写",
+                passed=bool(protected_registration_text(transit.entry_region)),
+                message="入口地区已填写。" if protected_registration_text(transit.entry_region) else "入口地区为空。",
+                next_action="填写入口地区。",
+            ),
+            make_protected_registration_check(
+                check_id="transit_exit_region_present",
+                label="出口地区已填写",
+                passed=bool(protected_registration_text(transit.exit_region)),
+                message="出口地区已填写。" if protected_registration_text(transit.exit_region) else "出口地区为空。",
+                next_action="填写出口地区。",
+            ),
+            make_protected_registration_check(
+                check_id="transit_resource_type_is_server",
+                label="中转资源类型为 server",
+                passed=transit.resource_type == "server",
+                message="中转资源类型为 server。" if transit.resource_type == "server" else "中转资源类型不是 server。",
+                next_action="将 resource_type 设置为 server。",
+                evidence_summary=transit.resource_type,
+            ),
+            make_protected_registration_check(
+                check_id="transit_expected_status_supported",
+                label="中转期望状态受支持",
+                passed=transit.expected_status in {"active", "worker_online"},
+                message="中转期望状态受支持。" if transit.expected_status in {"active", "worker_online"} else "中转期望状态不受支持。",
+                next_action="将 expected_status 设置为 active 或 worker_online。",
+                evidence_summary=transit.expected_status,
+            ),
+            make_protected_registration_check(
+                check_id="transit_worker_role_is_transit",
+                label="Worker role 为 transit",
+                passed=transit.worker_role == "transit",
+                message="Worker role 为 transit。" if transit.worker_role == "transit" else "Worker role 不是 transit。",
+                next_action="将 worker_role 设置为 transit。",
+                evidence_summary=transit.worker_role,
+            ),
+            make_protected_registration_check(
+                check_id="transit_worker_binding_required",
+                label="需要 Worker 绑定",
+                passed=transit.worker_binding_required,
+                message="已要求绑定 transit Worker。" if transit.worker_binding_required else "未要求绑定 transit Worker。",
+                next_action="确认后续登记必须绑定在线 transit Worker。",
+            ),
+            make_protected_registration_check(
+                check_id="transit_no_active_duplicate_by_name",
+                label="无同名 active 中转资源",
+                passed=not duplicate_name,
+                message="未发现同名 active / worker_online 中转资源。" if not duplicate_name else "发现同名 active / worker_online 中转资源。",
+                next_action="复用现有资源或修改拟登记资源名称。",
+                evidence_summary=", ".join(resource.id for resource in duplicate_name) if duplicate_name else None,
+            ),
+            make_protected_registration_check(
+                check_id="transit_no_active_duplicate_by_entry_host",
+                label="无同入口 host 中转资源",
+                passed=not duplicate_entry_host,
+                message="未发现同入口 host 的 active / worker_online 中转资源。" if not duplicate_entry_host else "发现同入口 host 的 active / worker_online 中转资源。",
+                next_action="复用现有资源或人工确认入口 host 是否重复。",
+                evidence_summary=", ".join(resource.id for resource in duplicate_entry_host) if duplicate_entry_host else None,
+            ),
+        ],
+    )
+    duplicate_nodes = protected_registration_active_landing_node_duplicates(
+        db,
+        vps_ip=landing_vps_ip,
+        xray_port=landing.xray_port,
+    )
+    landing_host_matches_source = bool(landing_vps_ip and landing_vps_ip == protected_registration_text(source.landing_target_host))
+    landing_port_matches_source = bool(landing.xray_port and landing.xray_port == source.landing_target_port)
+    checks.extend(
+        [
+            make_protected_registration_check(
+                check_id="landing_node_name_present",
+                label="落地节点名称已填写",
+                passed=bool(protected_registration_text(landing.node_name)),
+                message="落地节点名称已填写。" if protected_registration_text(landing.node_name) else "落地节点名称为空。",
+                next_action="填写落地节点名称。",
+            ),
+            make_protected_registration_check(
+                check_id="landing_vps_ip_present",
+                label="落地 VPS IP 已填写",
+                passed=bool(landing_vps_ip),
+                message="落地 VPS IP 已填写。" if landing_vps_ip else "落地 VPS IP 为空。",
+                next_action="填写落地 VPS IP。",
+            ),
+            make_protected_registration_check(
+                check_id="landing_xray_port_valid",
+                label="落地 Xray 端口有效",
+                passed=protected_registration_port_valid(landing.xray_port),
+                message="落地 Xray 端口有效。" if protected_registration_port_valid(landing.xray_port) else "落地 Xray 端口无效。",
+                next_action="填写 1-65535 的落地 Xray 端口。",
+                evidence_summary=str(landing.xray_port),
+            ),
+            make_protected_registration_check(
+                check_id="landing_expected_status_is_active",
+                label="落地期望状态 active",
+                passed=landing.expected_status == "active",
+                message="落地期望状态为 active。" if landing.expected_status == "active" else "落地期望状态不是 active。",
+                next_action="将落地 expected_status 设置为 active。",
+                evidence_summary=landing.expected_status,
+            ),
+            make_protected_registration_check(
+                check_id="landing_share_link_handling_safe",
+                label="客户端配置处理策略安全",
+                passed=landing.share_link_handling == "do_not_export_or_modify_full_share_link",
+                message="客户端配置处理策略为不导出、不修改。" if landing.share_link_handling == "do_not_export_or_modify_full_share_link" else "客户端配置处理策略不安全。",
+                next_action="将 share_link_handling 设置为 do_not_export_or_modify_full_share_link。",
+                evidence_summary=landing.share_link_handling,
+            ),
+            make_protected_registration_check(
+                check_id="landing_no_active_duplicate_by_vps_ip_port",
+                label="无同 IP + 端口 active 节点",
+                passed=not duplicate_nodes,
+                message="未发现同 VPS IP + 端口的 active 节点。" if not duplicate_nodes else "发现同 VPS IP + 端口的 active 节点。",
+                next_action="复用现有节点或人工确认是否重复登记。",
+                evidence_summary=", ".join(node.id for node in duplicate_nodes) if duplicate_nodes else None,
+            ),
+            make_protected_registration_check(
+                check_id="landing_host_matches_source_or_manual_override_warning",
+                label="落地 host 与来源一致",
+                passed=landing_host_matches_source,
+                severity="warning" if not landing_host_matches_source else "info",
+                message="落地 VPS IP 与来源 candidate 一致。" if landing_host_matches_source else "落地 VPS IP 与来源 candidate 不一致，允许人工 override 但需复核。",
+                next_action="复核落地 VPS IP 是否为当前正式节点。" if not landing_host_matches_source else "继续检查。",
+                evidence_summary=f"draft={landing_vps_ip or '-'} / source={source.landing_target_host or '-'}",
+            ),
+            make_protected_registration_check(
+                check_id="landing_port_matches_source_or_manual_override_warning",
+                label="落地端口与来源一致",
+                passed=landing_port_matches_source,
+                severity="warning" if not landing_port_matches_source else "info",
+                message="落地 Xray 端口与来源 candidate 一致。" if landing_port_matches_source else "落地 Xray 端口与来源 candidate 不一致，允许人工 override 但需复核。",
+                next_action="复核落地 Xray 端口是否为当前正式节点。" if not landing_port_matches_source else "继续检查。",
+                evidence_summary=f"draft={landing.xray_port or '-'} / source={source.landing_target_port or '-'}",
+            ),
+        ],
+    )
+    original_payload_has_sensitive_value = protected_registration_contains_sensitive_value(payload.model_dump())
+    checks.append(
+        make_protected_registration_check(
+            check_id="response_sensitive_content_absent",
+            label="响应不包含敏感值",
+            passed=not original_payload_has_sensitive_value,
+            message="响应预览未包含完整客户端链接或凭证类敏感值。" if not original_payload_has_sensitive_value else "响应预览包含疑似敏感值，已脱敏但不能进入下一阶段。",
+            next_action="移除 payload 中的完整客户端链接、密钥、命令或凭证后重新 dry-run。",
+            evidence_summary="redacted" if original_payload_has_sensitive_value else "clean",
+        ),
+    )
+    danger_failures = [check for check in checks if check["severity"] == "danger" and not check["passed"]]
+    expected_suffix = str(source.planned_listen_port) if protected_registration_port_valid(source.planned_listen_port) else "MANUAL"
+    return {
+        "dry_run": True,
+        "ready_for_next_stage": not danger_failures,
+        "stage": PROTECTED_RESOURCE_REGISTRATION_DRY_RUN_STAGE,
+        "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_APPROVAL_STAGE,
+        "checks": checks,
+        "blocked_reasons": [check["message"] for check in danger_failures],
+        "normalized_preview": normalized_preview,
+        "expected_approval_text": f"CONFIRM_PROTECTED_RESOURCE_REGISTRATION_DRY_RUN_{expected_suffix}",
+    }
+
+
 def has_matching_successful_transit_readonly_preflight(
     db: Session,
     *,
@@ -1386,6 +1948,22 @@ def get_haproxy_runtime_debug_context(request: Request, db: Session = Depends(ge
         },
         "HAProxy runtime debug context loaded; read-only.",
     )
+
+
+@router.post("/protected-resource-registration-dry-run")
+def protected_resource_registration_dry_run(
+    payload: ProtectedResourceRegistrationDryRunRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    result = build_protected_resource_registration_dry_run(db, payload)
+    return success_response(result, "protected resource registration dry-run completed")
 
 
 @router.get("/{route_id}")
