@@ -11,6 +11,7 @@ import {
   type CsrfResult,
   type HaproxyRuntimeDebugContextResult,
   type HaproxyRuntimeDebugDryRunCandidate,
+  type HaproxyRuntimeDebugIntegrityCheck,
   type ReadonlyPreflightCheckItem,
   type TransitHaproxyRouteCreateRealExecutionRequest,
   type TransitHaproxyRouteCreateRealExecutionResult,
@@ -55,6 +56,23 @@ type DebugJsonValue =
   | {
       [key: string]: DebugJsonValue;
     };
+
+type HaproxyResourceRebuildPlanAction = {
+  id: string;
+  title: string;
+  severity: "info" | "warning" | "danger";
+  description: string;
+  steps: string[];
+};
+
+type HaproxyResourceRebuildPlan = {
+  status: "ready" | "blocked" | "no_candidate";
+  summary: string;
+  candidate_summary: Array<{ label: string; value: string }>;
+  blocking_checks: HaproxyRuntimeDebugIntegrityCheck[];
+  required_actions: HaproxyResourceRebuildPlanAction[];
+  recommended_next_stage: string;
+};
 
 const defaultForm: DebugForm = {
   dry_run_command_id: "",
@@ -174,6 +192,213 @@ function redactDebugJson(value: unknown): DebugJsonValue {
 
 function formatJson(value: unknown) {
   return JSON.stringify(redactDebugJson(value), null, 2);
+}
+
+function valueOrDash(value: string | number | boolean | null | undefined) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  return String(value);
+}
+
+function buildHaproxyResourceRebuildPlan(
+  candidate: HaproxyRuntimeDebugDryRunCandidate | null,
+): HaproxyResourceRebuildPlan {
+  if (!candidate) {
+    return {
+      status: "no_candidate",
+      summary: "请先读取上下文并选择一个 HAProxy dry-run candidate。",
+      candidate_summary: [],
+      blocking_checks: [],
+      required_actions: [],
+      recommended_next_stage: "Stage 3.4.25-advanced-debug-resource-registration-plan",
+    };
+  }
+
+  const blockingChecks = candidate.integrity_checks.filter(
+    (check) => !check.passed && check.severity === "danger",
+  );
+  const blockedIds = new Set(blockingChecks.map((check) => check.id));
+  const hasAnyBlocked = (ids: string[]) => ids.some((id) => blockedIds.has(id));
+  const requiredActions: HaproxyResourceRebuildPlanAction[] = [];
+
+  if (
+    hasAnyBlocked([
+      "transit_resource_record_exists",
+      "transit_resource_not_deleted",
+      "transit_resource_status_supported",
+    ])
+  ) {
+    requiredActions.push({
+      id: "transit-resource-record",
+      title: "需要补齐：正式中转资源记录",
+      severity: "danger",
+      description: "candidate 引用的中转资源不能作为当前有效资源继续执行。",
+      steps: [
+        "不要复用已 deleted 的中转资源。",
+        "重新登记一个 active / worker_online 的中转服务器资源。",
+        "确保该中转服务器绑定 transit Worker。",
+        "补齐后重新生成 HAProxy dry-run。",
+      ],
+    });
+  }
+
+  if (
+    hasAnyBlocked([
+      "transit_worker_record_exists",
+      "transit_worker_online",
+      "transit_worker_role_is_transit",
+      "transit_worker_interface_detected",
+    ])
+  ) {
+    requiredActions.push({
+      id: "transit-worker-status",
+      title: "需要补齐：Transit Worker 状态",
+      severity: "danger",
+      description: "中转 Worker 必须在线、角色正确并上报网卡后才能继续。",
+      steps: [
+        "确认中转服务器上的 liveline-worker 在线。",
+        "确认 role=transit。",
+        "确认 heartbeat 正常。",
+        "确认 interface_name 已上报。",
+        "恢复后重新生成 HAProxy dry-run。",
+      ],
+    });
+  }
+
+  if (
+    hasAnyBlocked([
+      "landing_node_record_exists",
+      "landing_node_not_deleted",
+      "landing_node_active",
+      "landing_node_has_vps_ip",
+      "landing_node_xray_port_present",
+    ])
+  ) {
+    requiredActions.push({
+      id: "landing-node-record",
+      title: "需要补齐：正式落地节点记录",
+      severity: "danger",
+      description: "candidate 引用的落地节点必须是当前有效 active 节点。",
+      steps: [
+        "选择或登记 active 落地节点。",
+        "落地节点必须有 VPS IP。",
+        "落地节点必须有 xray_port。",
+        "不读取、不输出完整 share_link。",
+        "用正式落地节点重新生成 HAProxy dry-run。",
+      ],
+    });
+  }
+
+  if (
+    hasAnyBlocked([
+      "candidate_landing_host_matches_node_vps_ip",
+      "candidate_landing_port_matches_node_xray_port",
+    ])
+  ) {
+    requiredActions.push({
+      id: "regenerate-dry-run-for-current-node",
+      title: "需要重新生成 dry-run：candidate host/port 与当前正式落地节点不一致",
+      severity: "warning",
+      description: "旧 candidate 的目标地址或端口不能代表当前正式落地节点。",
+      steps: [
+        "不要继续使用旧 candidate。",
+        "以当前 active 落地节点的 VPS IP / xray_port 重新生成 HAProxy dry-run。",
+      ],
+    });
+  }
+
+  if (hasAnyBlocked(["candidate_status_succeeded"])) {
+    requiredActions.push({
+      id: "dry-run-not-succeeded",
+      title: "需要重新生成或等待成功的 dry-run",
+      severity: "warning",
+      description: "只有 succeeded 的 HAProxy dry-run candidate 才能进入 readiness。",
+      steps: [
+        "当前 dry-run 不是 succeeded。",
+        "不允许 readiness。",
+        "重新生成成功的 HAProxy dry-run。",
+      ],
+    });
+  }
+
+  if (!requiredActions.length && blockingChecks.length) {
+    requiredActions.push({
+      id: "review-blocking-checks",
+      title: "需要处理：其它完整性阻塞项",
+      severity: "danger",
+      description: "当前 candidate 仍有未归类的 danger 级阻塞项。",
+      steps: ["查看 blocked checks 的 next_action，处理后重新读取上下文。"],
+    });
+  }
+
+  const needsResourceOrNode = requiredActions.some((action) =>
+    ["transit-resource-record", "transit-worker-status", "landing-node-record"].includes(action.id),
+  );
+  const recommendedNextStage =
+    candidate.integrity_ready
+      ? "不需要下一阶段资源重建"
+      : needsResourceOrNode
+        ? "Stage 3.4.25-advanced-debug-resource-registration-plan"
+        : "Stage 3.4.25-advanced-debug-haproxy-dry-run-regenerate";
+
+  return {
+    status: candidate.integrity_ready ? "ready" : "blocked",
+    summary: candidate.integrity_ready
+      ? "当前 candidate 上下文完整，不需要重建资源。请人工确认端口放行和安全边界后再运行 readiness。"
+      : "当前 candidate 是历史 dry-run 参数，正式资源上下文不完整。请先按下方方案补齐资源或重新生成 dry-run。",
+    candidate_summary: [
+      { label: "dry_run_command_id", value: valueOrDash(candidate.id) },
+      { label: "status", value: valueOrDash(candidate.status) },
+      { label: "integrity", value: candidate.integrity_ready ? "ready" : "blocked" },
+      { label: "planned_listen_port", value: valueOrDash(candidate.planned_listen_port) },
+      { label: "landing_target_host", value: valueOrDash(candidate.landing_target_host) },
+      { label: "landing_target_port", value: valueOrDash(candidate.landing_target_port) },
+      { label: "route_name", value: valueOrDash(candidate.route_name) },
+      { label: "route_display_name", value: valueOrDash(candidate.route_display_name) },
+      { label: "planned_service_name", value: valueOrDash(candidate.planned_service_name) },
+      { label: "transit_resource_id", value: valueOrDash(candidate.transit_resource_id) },
+      { label: "landing_node_id", value: valueOrDash(candidate.landing_node_id) },
+      { label: "target_worker_id", value: valueOrDash(candidate.target_worker_id) },
+    ],
+    blocking_checks: blockingChecks,
+    required_actions: requiredActions,
+    recommended_next_stage: recommendedNextStage,
+  };
+}
+
+function formatHaproxyResourceRebuildPlanText(plan: HaproxyResourceRebuildPlan) {
+  const lines = [
+    "HAProxy Resource Rebuild Plan",
+    "",
+    "Candidate Summary",
+    ...plan.candidate_summary.map((item) => `- ${item.label}: ${item.value}`),
+    "",
+    "Plan Summary",
+    `- status: ${plan.status}`,
+    `- summary: ${plan.summary}`,
+    `- recommended_next_stage: ${plan.recommended_next_stage}`,
+    "",
+    "Blocked Checks",
+    ...(plan.blocking_checks.length
+      ? plan.blocking_checks.flatMap((check) => [
+          `- ${check.label} (${check.id})`,
+          `  message: ${check.message}`,
+          `  next_action: ${check.next_action}`,
+          `  evidence_summary: ${check.evidence_summary ?? "-"}`,
+        ])
+      : ["- none"]),
+    "",
+    "Required Resources / Actions",
+    ...(plan.required_actions.length
+      ? plan.required_actions.flatMap((action) => [
+          `- ${action.title}`,
+          `  description: ${action.description}`,
+          ...action.steps.map((step) => `  * ${step}`),
+        ])
+      : ["- none"]),
+  ];
+  return lines.join("\n");
 }
 
 function resultStatus(result: TransitHaproxyRouteRealExecutionReadinessResult | null) {
@@ -313,6 +538,10 @@ export function AdvancedHaproxyDebugPanel() {
   const selectedDryRunCandidate = useMemo(
     () => debugContext?.haproxy_dry_run_commands.find((candidate) => candidate.id === selectedDryRunCommandId) ?? null,
     [debugContext?.haproxy_dry_run_commands, selectedDryRunCommandId],
+  );
+  const rebuildPlan = useMemo(
+    () => buildHaproxyResourceRebuildPlan(selectedDryRunCandidate),
+    [selectedDryRunCandidate],
   );
   const selectedCandidateIntegrityReady = selectedDryRunCandidate?.integrity_ready === true;
   const canRunReadiness = formErrors.length === 0 && Boolean(requestPayload) && selectedCandidateIntegrityReady;
@@ -706,6 +935,88 @@ export function AdvancedHaproxyDebugPanel() {
                     </article>
                   ))}
                 </div>
+              </section>
+            ) : null}
+
+            {selectedDryRunCandidate ? (
+              <section className={`advanced-debug-v2-rebuild-plan advanced-debug-v2-rebuild-${rebuildPlan.status === "ready" ? "ready" : "blocked"}`}>
+                <header className="advanced-debug-v2-card-title">
+                  <div>
+                    <h2>资源重建方案</h2>
+                    <p>{rebuildPlan.summary}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="ghost small advanced-debug-v2-rebuild-copy"
+                    onClick={() => copyText(formatHaproxyResourceRebuildPlanText(rebuildPlan), "重建方案已复制。")}
+                  >
+                    复制重建方案
+                  </button>
+                </header>
+
+                <div className="advanced-debug-v2-rebuild-grid">
+                  {rebuildPlan.candidate_summary.map((item) => (
+                    <div key={item.label}>
+                      <span>{item.label}</span>
+                      <strong>{item.value}</strong>
+                    </div>
+                  ))}
+                </div>
+
+                {rebuildPlan.status === "blocked" ? (
+                  <div className="advanced-debug-v2-context-warning">
+                    当前 candidate 只能作为历史参数参考，不能继续 readiness / real execution。
+                  </div>
+                ) : (
+                  <div className="advanced-debug-v2-context-message">
+                    当前 candidate 上下文完整，不需要资源重建。请人工确认端口放行和安全边界后再运行 readiness。
+                  </div>
+                )}
+
+                <div className="advanced-debug-v2-rebuild-section">
+                  <h3>缺失 / 阻塞项摘要</h3>
+                  {rebuildPlan.blocking_checks.length ? (
+                    <div className="advanced-debug-v2-rebuild-checks">
+                      {rebuildPlan.blocking_checks.map((check) => (
+                        <article key={check.id}>
+                          <strong>{check.label}</strong>
+                          <code>{check.id}</code>
+                          <p>{check.message}</p>
+                          <small>{check.next_action}</small>
+                          {check.evidence_summary ? <em>evidence: {check.evidence_summary}</em> : null}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="advanced-debug-v2-rebuild-empty">没有 danger 级阻塞项。</p>
+                  )}
+                </div>
+
+                <div className="advanced-debug-v2-rebuild-section">
+                  <h3>需要补齐的正式资源</h3>
+                  {rebuildPlan.required_actions.length ? (
+                    <div className="advanced-debug-v2-rebuild-actions">
+                      {rebuildPlan.required_actions.map((action) => (
+                        <article key={action.id} className={`advanced-debug-v2-rebuild-action ${action.severity}`}>
+                          <strong>{action.title}</strong>
+                          <p>{action.description}</p>
+                          <ul>
+                            {action.steps.map((step) => (
+                              <li key={step}>{step}</li>
+                            ))}
+                          </ul>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="advanced-debug-v2-rebuild-empty">无需补齐资源。</p>
+                  )}
+                </div>
+
+                <footer className="advanced-debug-v2-rebuild-next">
+                  <span>建议下一阶段</span>
+                  <strong>{rebuildPlan.recommended_next_stage}</strong>
+                </footer>
               </section>
             ) : null}
 

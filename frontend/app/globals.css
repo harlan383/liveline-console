@@ -6766,6 +6766,148 @@ button.ghost-action {
   overflow-wrap: anywhere;
 }
 
+.advanced-debug-v2-rebuild-plan {
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.advanced-debug-v2-rebuild-ready {
+  background: #f8fff9;
+  border-color: #bbf7d0;
+}
+
+.advanced-debug-v2-rebuild-blocked {
+  background: #fffafa;
+  border-color: #fecaca;
+}
+
+.advanced-debug-v2-rebuild-copy {
+  justify-self: end;
+}
+
+.advanced-debug-v2-rebuild-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-rebuild-grid div {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+}
+
+.advanced-debug-v2-rebuild-grid span,
+.advanced-debug-v2-rebuild-next span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.advanced-debug-v2-rebuild-grid strong,
+.advanced-debug-v2-rebuild-next strong {
+  color: #0f172a;
+  font-size: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-rebuild-section {
+  display: grid;
+  gap: 10px;
+}
+
+.advanced-debug-v2-rebuild-section h3 {
+  color: #0f172a;
+  font-size: 14px;
+  margin: 0;
+}
+
+.advanced-debug-v2-rebuild-checks,
+.advanced-debug-v2-rebuild-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-rebuild-checks article,
+.advanced-debug-v2-rebuild-action {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.advanced-debug-v2-rebuild-checks strong,
+.advanced-debug-v2-rebuild-action strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.advanced-debug-v2-rebuild-checks code {
+  color: #2563eb;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-rebuild-checks p,
+.advanced-debug-v2-rebuild-checks small,
+.advanced-debug-v2-rebuild-checks em,
+.advanced-debug-v2-rebuild-action p,
+.advanced-debug-v2-rebuild-action li,
+.advanced-debug-v2-rebuild-empty {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-rebuild-action ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.advanced-debug-v2-rebuild-action.danger {
+  border-color: #fecaca;
+}
+
+.advanced-debug-v2-rebuild-action.warning {
+  border-color: #fde68a;
+}
+
+.advanced-debug-v2-rebuild-action.info {
+  border-color: #bfdbfe;
+}
+
+.advanced-debug-v2-rebuild-next {
+  align-items: center;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
 .advanced-debug-v2-form-grid {
   display: grid;
   gap: 14px;
