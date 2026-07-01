@@ -310,11 +310,12 @@ export function AdvancedHaproxyDebugPanel() {
   const requestPayload = useMemo(() => buildPayloadOrNull(form, confirmations), [form, confirmations]);
   const formErrors = useMemo(() => validateForm(form, confirmations), [form, confirmations]);
   const allConfirmationsReady = Object.values(confirmations).every(Boolean);
-  const canRunReadiness = formErrors.length === 0 && Boolean(requestPayload);
   const selectedDryRunCandidate = useMemo(
     () => debugContext?.haproxy_dry_run_commands.find((candidate) => candidate.id === selectedDryRunCommandId) ?? null,
     [debugContext?.haproxy_dry_run_commands, selectedDryRunCommandId],
   );
+  const selectedCandidateIntegrityReady = selectedDryRunCandidate?.integrity_ready === true;
+  const canRunReadiness = formErrors.length === 0 && Boolean(requestPayload) && selectedCandidateIntegrityReady;
   const selectedTransitResource = useMemo(
     () => debugContext?.transit_resources.find((resource) => resource.id === selectedTransitResourceId) ?? null,
     [debugContext?.transit_resources, selectedTransitResourceId],
@@ -323,9 +324,16 @@ export function AdvancedHaproxyDebugPanel() {
     () => debugContext?.landing_nodes.find((node) => node.id === selectedLandingNodeId) ?? null,
     [debugContext?.landing_nodes, selectedLandingNodeId],
   );
+  const candidateTransitResourceMissing = Boolean(
+    selectedDryRunCandidate?.transit_resource_id && debugContext && !selectedTransitResource,
+  );
+  const candidateLandingNodeMissing = Boolean(
+    selectedDryRunCandidate?.landing_node_id && debugContext && !selectedLandingNode,
+  );
   const canCreateRealExecution =
     Boolean(requestPayload) &&
     Boolean(readinessResult?.ready_for_real_execution) &&
+    selectedCandidateIntegrityReady &&
     form.real_execution_text.trim() === readinessResult?.expected_real_execution_text &&
     allConfirmationsReady &&
     manualRealExecutionConfirm.trim() === MANUAL_REAL_EXECUTION_CONFIRM &&
@@ -365,6 +373,14 @@ export function AdvancedHaproxyDebugPanel() {
   async function runReadiness() {
     if (!requestPayload) {
       setMessage(formErrors[0] ?? "请先补齐参数。");
+      return;
+    }
+    if (!selectedDryRunCandidate) {
+      setMessage("请先选择一个通过完整性检查的 HAProxy dry-run candidate。");
+      return;
+    }
+    if (!selectedDryRunCandidate.integrity_ready) {
+      setMessage(selectedDryRunCandidate.integrity_summary || "上下文不完整，不能继续 readiness / real execution。");
       return;
     }
     setLoadingReadiness(true);
@@ -460,8 +476,13 @@ export function AdvancedHaproxyDebugPanel() {
     setReadinessResult(null);
     setRealExecutionResult(null);
     setManualRealExecutionConfirm("");
-    setContextMessage("已填充上下文字段；端口放行与安全确认仍需人工逐项确认。");
-    setMessage("已从 HAProxy dry-run 候选填充 payload。请人工确认端口放行后再运行 readiness。");
+    if (candidate.integrity_ready) {
+      setContextMessage("已填充上下文字段；端口放行与安全确认仍需人工逐项确认。");
+      setMessage("已从 HAProxy dry-run 候选填充 payload。请人工确认端口放行后再运行 readiness。");
+    } else {
+      setContextMessage("已填充上下文字段；上下文不完整，仅供查看，不能继续 readiness / real execution。");
+      setMessage(candidate.integrity_summary || "上下文不完整，不能继续 readiness / real execution。");
+    }
   }
 
   async function submitRealExecution() {
@@ -564,6 +585,11 @@ export function AdvancedHaproxyDebugPanel() {
                 <span>中转资源</span>
                 <select value={selectedTransitResourceId} onChange={(event) => setSelectedTransitResourceId(event.target.value)}>
                   <option value="">未选择</option>
+                  {candidateTransitResourceMissing ? (
+                    <option value={selectedDryRunCandidate?.transit_resource_id ?? ""}>
+                      未找到：{selectedDryRunCandidate?.transit_resource_id}
+                    </option>
+                  ) : null}
                   {debugContext?.transit_resources.map((resource) => (
                     <option key={resource.id} value={resource.id}>
                       {resource.name} / {resource.entry_host ?? "no-entry"} / {resource.worker_online ? "worker online" : resource.worker_runtime_status ?? "worker unknown"}
@@ -572,7 +598,12 @@ export function AdvancedHaproxyDebugPanel() {
                 </select>
                 {selectedTransitResource ? (
                   <small>
-                    Worker：{selectedTransitResource.worker_id ?? "-"} / {selectedTransitResource.worker_version ?? "-"}
+                    已匹配正式中转资源。Worker：{selectedTransitResource.worker_id ?? "-"} / {selectedTransitResource.worker_version ?? "-"}
+                  </small>
+                ) : null}
+                {candidateTransitResourceMissing ? (
+                  <small className="danger">
+                    candidate 引用的 transit_resource_id：{selectedDryRunCandidate?.transit_resource_id}；当前资源列表未找到该记录。
                   </small>
                 ) : null}
               </label>
@@ -581,6 +612,11 @@ export function AdvancedHaproxyDebugPanel() {
                 <span>落地节点</span>
                 <select value={selectedLandingNodeId} onChange={(event) => setSelectedLandingNodeId(event.target.value)}>
                   <option value="">未选择</option>
+                  {candidateLandingNodeMissing ? (
+                    <option value={selectedDryRunCandidate?.landing_node_id ?? ""}>
+                      未找到：{selectedDryRunCandidate?.landing_node_id}
+                    </option>
+                  ) : null}
                   {debugContext?.landing_nodes.map((node) => (
                     <option key={node.id} value={node.id}>
                       {node.node_name} / {node.target_host ?? "no-host"}:{node.target_port ?? "-"} / {node.status}
@@ -589,7 +625,12 @@ export function AdvancedHaproxyDebugPanel() {
                 </select>
                 {selectedLandingNode ? (
                   <small>
-                    服务：{selectedLandingNode.service_status ?? "-"} / 客户端配置：{selectedLandingNode.share_link_present ? "已生成" : "未生成"}
+                    已匹配正式落地节点。服务：{selectedLandingNode.service_status ?? "-"} / 客户端配置：{selectedLandingNode.share_link_present ? "已生成" : "未生成"}
+                  </small>
+                ) : null}
+                {candidateLandingNodeMissing ? (
+                  <small className="danger">
+                    candidate 引用的 landing_node_id：{selectedDryRunCandidate?.landing_node_id}；当前节点列表未找到该记录。
                   </small>
                 ) : null}
               </label>
@@ -600,7 +641,7 @@ export function AdvancedHaproxyDebugPanel() {
                   <option value="">未选择</option>
                   {debugContext?.haproxy_dry_run_commands.map((candidate) => (
                     <option key={candidate.id} value={candidate.id}>
-                      {candidate.status} / {candidate.route_name ?? "haproxy route"} / {candidate.planned_listen_port ?? "-"} → {candidate.landing_target_port ?? "-"}
+                      {candidate.integrity_ready ? "ready" : "blocked"} / {candidate.status} / {candidate.route_name ?? "haproxy route"} / {candidate.planned_listen_port ?? "-"} → {candidate.landing_target_port ?? "-"}
                     </option>
                   ))}
                 </select>
@@ -639,6 +680,33 @@ export function AdvancedHaproxyDebugPanel() {
               <div className="advanced-debug-v2-context-warning">
                 选中的 dry-run 当前不是 succeeded；填充后 readiness 会继续按后端规则校验并可能 blocked。
               </div>
+            ) : null}
+
+            {selectedDryRunCandidate ? (
+              <section className={`advanced-debug-v2-integrity ${selectedDryRunCandidate.integrity_ready ? "success" : "danger"}`}>
+                <header>
+                  <div>
+                    <span>上下文完整性</span>
+                    <strong>{selectedDryRunCandidate.integrity_ready ? "完整 / ready" : "不完整 / blocked"}</strong>
+                  </div>
+                  <p>{selectedDryRunCandidate.integrity_summary}</p>
+                  <small>{selectedDryRunCandidate.integrity_next_action}</small>
+                </header>
+                <div className="advanced-debug-v2-integrity-list">
+                  {selectedDryRunCandidate.integrity_checks.map((check) => (
+                    <article key={check.id} className={`advanced-debug-v2-integrity-check ${check.severity}`}>
+                      <span>{check.passed ? "通过" : check.severity === "warning" ? "警告" : "阻塞"}</span>
+                      <div>
+                        <strong>{check.label}</strong>
+                        <code>{check.id}</code>
+                        <p>{check.message}</p>
+                        <small>{check.next_action}</small>
+                        {check.evidence_summary ? <em>evidence: {check.evidence_summary}</em> : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
             ) : null}
 
             <div className="advanced-debug-v2-context-actions">
