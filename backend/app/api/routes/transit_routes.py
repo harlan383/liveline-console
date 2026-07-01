@@ -1,3 +1,6 @@
+import hashlib
+import json
+import uuid
 from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -10,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import auth_error, csrf_error, csrf_valid, require_admin_session
 from app.db.session import get_db
 from app.models.node import Node
+from app.models.task import Task
 from app.models.transit_resource import TransitResource
 from app.models.transit_route import TransitRoute
 from app.models.worker import Worker
@@ -85,6 +89,13 @@ PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE = "3.4.28"
 PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE = "approval_dry_run"
 PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_NEXT_STAGE = (
     "Stage 3.4.29-protected-resource-registration-command-create"
+)
+PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE = "3.4.29"
+PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_MODE = "command_create"
+PROTECTED_RESOURCE_REGISTRATION_COMMAND_TASK_TYPE = "protected_resource_registration_command"
+PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS = "pending_protected_registration_execution"
+PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE = (
+    "Stage 3.4.30-protected-resource-registration-execution-verify"
 )
 PROTECTED_RESOURCE_REGISTRATION_REQUIRED_BOUNDARY = [
     "preview_only",
@@ -182,6 +193,44 @@ class ProtectedResourceRegistrationApprovalDryRunRequest(BaseModel):
     approval_text: str = Field(default="", max_length=200)
     confirmations: ProtectedRegistrationApprovalConfirmations = Field(
         default_factory=ProtectedRegistrationApprovalConfirmations,
+    )
+
+
+class ProtectedRegistrationCommandSourceApprovalDryRun(BaseModel):
+    dry_run: bool = False
+    stage: str = Field(default="", max_length=40)
+    mode: str = Field(default="", max_length=40)
+    approved_for_next_stage: bool = False
+    ready_for_command_create_next_stage: bool = False
+    normalized_approval_preview: dict[str, object] = Field(default_factory=dict)
+    safety_boundary: dict[str, object] = Field(default_factory=dict)
+
+
+class ProtectedRegistrationCommandConfirmations(BaseModel):
+    approval_dry_run_passed: bool = False
+    create_local_pending_command_only: bool = False
+    no_real_resource_creation: bool = False
+    no_transit_resource_creation: bool = False
+    no_landing_node_creation: bool = False
+    no_worker_remote_execution: bool = False
+    no_transit_route_creation: bool = False
+    no_haproxy_route_creation: bool = False
+    no_listening_port_change: bool = False
+    no_ssh_or_remote_execution: bool = False
+    no_firewall_change: bool = False
+    no_cutover: bool = False
+    ordinary_product_ui_unchanged: bool = False
+    sensitive_fields_redacted: bool = False
+
+
+class ProtectedResourceRegistrationCommandCreateRequest(BaseModel):
+    stage: str = Field(default="", max_length=40)
+    mode: str = Field(default="", max_length=40)
+    source_approval_dry_run: ProtectedRegistrationCommandSourceApprovalDryRun = Field(
+        default_factory=ProtectedRegistrationCommandSourceApprovalDryRun,
+    )
+    confirmations: ProtectedRegistrationCommandConfirmations = Field(
+        default_factory=ProtectedRegistrationCommandConfirmations,
     )
 
 
@@ -1711,6 +1760,341 @@ def build_protected_resource_registration_approval_dry_run(
     }
 
 
+def protected_registration_command_create_idempotency_key(
+    payload: ProtectedResourceRegistrationCommandCreateRequest,
+) -> str:
+    source = payload.source_approval_dry_run
+    key_material = {
+        "stage": payload.stage,
+        "mode": payload.mode,
+        "source_stage": source.stage,
+        "source_mode": source.mode,
+        "approved_for_next_stage": source.approved_for_next_stage,
+        "ready_for_command_create_next_stage": source.ready_for_command_create_next_stage,
+        "normalized_approval_preview": source.normalized_approval_preview,
+        "safety_boundary": source.safety_boundary,
+    }
+    encoded = json.dumps(key_material, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def protected_registration_existing_command_by_idempotency_key(db: Session, idempotency_key: str) -> Task | None:
+    if not idempotency_key:
+        return None
+    tasks = db.scalars(
+        select(Task)
+        .where(Task.task_type == PROTECTED_RESOURCE_REGISTRATION_COMMAND_TASK_TYPE)
+        .order_by(Task.created_at.desc())
+        .limit(50)
+    ).all()
+    for task in tasks:
+        result_data = task.result_data if isinstance(task.result_data, dict) else {}
+        if result_data.get("idempotency_key") == idempotency_key:
+            return task
+    return None
+
+
+def build_protected_registration_command_preview(
+    payload: ProtectedResourceRegistrationCommandCreateRequest,
+    *,
+    idempotency_key: str,
+) -> dict:
+    source = payload.source_approval_dry_run
+    approval_preview = source.normalized_approval_preview if isinstance(source.normalized_approval_preview, dict) else {}
+    safety_boundary = source.safety_boundary if isinstance(source.safety_boundary, dict) else {}
+    return {
+        "stage": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE,
+        "mode": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_MODE,
+        "command_type": PROTECTED_RESOURCE_REGISTRATION_COMMAND_TASK_TYPE,
+        "command_status": PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS,
+        "idempotency_key": idempotency_key,
+        "source_approval_dry_run": {
+            "dry_run": source.dry_run,
+            "stage": source.stage,
+            "mode": source.mode,
+            "approved_for_next_stage": source.approved_for_next_stage,
+            "ready_for_command_create_next_stage": source.ready_for_command_create_next_stage,
+            "normalized_approval_preview_present": bool(approval_preview),
+            "normalized_approval_preview_key_count": len(approval_preview),
+            "safety_boundary_key_count": len(safety_boundary),
+        },
+        "safety_boundary": {
+            "local_pending_command_only": payload.confirmations.create_local_pending_command_only,
+            "no_real_resource_creation": payload.confirmations.no_real_resource_creation,
+            "no_transit_resource_creation": payload.confirmations.no_transit_resource_creation,
+            "no_landing_node_creation": payload.confirmations.no_landing_node_creation,
+            "no_worker_remote_execution": payload.confirmations.no_worker_remote_execution,
+            "no_transit_route_creation": payload.confirmations.no_transit_route_creation,
+            "no_haproxy_route_creation": payload.confirmations.no_haproxy_route_creation,
+            "no_listening_port_change": payload.confirmations.no_listening_port_change,
+            "no_ssh_or_remote_execution": payload.confirmations.no_ssh_or_remote_execution,
+            "no_firewall_change": payload.confirmations.no_firewall_change,
+            "no_cutover": payload.confirmations.no_cutover,
+            "ordinary_product_ui_unchanged": payload.confirmations.ordinary_product_ui_unchanged,
+        },
+        "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE,
+    }
+
+
+def build_protected_resource_registration_command_create(
+    db: Session,
+    payload: ProtectedResourceRegistrationCommandCreateRequest,
+) -> dict:
+    source = payload.source_approval_dry_run
+    confirmations = payload.confirmations
+    confirmation_values = confirmations.model_dump()
+    idempotency_key = protected_registration_command_create_idempotency_key(payload)
+    payload_has_sensitive_value = protected_registration_contains_sensitive_value(payload.model_dump())
+    normalized_command_preview = build_protected_registration_command_preview(
+        payload,
+        idempotency_key=idempotency_key,
+    )
+    checks: list[dict] = [
+        make_protected_registration_check(
+            check_id="stage_is_expected",
+            label="Stage 正确",
+            passed=payload.stage == PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE,
+            message="Command-create payload stage 为 3.4.29。" if payload.stage == PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE else "Command-create payload stage 不匹配。",
+            next_action="使用 Stage 3.4.29 生成的 command-create payload。" if payload.stage != PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE else "继续检查。",
+            evidence_summary=payload.stage,
+        ),
+        make_protected_registration_check(
+            check_id="mode_is_command_create",
+            label="Mode 为 command_create",
+            passed=payload.mode == PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_MODE,
+            message="Command-create payload mode 正确。" if payload.mode == PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_MODE else "Command-create payload mode 不匹配。",
+            next_action="将 mode 设置为 command_create。",
+            evidence_summary=payload.mode,
+        ),
+        make_protected_registration_check(
+            check_id="source_approval_dry_run_is_dry_run",
+            label="来源 approval dry-run",
+            passed=source.dry_run is True,
+            message="来源 approval 结果标记 dry_run=true。" if source.dry_run is True else "来源 approval 结果不是 dry-run。",
+            next_action="粘贴或读取 Stage 3.4.28 approval dry-run 结果。",
+            evidence_summary=str(source.dry_run),
+        ),
+        make_protected_registration_check(
+            check_id="source_approval_stage_is_expected",
+            label="来源 stage 为 3.4.28",
+            passed=source.stage == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE,
+            message="来源 approval dry-run stage 正确。" if source.stage == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_STAGE else "来源 approval dry-run stage 不匹配。",
+            next_action="使用 Stage 3.4.28 approval dry-run 结果。",
+            evidence_summary=source.stage,
+        ),
+        make_protected_registration_check(
+            check_id="source_approval_mode_is_expected",
+            label="来源 mode 为 approval_dry_run",
+            passed=source.mode == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE,
+            message="来源 approval dry-run mode 正确。" if source.mode == PROTECTED_RESOURCE_REGISTRATION_APPROVAL_DRY_RUN_MODE else "来源 approval dry-run mode 不匹配。",
+            next_action="使用 approval_dry_run 结果。",
+            evidence_summary=source.mode,
+        ),
+        make_protected_registration_check(
+            check_id="source_approval_approved_for_next_stage",
+            label="来源已批准下一阶段",
+            passed=source.approved_for_next_stage is True,
+            message="来源 approval dry-run 已 approved_for_next_stage。" if source.approved_for_next_stage is True else "来源 approval dry-run 未 approved_for_next_stage。",
+            next_action="先让 Stage 3.4.28 approval dry-run 通过。",
+            evidence_summary=str(source.approved_for_next_stage),
+        ),
+        make_protected_registration_check(
+            check_id="source_ready_for_command_create_next_stage",
+            label="来源 ready_for_command_create_next_stage",
+            passed=source.ready_for_command_create_next_stage is True,
+            message="来源已允许 command-create 阶段。" if source.ready_for_command_create_next_stage is True else "来源未允许 command-create 阶段。",
+            next_action="先让 Stage 3.4.28 approval dry-run 通过。",
+            evidence_summary=str(source.ready_for_command_create_next_stage),
+        ),
+        make_protected_registration_check(
+            check_id="all_command_create_confirmations_present",
+            label="命令创建确认完整",
+            passed=all(bool(value) for value in confirmation_values.values()),
+            message="所有 command-create 安全确认项已勾选。" if all(bool(value) for value in confirmation_values.values()) else "仍有 command-create 安全确认项未勾选。",
+            next_action="补齐所有安全确认项。",
+            evidence_summary=f"{sum(1 for value in confirmation_values.values() if value)}/{len(confirmation_values)}",
+        ),
+        make_protected_registration_check(
+            check_id="create_local_pending_command_only_confirmed",
+            label="确认只创建本地 pending command",
+            passed=confirmations.create_local_pending_command_only,
+            message="已确认只创建本地 pending command 记录。" if confirmations.create_local_pending_command_only else "尚未确认只创建本地 pending command 记录。",
+            next_action="勾选 create local pending command only 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_real_resource_creation_confirmed",
+            label="确认不创建真实资源",
+            passed=confirmations.no_real_resource_creation,
+            message="已确认不创建真实资源。" if confirmations.no_real_resource_creation else "尚未确认不创建真实资源。",
+            next_action="勾选 no real resource creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_transit_resource_creation_confirmed",
+            label="确认不创建 transit_resource",
+            passed=confirmations.no_transit_resource_creation,
+            message="已确认不创建 transit_resource。" if confirmations.no_transit_resource_creation else "尚未确认不创建 transit_resource。",
+            next_action="勾选 no transit_resource creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_landing_node_creation_confirmed",
+            label="确认不创建 landing_node",
+            passed=confirmations.no_landing_node_creation,
+            message="已确认不创建 landing_node。" if confirmations.no_landing_node_creation else "尚未确认不创建 landing_node。",
+            next_action="勾选 no landing_node creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_worker_remote_execution_confirmed",
+            label="确认不触发 Worker 远程执行",
+            passed=confirmations.no_worker_remote_execution,
+            message="已确认不触发 Worker 远程执行。" if confirmations.no_worker_remote_execution else "尚未确认不触发 Worker 远程执行。",
+            next_action="勾选 no worker remote execution 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_transit_route_creation_confirmed",
+            label="确认不创建 TransitRoute",
+            passed=confirmations.no_transit_route_creation,
+            message="已确认不创建 TransitRoute。" if confirmations.no_transit_route_creation else "尚未确认不创建 TransitRoute。",
+            next_action="勾选 no TransitRoute creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_haproxy_route_creation_confirmed",
+            label="确认不创建 HAProxy route",
+            passed=confirmations.no_haproxy_route_creation,
+            message="已确认不创建 HAProxy route。" if confirmations.no_haproxy_route_creation else "尚未确认不创建 HAProxy route。",
+            next_action="勾选 no HAProxy route creation 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_listening_port_change_confirmed",
+            label="确认不新增/变更监听端口",
+            passed=confirmations.no_listening_port_change,
+            message="已确认不新增或变更监听端口。" if confirmations.no_listening_port_change else "尚未确认不新增或变更监听端口。",
+            next_action="勾选 no listening port change 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_ssh_or_remote_execution_confirmed",
+            label="确认不 SSH / 不远程执行",
+            passed=confirmations.no_ssh_or_remote_execution,
+            message="已确认不 SSH、不远程执行。" if confirmations.no_ssh_or_remote_execution else "尚未确认不 SSH、不远程执行。",
+            next_action="勾选 no SSH or remote execution 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_firewall_change_confirmed",
+            label="确认不改防火墙",
+            passed=confirmations.no_firewall_change,
+            message="已确认不修改防火墙。" if confirmations.no_firewall_change else "尚未确认不修改防火墙。",
+            next_action="勾选 no firewall change 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="no_cutover_confirmed",
+            label="确认不 cutover",
+            passed=confirmations.no_cutover,
+            message="已确认不 cutover。" if confirmations.no_cutover else "尚未确认不 cutover。",
+            next_action="勾选 no cutover 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="ordinary_product_ui_unchanged_confirmed",
+            label="确认普通产品 UI 不变",
+            passed=confirmations.ordinary_product_ui_unchanged,
+            message="已确认普通产品 UI 不改。" if confirmations.ordinary_product_ui_unchanged else "尚未确认普通产品 UI 不改。",
+            next_action="勾选 ordinary product UI unchanged 确认项。",
+        ),
+        make_protected_registration_check(
+            check_id="sensitive_fields_redacted_confirmed",
+            label="确认敏感字段已脱敏",
+            passed=confirmations.sensitive_fields_redacted,
+            message="已确认输入与响应不包含完整敏感值。" if confirmations.sensitive_fields_redacted else "尚未确认敏感字段脱敏。",
+            next_action="确认没有完整客户端配置、凭证、命令或密钥后勾选。",
+        ),
+        make_protected_registration_check(
+            check_id="response_sensitive_content_absent",
+            label="响应不包含敏感值",
+            passed=not payload_has_sensitive_value,
+            message="Command-create 响应未回显完整客户端链接或凭证类敏感值。" if not payload_has_sensitive_value else "Command-create payload 包含疑似敏感值，已阻止创建 pending command。",
+            next_action="移除 payload 中的完整客户端链接、密钥、命令或凭证后重新提交。",
+            evidence_summary="clean" if not payload_has_sensitive_value else "redacted",
+        ),
+    ]
+    danger_failures = [check for check in checks if check["severity"] == "danger" and not check["passed"]]
+    if danger_failures:
+        return {
+            "created": False,
+            "stage": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE,
+            "mode": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_MODE,
+            "dry_run": False,
+            "command_id": None,
+            "task_id": None,
+            "registration_command_id": None,
+            "command_status": None,
+            "ready_for_execution_next_stage": False,
+            "idempotency_key": idempotency_key,
+            "idempotent_reuse": False,
+            "checks": checks,
+            "blocked_reasons": [check["message"] for check in danger_failures],
+            "normalized_command_preview": normalized_command_preview,
+            "safety_boundary": normalized_command_preview["safety_boundary"],
+            "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE,
+        }
+
+    existing_command = protected_registration_existing_command_by_idempotency_key(db, idempotency_key)
+    if existing_command:
+        return {
+            "created": True,
+            "stage": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE,
+            "mode": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_MODE,
+            "dry_run": False,
+            "command_id": existing_command.id,
+            "task_id": existing_command.id,
+            "registration_command_id": existing_command.id,
+            "command_status": existing_command.status,
+            "ready_for_execution_next_stage": existing_command.status == PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS,
+            "idempotency_key": idempotency_key,
+            "idempotent_reuse": True,
+            "checks": checks,
+            "blocked_reasons": [],
+            "normalized_command_preview": normalized_command_preview,
+            "safety_boundary": normalized_command_preview["safety_boundary"],
+            "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE,
+        }
+
+    command_id = str(uuid.uuid4())
+    command_task = Task(
+        id=command_id,
+        task_type=PROTECTED_RESOURCE_REGISTRATION_COMMAND_TASK_TYPE,
+        status=PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS,
+        current_step="awaiting_stage_3_4_30_execution_verify",
+        progress=0,
+        result_data={
+            "stage": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE,
+            "mode": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_MODE,
+            "command_status": PROTECTED_RESOURCE_REGISTRATION_COMMAND_STATUS,
+            "idempotency_key": idempotency_key,
+            "normalized_command_preview": normalized_command_preview,
+            "safety_boundary": normalized_command_preview["safety_boundary"],
+            "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE,
+        },
+    )
+    db.add(command_task)
+    db.commit()
+    return {
+        "created": True,
+        "stage": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_STAGE,
+        "mode": PROTECTED_RESOURCE_REGISTRATION_COMMAND_CREATE_MODE,
+        "dry_run": False,
+        "command_id": command_task.id,
+        "task_id": command_task.id,
+        "registration_command_id": command_task.id,
+        "command_status": command_task.status,
+        "ready_for_execution_next_stage": True,
+        "idempotency_key": idempotency_key,
+        "idempotent_reuse": False,
+        "checks": checks,
+        "blocked_reasons": [],
+        "normalized_command_preview": normalized_command_preview,
+        "safety_boundary": normalized_command_preview["safety_boundary"],
+        "recommended_next_stage": PROTECTED_RESOURCE_REGISTRATION_EXECUTION_VERIFY_NEXT_STAGE,
+    }
+
+
 def has_matching_successful_transit_readonly_preflight(
     db: Session,
     *,
@@ -2205,6 +2589,22 @@ def protected_resource_registration_approval_dry_run(
 
     result = build_protected_resource_registration_approval_dry_run(payload)
     return success_response(result, "protected resource registration approval dry-run completed")
+
+
+@router.post("/protected-resource-registration-command-create")
+def protected_resource_registration_command_create(
+    payload: ProtectedResourceRegistrationCommandCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    session = require_admin_session(db, request)
+    if not session:
+        return auth_error()
+    if not csrf_valid(request, session):
+        return csrf_error()
+
+    result = build_protected_resource_registration_command_create(db, payload)
+    return success_response(result, "protected resource registration command-create completed")
 
 
 @router.get("/{route_id}")

@@ -7511,6 +7511,57 @@ button.ghost-action {
   font-size: 12px;
 }
 
+.advanced-debug-v2-registration-command-create {
+  background: #ffffff;
+  border: 1px solid #93c5fd;
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.advanced-debug-v2-registration-command-create-ready {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.advanced-debug-v2-registration-command-create-blocked {
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+
+.advanced-debug-v2-registration-command-create > header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.advanced-debug-v2-registration-command-create > header strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.advanced-debug-v2-registration-command-create > header p {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 4px 0 0;
+  max-width: 820px;
+}
+
+.advanced-debug-v2-registration-command-source {
+  display: grid;
+  gap: 10px;
+}
+
+.advanced-debug-v2-registration-command-source textarea {
+  min-height: 108px;
+  resize: vertical;
+}
+
 .advanced-debug-v2-form-grid {
   display: grid;
   gap: 14px;
