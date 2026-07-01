@@ -7103,6 +7103,149 @@ button.ghost-action {
   overflow-wrap: anywhere;
 }
 
+.advanced-debug-v2-protected-registration {
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.advanced-debug-v2-protected-registration-ready {
+  background: #f8fff9;
+  border-color: #bbf7d0;
+}
+
+.advanced-debug-v2-protected-registration-blocked {
+  background: #fffafa;
+  border-color: #fecaca;
+}
+
+.advanced-debug-v2-protected-registration-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-protected-registration-grid > div {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+}
+
+.advanced-debug-v2-protected-registration-grid span {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 850;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-protected-registration-grid strong {
+  color: #0f172a;
+  font-size: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-protected-registration-section {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.advanced-debug-v2-protected-registration-section header {
+  display: grid;
+  gap: 4px;
+}
+
+.advanced-debug-v2-protected-registration-section header strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.advanced-debug-v2-protected-registration-section header p {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.advanced-debug-v2-protected-registration-source {
+  border-color: #bfdbfe;
+}
+
+.advanced-debug-v2-protected-registration-source .advanced-debug-v2-protected-registration-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-protected-registration-confirm .advanced-debug-v2-confirmation-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-protected-registration-preview {
+  border-color: #fed7aa;
+}
+
+.advanced-debug-v2-protected-registration-preview pre {
+  background: #0f172a;
+  border-radius: 10px;
+  color: #dbeafe;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.advanced-debug-v2-protected-registration-blocked-list {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.advanced-debug-v2-protected-registration-blocked-list strong {
+  color: #9a3412;
+  font-size: 13px;
+}
+
+.advanced-debug-v2-protected-registration-blocked-list ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.advanced-debug-v2-protected-registration-blocked-list li {
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.advanced-debug-v2-protected-registration-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .advanced-debug-v2-form-grid {
   display: grid;
   gap: 14px;

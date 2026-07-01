@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { ProductIcon } from "@/components/ProductIcons";
 import {
@@ -21,6 +21,8 @@ import {
 const FINAL_APPROVAL_TEXT = "CONFIRM_HAPROXY_ROUTE_CREATE_FINAL_APPROVAL_ONLY";
 const REAL_EXECUTION_STAGE = "Stage 3.3.139-new-transit-haproxy-route-create-real-execution";
 const MANUAL_REAL_EXECUTION_CONFIRM = "CONFIRM_CREATE_HAPROXY_REAL_EXECUTION_COMMAND";
+const PROTECTED_RESOURCE_REGISTRATION_STAGE = "Stage 3.4.26-advanced-debug-protected-resource-registration-ui";
+const PROTECTED_RESOURCE_REGISTRATION_NEXT_STAGE = "Stage 3.4.27-advanced-debug-protected-resource-registration-dry-run";
 
 type DebugForm = {
   dry_run_command_id: string;
@@ -99,6 +101,78 @@ type ResourceRegistrationPlan = {
   recommended_next_stage: string;
 };
 
+type ProtectedResourceRegistrationDraft = {
+  transit_resource_name: string;
+  transit_entry_host: string;
+  transit_entry_port: string;
+  transit_entry_region: string;
+  transit_exit_region: string;
+  transit_resource_type: "server";
+  transit_expected_status: "active" | "worker_online";
+  transit_worker_role: "transit";
+  transit_worker_binding_required: boolean;
+  landing_node_name: string;
+  landing_vps_ip: string;
+  landing_xray_port: string;
+  landing_expected_status: "active";
+  landing_share_link_handling: "do_not_export_or_modify_full_share_link";
+  source_dry_run_command_id: string;
+  source_candidate_route_name: string;
+  source_candidate_listen_port: string;
+  source_candidate_landing_host: string;
+  source_candidate_landing_port: string;
+  manual_confirm_transit_host: boolean;
+  manual_confirm_worker_binding: boolean;
+  manual_confirm_landing_host: boolean;
+  manual_confirm_landing_port: boolean;
+  manual_confirm_no_share_link_export: boolean;
+  manual_confirm_no_remote_execution: boolean;
+  manual_confirm_no_firewall_change: boolean;
+  manual_confirm_no_cutover: boolean;
+};
+
+type ProtectedResourceRegistrationPayloadPreview = {
+  stage: typeof PROTECTED_RESOURCE_REGISTRATION_STAGE;
+  mode: "preview_only";
+  source: {
+    dry_run_command_id: string;
+    route_name: string;
+    planned_listen_port: number | null;
+    landing_target_host: string;
+    landing_target_port: number | null;
+    candidate_integrity_ready: boolean;
+  };
+  transit_resource_registration: {
+    name: string;
+    resource_type: "server";
+    entry_host: string;
+    entry_port: number | null;
+    entry_region: string;
+    exit_region: string;
+    expected_status: "active" | "worker_online";
+    worker_role: "transit";
+    worker_binding_required: boolean;
+  };
+  landing_node_registration: {
+    node_name: string;
+    vps_ip: string;
+    xray_port: number | null;
+    expected_status: "active";
+    share_link_handling: "do_not_export_or_modify_full_share_link";
+  };
+  confirmations: {
+    manual_confirm_transit_host: boolean;
+    manual_confirm_worker_binding: boolean;
+    manual_confirm_landing_host: boolean;
+    manual_confirm_landing_port: boolean;
+    manual_confirm_no_share_link_export: boolean;
+    manual_confirm_no_remote_execution: boolean;
+    manual_confirm_no_firewall_change: boolean;
+    manual_confirm_no_cutover: boolean;
+  };
+  safety_boundary: string[];
+};
+
 const defaultForm: DebugForm = {
   dry_run_command_id: "",
   transit_resource_id: "",
@@ -135,6 +209,21 @@ const safetyBoundaryItems = [
   "不修改防火墙 / 云防火墙 / 云安全组",
   "不读取或修改 nodes.share_link",
   "不写 transit_routes.share_link",
+  "不 cutover",
+];
+
+const protectedRegistrationSafetyBoundary = [
+  "preview_only",
+  "不提交后端",
+  "不创建 transit_resource",
+  "不创建 landing_node",
+  "不创建 WorkerCommand",
+  "不创建 TransitRoute",
+  "不创建 HAProxy route",
+  "不绑定监听端口",
+  "不 SSH / 不远程执行",
+  "不修改防火墙 / 云安全组 / 云防火墙",
+  "不读取、不输出、不修改完整 share_link",
   "不 cutover",
 ];
 
@@ -764,6 +853,191 @@ function formatResourceRegistrationPlanText(
   return lines.join("\n");
 }
 
+function buildProtectedResourceRegistrationDraft(
+  candidate: HaproxyRuntimeDebugDryRunCandidate | null,
+): ProtectedResourceRegistrationDraft {
+  const candidateRouteName = candidate?.route_name ?? "";
+  const landingNameHint = candidate?.route_display_name ?? candidateRouteName;
+  return {
+    transit_resource_name: "",
+    transit_entry_host: "",
+    transit_entry_port: "",
+    transit_entry_region: "",
+    transit_exit_region: "",
+    transit_resource_type: "server",
+    transit_expected_status: "active",
+    transit_worker_role: "transit",
+    transit_worker_binding_required: true,
+    landing_node_name: landingNameHint,
+    landing_vps_ip: candidate?.landing_target_host ?? "",
+    landing_xray_port: candidate?.landing_target_port ? String(candidate.landing_target_port) : "",
+    landing_expected_status: "active",
+    landing_share_link_handling: "do_not_export_or_modify_full_share_link",
+    source_dry_run_command_id: candidate?.id ?? "",
+    source_candidate_route_name: candidateRouteName,
+    source_candidate_listen_port: candidate?.planned_listen_port ? String(candidate.planned_listen_port) : "",
+    source_candidate_landing_host: candidate?.landing_target_host ?? "",
+    source_candidate_landing_port: candidate?.landing_target_port ? String(candidate.landing_target_port) : "",
+    manual_confirm_transit_host: false,
+    manual_confirm_worker_binding: false,
+    manual_confirm_landing_host: false,
+    manual_confirm_landing_port: false,
+    manual_confirm_no_share_link_export: false,
+    manual_confirm_no_remote_execution: false,
+    manual_confirm_no_firewall_change: false,
+    manual_confirm_no_cutover: false,
+  };
+}
+
+function validateProtectedResourceRegistrationDraft(draft: ProtectedResourceRegistrationDraft) {
+  const errors: string[] = [];
+  const requiredFields: Array<[keyof ProtectedResourceRegistrationDraft, string]> = [
+    ["transit_resource_name", "transit_resource_name 不能为空"],
+    ["transit_entry_host", "transit_entry_host 不能为空"],
+    ["transit_entry_region", "transit_entry_region 不能为空"],
+    ["transit_exit_region", "transit_exit_region 不能为空"],
+    ["landing_node_name", "landing_node_name 不能为空"],
+    ["landing_vps_ip", "landing_vps_ip 不能为空"],
+  ];
+
+  for (const [key, message] of requiredFields) {
+    const value = draft[key];
+    if (typeof value === "string" && !value.trim()) {
+      errors.push(message);
+    }
+  }
+  if (!draft.transit_entry_port.trim() || parsePort(draft.transit_entry_port) === null) {
+    errors.push("transit_entry_port 必须是 1-65535 的整数");
+  }
+  if (!draft.landing_xray_port.trim() || parsePort(draft.landing_xray_port) === null) {
+    errors.push("landing_xray_port 必须是 1-65535 的整数");
+  }
+
+  const confirmationChecks: Array<[keyof ProtectedResourceRegistrationDraft, string]> = [
+    ["manual_confirm_transit_host", "需要人工确认中转服务器入口 host / IP"],
+    ["manual_confirm_worker_binding", "需要人工确认 transit Worker 后续需要在线并绑定"],
+    ["manual_confirm_landing_host", "需要人工确认落地 VPS IP 仍有效"],
+    ["manual_confirm_landing_port", "需要人工确认落地 Xray / Reality 端口仍有效"],
+    ["manual_confirm_no_share_link_export", "需要确认不读取、不输出、不修改完整 share_link"],
+    ["manual_confirm_no_remote_execution", "需要确认本阶段不 SSH、不远程执行"],
+    ["manual_confirm_no_firewall_change", "需要确认本阶段不修改防火墙 / 云安全组 / 云防火墙"],
+    ["manual_confirm_no_cutover", "需要确认本阶段不 cutover"],
+  ];
+  for (const [key, message] of confirmationChecks) {
+    if (!draft[key]) {
+      errors.push(message);
+    }
+  }
+  return errors;
+}
+
+function protectedRegistrationManualConfirmationCount(draft: ProtectedResourceRegistrationDraft) {
+  return [
+    draft.manual_confirm_transit_host,
+    draft.manual_confirm_worker_binding,
+    draft.manual_confirm_landing_host,
+    draft.manual_confirm_landing_port,
+    draft.manual_confirm_no_share_link_export,
+    draft.manual_confirm_no_remote_execution,
+    draft.manual_confirm_no_firewall_change,
+    draft.manual_confirm_no_cutover,
+  ].filter(Boolean).length;
+}
+
+function buildProtectedResourceRegistrationPayloadPreview(
+  draft: ProtectedResourceRegistrationDraft,
+  candidate: HaproxyRuntimeDebugDryRunCandidate | null,
+): ProtectedResourceRegistrationPayloadPreview {
+  return {
+    stage: PROTECTED_RESOURCE_REGISTRATION_STAGE,
+    mode: "preview_only",
+    source: {
+      dry_run_command_id: draft.source_dry_run_command_id.trim(),
+      route_name: draft.source_candidate_route_name.trim(),
+      planned_listen_port: parsePort(draft.source_candidate_listen_port),
+      landing_target_host: draft.source_candidate_landing_host.trim(),
+      landing_target_port: parsePort(draft.source_candidate_landing_port),
+      candidate_integrity_ready: candidate?.integrity_ready === true,
+    },
+    transit_resource_registration: {
+      name: draft.transit_resource_name.trim(),
+      resource_type: draft.transit_resource_type,
+      entry_host: draft.transit_entry_host.trim(),
+      entry_port: parsePort(draft.transit_entry_port),
+      entry_region: draft.transit_entry_region.trim(),
+      exit_region: draft.transit_exit_region.trim(),
+      expected_status: draft.transit_expected_status,
+      worker_role: draft.transit_worker_role,
+      worker_binding_required: draft.transit_worker_binding_required,
+    },
+    landing_node_registration: {
+      node_name: draft.landing_node_name.trim(),
+      vps_ip: draft.landing_vps_ip.trim(),
+      xray_port: parsePort(draft.landing_xray_port),
+      expected_status: draft.landing_expected_status,
+      share_link_handling: draft.landing_share_link_handling,
+    },
+    confirmations: {
+      manual_confirm_transit_host: draft.manual_confirm_transit_host,
+      manual_confirm_worker_binding: draft.manual_confirm_worker_binding,
+      manual_confirm_landing_host: draft.manual_confirm_landing_host,
+      manual_confirm_landing_port: draft.manual_confirm_landing_port,
+      manual_confirm_no_share_link_export: draft.manual_confirm_no_share_link_export,
+      manual_confirm_no_remote_execution: draft.manual_confirm_no_remote_execution,
+      manual_confirm_no_firewall_change: draft.manual_confirm_no_firewall_change,
+      manual_confirm_no_cutover: draft.manual_confirm_no_cutover,
+    },
+    safety_boundary: protectedRegistrationSafetyBoundary,
+  };
+}
+
+function formatProtectedResourceRegistrationExplanation(
+  draft: ProtectedResourceRegistrationDraft,
+  errors: string[],
+  readyForNextStage: boolean,
+) {
+  const lines = [
+    "Protected Resource Registration Preparation",
+    "",
+    `stage: ${PROTECTED_RESOURCE_REGISTRATION_STAGE}`,
+    "mode: preview_only",
+    `draft_ready_for_next_stage: ${readyForNextStage ? "true" : "false"}`,
+    `recommended_next_stage: ${PROTECTED_RESOURCE_REGISTRATION_NEXT_STAGE}`,
+    "",
+    "Source Candidate",
+    `- dry_run_command_id: ${valueOrDash(draft.source_dry_run_command_id)}`,
+    `- route_name: ${valueOrDash(draft.source_candidate_route_name)}`,
+    `- planned_listen_port: ${valueOrDash(draft.source_candidate_listen_port)}`,
+    `- landing_target_host: ${valueOrDash(draft.source_candidate_landing_host)}`,
+    `- landing_target_port: ${valueOrDash(draft.source_candidate_landing_port)}`,
+    "",
+    "Transit Resource Draft",
+    `- name: ${valueOrDash(draft.transit_resource_name)}`,
+    `- resource_type: ${draft.transit_resource_type}`,
+    `- entry_host: ${valueOrDash(draft.transit_entry_host)}`,
+    `- entry_port: ${valueOrDash(draft.transit_entry_port)}`,
+    `- entry_region: ${valueOrDash(draft.transit_entry_region)}`,
+    `- exit_region: ${valueOrDash(draft.transit_exit_region)}`,
+    `- expected_status: ${draft.transit_expected_status}`,
+    `- worker_role: ${draft.transit_worker_role}`,
+    `- worker_binding_required: ${draft.transit_worker_binding_required ? "true" : "false"}`,
+    "",
+    "Landing Node Draft",
+    `- node_name: ${valueOrDash(draft.landing_node_name)}`,
+    `- vps_ip: ${valueOrDash(draft.landing_vps_ip)}`,
+    `- xray_port: ${valueOrDash(draft.landing_xray_port)}`,
+    `- expected_status: ${draft.landing_expected_status}`,
+    `- share_link_handling: ${draft.landing_share_link_handling}`,
+    "",
+    "Blocked Items",
+    ...(errors.length ? errors.map((error) => `- ${error}`) : ["- none"]),
+    "",
+    "Safety Boundary",
+    ...protectedRegistrationSafetyBoundary.map((item) => `- ${item}`),
+  ];
+  return lines.join("\n");
+}
+
 function resultStatus(result: TransitHaproxyRouteRealExecutionReadinessResult | null) {
   if (!result) {
     return { label: "未运行", tone: "neutral" };
@@ -884,6 +1158,9 @@ export function AdvancedHaproxyDebugPanel() {
   const [selectedLandingNodeId, setSelectedLandingNodeId] = useState("");
   const [selectedDryRunCommandId, setSelectedDryRunCommandId] = useState("");
   const [contextMessage, setContextMessage] = useState("");
+  const [protectedRegistrationDraft, setProtectedRegistrationDraft] = useState<ProtectedResourceRegistrationDraft>(() =>
+    buildProtectedResourceRegistrationDraft(null),
+  );
 
   const expectedRealExecutionText = useMemo(
     () => readinessResult?.expected_real_execution_text ?? expectedTextForPort(form.planned_listen_port),
@@ -910,7 +1187,20 @@ export function AdvancedHaproxyDebugPanel() {
     () => buildResourceRegistrationPlan(selectedDryRunCandidate, rebuildPlan),
     [selectedDryRunCandidate, rebuildPlan],
   );
+  useEffect(() => {
+    setProtectedRegistrationDraft(buildProtectedResourceRegistrationDraft(selectedDryRunCandidate));
+  }, [selectedDryRunCandidate?.id]);
   const selectedCandidateIntegrityReady = selectedDryRunCandidate?.integrity_ready === true;
+  const protectedRegistrationErrors = useMemo(
+    () => validateProtectedResourceRegistrationDraft(protectedRegistrationDraft),
+    [protectedRegistrationDraft],
+  );
+  const protectedRegistrationPayloadPreview = useMemo(
+    () => buildProtectedResourceRegistrationPayloadPreview(protectedRegistrationDraft, selectedDryRunCandidate),
+    [protectedRegistrationDraft, selectedDryRunCandidate],
+  );
+  const protectedRegistrationReady = Boolean(selectedDryRunCandidate) && protectedRegistrationErrors.length === 0;
+  const protectedRegistrationConfirmationCount = protectedRegistrationManualConfirmationCount(protectedRegistrationDraft);
   const canRunReadiness = formErrors.length === 0 && Boolean(requestPayload) && selectedCandidateIntegrityReady;
   const selectedTransitResource = useMemo(
     () => debugContext?.transit_resources.find((resource) => resource.id === selectedTransitResourceId) ?? null,
@@ -947,6 +1237,13 @@ export function AdvancedHaproxyDebugPanel() {
     setRealExecutionResult(null);
   }
 
+  function updateProtectedRegistrationDraft<K extends keyof ProtectedResourceRegistrationDraft>(
+    key: K,
+    value: ProtectedResourceRegistrationDraft[K],
+  ) {
+    setProtectedRegistrationDraft((current) => ({ ...current, [key]: value }));
+  }
+
   function clearForm() {
     setForm(defaultForm);
     setConfirmations(defaultConfirmations);
@@ -955,6 +1252,11 @@ export function AdvancedHaproxyDebugPanel() {
     setManualRealExecutionConfirm("");
     setMessage("");
     setContextMessage("");
+  }
+
+  function clearProtectedRegistrationDraft() {
+    setProtectedRegistrationDraft(buildProtectedResourceRegistrationDraft(selectedDryRunCandidate));
+    setMessage("登记草案已清空为当前 candidate 的默认 hint。");
   }
 
   async function copyText(text: string, successMessage: string) {
@@ -1474,6 +1776,273 @@ export function AdvancedHaproxyDebugPanel() {
                   <span>建议下一阶段</span>
                   <strong>{registrationPlan.recommended_next_stage}</strong>
                 </footer>
+              </section>
+            ) : null}
+
+            {selectedDryRunCandidate ? (
+              <section
+                className={`advanced-debug-v2-protected-registration advanced-debug-v2-protected-registration-${
+                  protectedRegistrationReady ? "ready" : "blocked"
+                }`}
+              >
+                <header className="advanced-debug-v2-card-title">
+                  <div>
+                    <h2>受保护资源登记准备</h2>
+                    <p>
+                      {selectedDryRunCandidate.integrity_ready
+                        ? "当前 candidate 上下文完整，通常不需要登记新资源。此区域仅用于查看，不建议创建新的登记 payload。"
+                        : "当前 candidate 引用的正式资源上下文不完整。可以在这里准备下一阶段受保护资源登记所需的 payload。本阶段只准备，不提交。"}
+                    </p>
+                  </div>
+                </header>
+
+                <div className="advanced-debug-v2-protected-registration-grid">
+                  <div>
+                    <span>draft_ready_for_next_stage</span>
+                    <strong>{protectedRegistrationReady ? "true" : "false"}</strong>
+                  </div>
+                  <div>
+                    <span>blocked_fields_count</span>
+                    <strong>{protectedRegistrationErrors.length}</strong>
+                  </div>
+                  <div>
+                    <span>manual_confirmations_count</span>
+                    <strong>{protectedRegistrationConfirmationCount} / 8</strong>
+                  </div>
+                  <div>
+                    <span>recommended_next_stage</span>
+                    <strong>{PROTECTED_RESOURCE_REGISTRATION_NEXT_STAGE}</strong>
+                  </div>
+                </div>
+
+                <div className="advanced-debug-v2-context-warning">
+                  candidate 字段只是历史 hint，必须人工确认，不代表当前真实状态。此卡片不会提交后端、不会创建资源、不会创建 WorkerCommand。
+                </div>
+
+                <section className="advanced-debug-v2-protected-registration-section advanced-debug-v2-protected-registration-source">
+                  <header>
+                    <strong>来源 candidate</strong>
+                    <p>以下字段来自历史 dry-run candidate，仅作为登记准备参考。</p>
+                  </header>
+                  <div className="advanced-debug-v2-protected-registration-grid">
+                    {[
+                      ["source_dry_run_command_id", protectedRegistrationDraft.source_dry_run_command_id],
+                      ["source_candidate_route_name", protectedRegistrationDraft.source_candidate_route_name],
+                      ["source_candidate_listen_port", protectedRegistrationDraft.source_candidate_listen_port],
+                      ["source_candidate_landing_host", protectedRegistrationDraft.source_candidate_landing_host],
+                      ["source_candidate_landing_port", protectedRegistrationDraft.source_candidate_landing_port],
+                      ["candidate_integrity_status", selectedDryRunCandidate.integrity_ready ? "ready" : "blocked"],
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <span>{label}</span>
+                        <strong>{valueOrDash(value)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="advanced-debug-v2-protected-registration-section">
+                  <header>
+                    <strong>中转资源登记准备</strong>
+                    <p>中转资源字段必须人工填写；不会从历史 candidate 自动硬填入口 host、端口或区域。</p>
+                  </header>
+                  <div className="advanced-debug-v2-form-grid">
+                    <Field label="transit_resource_name" required>
+                      <input
+                        value={protectedRegistrationDraft.transit_resource_name}
+                        placeholder="例如：广州IEPL-香港出口01"
+                        onChange={(event) => updateProtectedRegistrationDraft("transit_resource_name", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="transit_entry_host" required>
+                      <input
+                        value={protectedRegistrationDraft.transit_entry_host}
+                        placeholder="例如：109.244.79.147"
+                        onChange={(event) => updateProtectedRegistrationDraft("transit_entry_host", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="transit_entry_port" required>
+                      <input
+                        value={protectedRegistrationDraft.transit_entry_port}
+                        placeholder="例如：22"
+                        onChange={(event) => updateProtectedRegistrationDraft("transit_entry_port", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="transit_entry_region" required>
+                      <input
+                        value={protectedRegistrationDraft.transit_entry_region}
+                        placeholder="例如：广州"
+                        onChange={(event) => updateProtectedRegistrationDraft("transit_entry_region", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="transit_exit_region" required>
+                      <input
+                        value={protectedRegistrationDraft.transit_exit_region}
+                        placeholder="例如：香港"
+                        onChange={(event) => updateProtectedRegistrationDraft("transit_exit_region", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="transit_expected_status" required>
+                      <select
+                        value={protectedRegistrationDraft.transit_expected_status}
+                        onChange={(event) =>
+                          updateProtectedRegistrationDraft(
+                            "transit_expected_status",
+                            event.target.value as ProtectedResourceRegistrationDraft["transit_expected_status"],
+                          )
+                        }
+                      >
+                        <option value="active">active</option>
+                        <option value="worker_online">worker_online</option>
+                      </select>
+                    </Field>
+                    <Field label="transit_resource_type" required>
+                      <input value={protectedRegistrationDraft.transit_resource_type} readOnly />
+                    </Field>
+                    <Field label="transit_worker_role" required>
+                      <input value={protectedRegistrationDraft.transit_worker_role} readOnly />
+                    </Field>
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.transit_worker_binding_required}
+                      label="transit_worker_binding_required"
+                      detail="默认 true，仅表示后续登记必须绑定在线 transit Worker。"
+                      onChange={(checked) => updateProtectedRegistrationDraft("transit_worker_binding_required", checked)}
+                    />
+                  </div>
+                </section>
+
+                <section className="advanced-debug-v2-protected-registration-section">
+                  <header>
+                    <strong>落地节点登记准备</strong>
+                    <p>落地节点名称、VPS IP 与端口来自 candidate hint，必须人工核对后才能进入下一阶段。</p>
+                  </header>
+                  <div className="advanced-debug-v2-form-grid">
+                    <Field label="landing_node_name" required>
+                      <input
+                        value={protectedRegistrationDraft.landing_node_name}
+                        onChange={(event) => updateProtectedRegistrationDraft("landing_node_name", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="landing_vps_ip" required>
+                      <input
+                        value={protectedRegistrationDraft.landing_vps_ip}
+                        onChange={(event) => updateProtectedRegistrationDraft("landing_vps_ip", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="landing_xray_port" required>
+                      <input
+                        value={protectedRegistrationDraft.landing_xray_port}
+                        onChange={(event) => updateProtectedRegistrationDraft("landing_xray_port", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="landing_expected_status" required>
+                      <input value={protectedRegistrationDraft.landing_expected_status} readOnly />
+                    </Field>
+                    <Field label="landing_share_link_handling" required>
+                      <input value={protectedRegistrationDraft.landing_share_link_handling} readOnly />
+                    </Field>
+                  </div>
+                </section>
+
+                <section className="advanced-debug-v2-protected-registration-section advanced-debug-v2-protected-registration-confirm">
+                  <header>
+                    <strong>人工确认</strong>
+                    <p>全部确认后，登记草案才会标记为 ready_for_next_stage；即使 ready，本阶段仍只能复制 payload。</p>
+                  </header>
+                  <div className="advanced-debug-v2-confirmation-grid">
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.manual_confirm_transit_host}
+                      label="我已人工确认中转服务器入口 host / IP"
+                      onChange={(checked) => updateProtectedRegistrationDraft("manual_confirm_transit_host", checked)}
+                    />
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.manual_confirm_worker_binding}
+                      label="我已人工确认 transit Worker 后续需要在线并绑定"
+                      onChange={(checked) => updateProtectedRegistrationDraft("manual_confirm_worker_binding", checked)}
+                    />
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.manual_confirm_landing_host}
+                      label="我已人工确认落地 VPS IP 仍有效"
+                      onChange={(checked) => updateProtectedRegistrationDraft("manual_confirm_landing_host", checked)}
+                    />
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.manual_confirm_landing_port}
+                      label="我已人工确认落地 Xray / Reality 端口仍有效"
+                      onChange={(checked) => updateProtectedRegistrationDraft("manual_confirm_landing_port", checked)}
+                    />
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.manual_confirm_no_share_link_export}
+                      label="我确认本阶段不读取、不输出、不修改完整 share_link"
+                      onChange={(checked) => updateProtectedRegistrationDraft("manual_confirm_no_share_link_export", checked)}
+                    />
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.manual_confirm_no_remote_execution}
+                      label="我确认本阶段不 SSH、不远程执行"
+                      onChange={(checked) => updateProtectedRegistrationDraft("manual_confirm_no_remote_execution", checked)}
+                    />
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.manual_confirm_no_firewall_change}
+                      label="我确认本阶段不修改防火墙 / 云安全组 / 云防火墙"
+                      onChange={(checked) => updateProtectedRegistrationDraft("manual_confirm_no_firewall_change", checked)}
+                    />
+                    <CheckboxRow
+                      checked={protectedRegistrationDraft.manual_confirm_no_cutover}
+                      label="我确认本阶段不 cutover"
+                      onChange={(checked) => updateProtectedRegistrationDraft("manual_confirm_no_cutover", checked)}
+                    />
+                  </div>
+                </section>
+
+                <section className="advanced-debug-v2-protected-registration-section advanced-debug-v2-protected-registration-preview">
+                  <header>
+                    <strong>Payload 预览</strong>
+                    <p>只读、脱敏、仅供复制到下一阶段设计；没有提交动作。</p>
+                  </header>
+                  {protectedRegistrationErrors.length ? (
+                    <div className="advanced-debug-v2-protected-registration-blocked-list">
+                      <strong>blocked items</strong>
+                      <ul>
+                        {protectedRegistrationErrors.map((error) => (
+                          <li key={error}>{error}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <div className="advanced-debug-v2-context-message">
+                      登记草案已通过本地校验，可复制给下一阶段 registration dry-run 使用。
+                    </div>
+                  )}
+                  <pre>{formatJson(protectedRegistrationPayloadPreview)}</pre>
+                </section>
+
+                <div className="advanced-debug-v2-protected-registration-actions">
+                  <button
+                    type="button"
+                    className="ghost small"
+                    onClick={() => copyText(formatJson(protectedRegistrationPayloadPreview), "登记 Payload 已复制。")}
+                  >
+                    复制登记 Payload
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost small"
+                    onClick={() =>
+                      copyText(
+                        formatProtectedResourceRegistrationExplanation(
+                          protectedRegistrationDraft,
+                          protectedRegistrationErrors,
+                          protectedRegistrationReady,
+                        ),
+                        "登记说明已复制。",
+                      )
+                    }
+                  >
+                    复制登记说明
+                  </button>
+                  <button type="button" className="ghost small" onClick={clearProtectedRegistrationDraft}>
+                    清空登记草案
+                  </button>
+                </div>
               </section>
             ) : null}
 
