@@ -7405,6 +7405,112 @@ button.ghost-action {
   padding: 12px;
 }
 
+.advanced-debug-v2-registration-approval-dry-run {
+  background: #ffffff;
+  border: 1px solid #c7d2fe;
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.advanced-debug-v2-registration-approval-dry-run-ready {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.advanced-debug-v2-registration-approval-dry-run-blocked {
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+
+.advanced-debug-v2-registration-approval-dry-run > header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.advanced-debug-v2-registration-approval-dry-run > header strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.advanced-debug-v2-registration-approval-dry-run > header p {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 4px 0 0;
+  max-width: 780px;
+}
+
+.advanced-debug-v2-registration-approval-source {
+  display: grid;
+  gap: 10px;
+}
+
+.advanced-debug-v2-registration-approval-source textarea {
+  min-height: 108px;
+  resize: vertical;
+}
+
+.advanced-debug-v2-registration-approval-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-registration-approval-summary > div {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+}
+
+.advanced-debug-v2-registration-approval-summary span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.advanced-debug-v2-registration-approval-summary strong {
+  color: #0f172a;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-registration-approval-match {
+  align-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.advanced-debug-v2-registration-approval-match.matched {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.advanced-debug-v2-registration-approval-match.blocked {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+
+.advanced-debug-v2-registration-approval-match span,
+.advanced-debug-v2-registration-approval-match strong {
+  font-size: 12px;
+}
+
 .advanced-debug-v2-form-grid {
   display: grid;
   gap: 14px;
