@@ -6577,6 +6577,10 @@ button.ghost-action {
   overflow-wrap: anywhere;
 }
 
+.advanced-debug-v2-context-grid small.danger {
+  color: #dc2626;
+}
+
 .advanced-debug-v2-context-summary {
   display: grid;
   gap: 10px;
@@ -6628,6 +6632,138 @@ button.ghost-action {
   background: #fff7ed;
   border-color: #fed7aa;
   color: #9a3412;
+}
+
+.advanced-debug-v2-integrity {
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.advanced-debug-v2-integrity.success {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.advanced-debug-v2-integrity.danger {
+  background: #fff7f7;
+  border-color: #fecaca;
+}
+
+.advanced-debug-v2-integrity > header {
+  display: grid;
+  gap: 6px;
+}
+
+.advanced-debug-v2-integrity > header div {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.advanced-debug-v2-integrity > header span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.advanced-debug-v2-integrity > header strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.advanced-debug-v2-integrity > header p,
+.advanced-debug-v2-integrity > header small {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 750;
+  margin: 0;
+}
+
+.advanced-debug-v2-integrity-list {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.advanced-debug-v2-integrity-check {
+  align-items: flex-start;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 48px minmax(0, 1fr);
+  padding: 10px;
+}
+
+.advanced-debug-v2-integrity-check > span {
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 5px 7px;
+  text-align: center;
+}
+
+.advanced-debug-v2-integrity-check.success {
+  border-color: #bbf7d0;
+}
+
+.advanced-debug-v2-integrity-check.success > span {
+  background: #dcfce7;
+  color: #047857;
+}
+
+.advanced-debug-v2-integrity-check.warning {
+  border-color: #fde68a;
+}
+
+.advanced-debug-v2-integrity-check.warning > span {
+  background: #ffedd5;
+  color: #ea580c;
+}
+
+.advanced-debug-v2-integrity-check.danger {
+  border-color: #fecaca;
+}
+
+.advanced-debug-v2-integrity-check.danger > span {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.advanced-debug-v2-integrity-check div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.advanced-debug-v2-integrity-check strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.advanced-debug-v2-integrity-check code {
+  color: #2563eb;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.advanced-debug-v2-integrity-check p,
+.advanced-debug-v2-integrity-check small,
+.advanced-debug-v2-integrity-check em {
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .advanced-debug-v2-form-grid {

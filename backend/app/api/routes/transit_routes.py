@@ -359,6 +359,212 @@ def haproxy_dry_run_candidate_from_command(command: WorkerCommand) -> dict | Non
     }
 
 
+def make_haproxy_context_integrity_check(
+    *,
+    check_id: str,
+    label: str,
+    passed: bool,
+    message: str,
+    next_action: str,
+    evidence_summary: str | None = None,
+    failure_severity: str = "danger",
+) -> dict:
+    return {
+        "id": check_id,
+        "label": label,
+        "passed": passed,
+        "severity": "success" if passed else failure_severity,
+        "message": message,
+        "next_action": next_action,
+        "evidence_summary": evidence_summary,
+    }
+
+
+def attach_haproxy_dry_run_candidate_integrity(
+    candidate: dict,
+    *,
+    resources_by_id: dict[str, TransitResource],
+    nodes_by_id: dict[str, Node],
+    workers_by_id: dict[str, Worker],
+) -> dict:
+    transit_resource_id = candidate.get("transit_resource_id")
+    landing_node_id = candidate.get("landing_node_id")
+    worker_id = candidate.get("target_worker_id") or candidate.get("worker_id")
+    resource = resources_by_id.get(transit_resource_id) if transit_resource_id else None
+    node = nodes_by_id.get(landing_node_id) if landing_node_id else None
+    worker = workers_by_id.get(worker_id) if worker_id else None
+    worker_status = worker_runtime_status(worker) if worker else "missing"
+    node_vps_ip = node.vps.ip if node and node.vps else None
+    node_port = node.xray_port if node else None
+    candidate_landing_host = candidate.get("landing_target_host")
+    candidate_landing_port = candidate.get("landing_target_port")
+
+    checks = [
+        make_haproxy_context_integrity_check(
+            check_id="transit_resource_record_exists",
+            label="中转资源记录存在",
+            passed=resource is not None,
+            message="candidate 引用的中转资源记录存在。" if resource else "candidate 引用的中转资源记录不存在。",
+            next_action="重新选择存在的中转资源并重新生成 HAProxy dry-run。" if not resource else "继续检查。",
+            evidence_summary=resource.name if resource else str(transit_resource_id or "missing"),
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="transit_resource_not_deleted",
+            label="中转资源未删除",
+            passed=bool(resource and resource.deleted_at is None),
+            message="中转资源未删除。" if resource and resource.deleted_at is None else "中转资源已删除或不可用。",
+            next_action="选择未删除的中转资源并重新生成 dry-run。" if not resource or resource.deleted_at is not None else "继续检查。",
+            evidence_summary=resource.status if resource else None,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="transit_resource_status_supported",
+            label="中转资源状态支持创建",
+            passed=bool(resource and resource.status in TRANSIT_RESOURCE_CREATE_STATUSES),
+            message="中转资源状态允许 HAProxy 创建流程。" if resource and resource.status in TRANSIT_RESOURCE_CREATE_STATUSES else "中转资源状态不允许 HAProxy 创建流程。",
+            next_action="等待中转资源恢复 active / worker_online 后重新生成 dry-run。" if not resource or resource.status not in TRANSIT_RESOURCE_CREATE_STATUSES else "继续检查。",
+            evidence_summary=resource.status if resource else None,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="transit_worker_record_exists",
+            label="Transit Worker 记录存在",
+            passed=worker is not None,
+            message="candidate 引用的 Transit Worker 记录存在。" if worker else "candidate 引用的 Transit Worker 记录不存在。",
+            next_action="重新安装 / 升级中转 Worker，等待心跳后重新生成 dry-run。" if not worker else "继续检查。",
+            evidence_summary=worker.id if worker else str(worker_id or "missing"),
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="transit_worker_online",
+            label="Transit Worker 在线",
+            passed=bool(worker and worker.status == "online" and worker_status == "online"),
+            message="Transit Worker 在线且心跳有效。" if worker and worker.status == "online" and worker_status == "online" else "Transit Worker 不在线或心跳过期。",
+            next_action="等待 Transit Worker 恢复 online 后重新生成 dry-run。" if not worker or worker.status != "online" or worker_status != "online" else "继续检查。",
+            evidence_summary=worker_status,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="transit_worker_role_is_transit",
+            label="Worker role 为 transit",
+            passed=bool(worker and worker.role == "transit"),
+            message="Worker role 正确。" if worker and worker.role == "transit" else "Worker role 不是 transit。",
+            next_action="使用 transit role Worker 重新生成 dry-run。" if not worker or worker.role != "transit" else "继续检查。",
+            evidence_summary=worker.role if worker else None,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="transit_worker_interface_detected",
+            label="Worker 已上报网卡",
+            passed=bool(worker and worker.interface_name),
+            message="Worker 已上报 interface_name。" if worker and worker.interface_name else "Worker 未上报 interface_name。",
+            next_action="等待 Worker heartbeat 上报 interface_name 后重新生成 dry-run。" if not worker or not worker.interface_name else "继续检查。",
+            evidence_summary=worker.interface_name if worker else None,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="landing_node_record_exists",
+            label="落地节点记录存在",
+            passed=node is not None,
+            message="candidate 引用的落地节点记录存在。" if node else "candidate 引用的落地节点记录不存在。",
+            next_action="选择存在的 active 落地节点并重新生成 dry-run。" if not node else "继续检查。",
+            evidence_summary=node.node_name if node else str(landing_node_id or "missing"),
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="landing_node_not_deleted",
+            label="落地节点未删除",
+            passed=bool(node and node.deleted_at is None),
+            message="落地节点未删除。" if node and node.deleted_at is None else "落地节点已删除或不可用。",
+            next_action="选择未删除的落地节点并重新生成 dry-run。" if not node or node.deleted_at is not None else "继续检查。",
+            evidence_summary=node.status if node else None,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="landing_node_active",
+            label="落地节点 active",
+            passed=bool(node and node.status == "active"),
+            message="落地节点处于 active 状态。" if node and node.status == "active" else "落地节点不是 active 状态。",
+            next_action="选择 active 落地节点并重新生成 dry-run。" if not node or node.status != "active" else "继续检查。",
+            evidence_summary=node.status if node else None,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="landing_node_has_vps_ip",
+            label="落地节点有 VPS IP",
+            passed=bool(node_vps_ip),
+            message="落地节点绑定的 VPS IP 可用。" if node_vps_ip else "落地节点缺少 VPS IP。",
+            next_action="检查落地服务器记录是否存在 IP，再重新生成 dry-run。" if not node_vps_ip else "继续检查。",
+            evidence_summary=node_vps_ip,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="landing_node_xray_port_present",
+            label="落地节点有 Xray 端口",
+            passed=bool(node_port),
+            message="落地节点 xray_port 可用。" if node_port else "落地节点缺少 xray_port。",
+            next_action="选择已创建直连节点的落地记录并重新生成 dry-run。" if not node_port else "继续检查。",
+            evidence_summary=str(node_port) if node_port else None,
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="candidate_landing_host_matches_node_vps_ip",
+            label="candidate host 匹配落地 VPS IP",
+            passed=bool(node_vps_ip and candidate_landing_host == node_vps_ip),
+            message="candidate landing_target_host 与正式落地节点 VPS IP 一致。" if node_vps_ip and candidate_landing_host == node_vps_ip else "candidate landing_target_host 与正式落地节点 VPS IP 不一致。",
+            next_action="使用当前正式落地节点重新生成 dry-run。" if not node_vps_ip or candidate_landing_host != node_vps_ip else "继续检查。",
+            evidence_summary=f"candidate={candidate_landing_host or '-'} / node={node_vps_ip or '-'}",
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="candidate_landing_port_matches_node_xray_port",
+            label="candidate port 匹配落地 Xray 端口",
+            passed=bool(node_port and candidate_landing_port == node_port),
+            message="candidate landing_target_port 与正式落地节点 xray_port 一致。" if node_port and candidate_landing_port == node_port else "candidate landing_target_port 与正式落地节点 xray_port 不一致。",
+            next_action="使用当前正式落地节点重新生成 dry-run。" if not node_port or candidate_landing_port != node_port else "继续检查。",
+            evidence_summary=f"candidate={candidate_landing_port or '-'} / node={node_port or '-'}",
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="candidate_forwarding_method_is_haproxy_tcp",
+            label="candidate forwarding_method 为 haproxy_tcp",
+            passed=candidate.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP,
+            message="candidate 是 HAProxy TCP dry-run。" if candidate.get("forwarding_method") == FORWARDING_METHOD_HAPROXY_TCP else "candidate 不是 HAProxy TCP。",
+            next_action="选择 HAProxy TCP dry-run candidate。" if candidate.get("forwarding_method") != FORWARDING_METHOD_HAPROXY_TCP else "继续检查。",
+            evidence_summary=str(candidate.get("forwarding_method") or "missing"),
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="candidate_is_dry_run",
+            label="candidate 是 dry-run",
+            passed=candidate.get("dry_run") is True,
+            message="candidate 标记为 dry-run。" if candidate.get("dry_run") is True else "candidate 未标记为 dry-run。",
+            next_action="选择 dry_run=true 的 HAProxy candidate。" if candidate.get("dry_run") is not True else "继续检查。",
+            evidence_summary=str(candidate.get("dry_run")),
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="candidate_is_not_real_execution",
+            label="candidate 不是 real execution",
+            passed=candidate.get("real_execution") is False,
+            message="candidate 未执行真实创建。" if candidate.get("real_execution") is False else "candidate 已是 real execution 或字段缺失。",
+            next_action="选择 real_execution=false 的 dry-run candidate。" if candidate.get("real_execution") is not False else "继续检查。",
+            evidence_summary=str(candidate.get("real_execution")),
+        ),
+        make_haproxy_context_integrity_check(
+            check_id="candidate_status_succeeded",
+            label="candidate status 为 succeeded",
+            passed=candidate.get("status") == "succeeded",
+            message="dry-run command 已 succeeded。" if candidate.get("status") == "succeeded" else "dry-run command 尚未 succeeded。",
+            next_action="等待 dry-run succeeded，或重新生成成功的 dry-run 后再继续。" if candidate.get("status") != "succeeded" else "继续检查。",
+            evidence_summary=str(candidate.get("status") or "missing"),
+        ),
+    ]
+    blocking_checks = [check for check in checks if not check["passed"] and check["severity"] == "danger"]
+    integrity_ready = not blocking_checks
+    return {
+        **candidate,
+        "integrity_ready": integrity_ready,
+        "integrity_blocked": not integrity_ready,
+        "integrity_summary": (
+            "上下文完整，可继续 readiness。"
+            if integrity_ready
+            else "上下文不完整，不能继续 readiness / real execution。"
+        ),
+        "integrity_next_action": (
+            "人工确认端口放行与安全项后运行 readiness。"
+            if integrity_ready
+            else blocking_checks[0]["next_action"]
+        ),
+        "integrity_checks": checks,
+    }
+
+
 def redact_hint(value: str | None) -> str:
     if not value:
         return "Pending confirmation"
@@ -1128,16 +1334,19 @@ def get_haproxy_runtime_debug_context(request: Request, db: Session = Depends(ge
 
     workers = db.scalars(select(Worker)).all()
     workers_by_server = current_worker_by_server(workers)
-    resources = db.scalars(
+    workers_by_id = {worker.id: worker for worker in workers}
+    all_resources = db.scalars(
         select(TransitResource)
-        .where(TransitResource.deleted_at.is_(None))
         .order_by(TransitResource.created_at.desc())
     ).all()
-    nodes = db.scalars(
+    resources = [resource for resource in all_resources if resource.deleted_at is None]
+    resources_by_id = {resource.id: resource for resource in all_resources}
+    all_nodes = db.scalars(
         select(Node)
-        .where(Node.deleted_at.is_(None))
         .order_by(Node.created_at.desc())
     ).all()
+    nodes = [node for node in all_nodes if node.deleted_at is None]
+    nodes_by_id = {node.id: node for node in all_nodes}
     commands = db.scalars(
         select(WorkerCommand)
         .where(WorkerCommand.command_type == TRANSIT_ROUTE_CREATE_COMMAND)
@@ -1150,7 +1359,14 @@ def get_haproxy_runtime_debug_context(request: Request, db: Session = Depends(ge
     for command in commands:
         candidate = haproxy_dry_run_candidate_from_command(command)
         if candidate:
-            dry_run_candidates.append(candidate)
+            dry_run_candidates.append(
+                attach_haproxy_dry_run_candidate_integrity(
+                    candidate,
+                    resources_by_id=resources_by_id,
+                    nodes_by_id=nodes_by_id,
+                    workers_by_id=workers_by_id,
+                )
+            )
         if len(dry_run_candidates) >= 30:
             break
 

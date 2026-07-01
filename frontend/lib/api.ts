@@ -632,6 +632,16 @@ export type HaproxyRuntimeDebugLandingNodeCandidate = {
   created_at: string | null;
 };
 
+export type HaproxyRuntimeDebugIntegrityCheck = {
+  id: string;
+  label: string;
+  passed: boolean;
+  severity: "success" | "warning" | "danger";
+  message: string;
+  next_action: string;
+  evidence_summary?: string | null;
+};
+
 export type HaproxyRuntimeDebugDryRunCandidate = {
   id: string;
   status: string;
@@ -658,6 +668,11 @@ export type HaproxyRuntimeDebugDryRunCandidate = {
   real_execution: boolean | null;
   user_approved_real_execution: boolean | null;
   approved_firewall_confirmation: boolean | null;
+  integrity_ready: boolean;
+  integrity_blocked: boolean;
+  integrity_summary: string;
+  integrity_next_action: string;
+  integrity_checks: HaproxyRuntimeDebugIntegrityCheck[];
 };
 
 export type HaproxyRuntimeDebugContextResult = {
